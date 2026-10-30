@@ -53,8 +53,8 @@ ColdStart 不生成业务代码，不自动启动 Agent，不替代 App 商店�
 - 使用 Tauri 2、Rust、React、TypeScript 和 SQLite；Rust 负责全部领域与本地能力，前端只负责交互界面。
 - Codex 通过 MCP stdio 主动领取任务。
 - 每个任务只返回按需编译的上下文，不返回完整项目资料。
-- MVP 验收策略默认是 `agent_report`，接受 Agent 的结构化自报结果。
-- 每个任务可配置 `agent_report`、`human_acceptance`，并保留 `command_verification` 扩展点。
+- 报告始终使用 `agent_report` 结构；阶段 7 起，Agent 编码任务还必须通过仓库级本地命令验证。
+- 每个任务可配置 `agent_report` 或 `human_acceptance`；仓库级命令验证由 ColdStart 独立执行，不信任 Agent 自报的命令结果。
 - 生产部署、App/小程序提审、受保护分支写入、破坏性数据库操作必须人工确认。
 - GitHub 私有仓库通过 OAuth Device Flow 和 REST API 创建，不依赖浏览器页面自动化。
 - 代码任务在独立任务分支完成；报告通过后自动推送任务分支。
@@ -314,7 +314,7 @@ contract_hash
 idempotency_key
 ```
 
-MVP 默认按 `agent_report` 验收，不重新执行测试。ColdStart 仍执行以下校验：
+阶段 4-6 默认按 `agent_report` 验收，不重新执行测试。阶段 7 在不改变 `AcceptancePolicy` 枚举的前提下，把完成门禁升级为“结构化报告 + 仓库级本地命令验证”。ColdStart 始终执行以下校验：
 
 - 租约、任务和 `contract_hash` 有效。
 - 分支符合任务契约，Commit 和文件真实存在。
@@ -324,7 +324,9 @@ MVP 默认按 `agent_report` 验收，不重新执行测试。ColdStart 仍执�
 
 通过后任务进入 `done`，记录 `completion_source=agent_report`、报告哈希和提交时间。校验失败时任务回到 `in_progress` 或 `blocked`，并返回缺少项；不能直接丢弃 Agent 的有效工作。
 
-`human_acceptance` 任务在报告通过结构校验后进入 Inbox。`command_verification` 只保留接口，不在 MVP 实现执行逻辑。
+Agent 编码任务提交报告后，ColdStart 必须在任务分支上执行领取时固化的仓库验证命令快照。任一必需命令失败、超时或破坏 Git 分支不变量时，任务保持 `in_progress`，报告与脱敏输出保留为一次失败证据；全部命令通过后任务才能进入 `done`。
+
+`human_acceptance` 任务在报告通过结构校验后进入 Inbox。`command_verification` 从阶段 7 起作为 Agent 编码任务的默认完成门禁实现，不再只是预留接口。
 
 ## 16. 凭据与第三方能力
 
@@ -436,6 +438,7 @@ MVP 交付桌面客户端和完整控制闭环，但不交付发布自动化。
 - 计划生成、编辑、依赖和验收策略。
 - 本地凭据引用和三方能力状态。
 - GitHub 私有仓库创建、远程配置和任务分支自动推送。
+- 仓库级本地验证命令配置与完成门禁：Agent 报告后由 ColdStart 在任务分支真实执行构建/测试，通过后才完成任务。
 - MCP 任务领取、上下文、心跳、阻塞和完成报告。
 - 证据、事件、运行记录和计划看板。
 
@@ -448,6 +451,7 @@ MVP 验收场景：
 5. 报告通过后计划自动推进，任务分支自动推送到远程。
 6. 缺失信息和发布审批在 Inbox 中处理，不阻塞无关任务。
 7. 所有 MCP 响应、日志和 Git 仓库中都不存在明文密钥。
+8. Agent 编码仓库未配置验证命令、命令失败或命令超时时，任务不能进入 `done`；修复后可通过新的报告尝试完成。
 
 ## 25. 实施顺序
 
@@ -600,3 +604,111 @@ MVP 验收场景：
 - 自动合并、Release Tag、生产部署、商店提审或小程序发布。
 - 代码签名证书采购、自动更新、崩溃上报服务和安装使用统计。
 - 通用平台扩展、插件市场、任意 MCP 写工具或绕过桌面确认的计划发布。
+
+## 30. 阶段 7 详细边界（已确认）
+
+阶段 7 交付“本地命令验证与完成门禁”。Codex 仍只通过 MCP 主动领取和上报，ColdStart 只认 Codex 的结构化完成报告；但报告本身不再等于完成，ColdStart 必须独立执行仓库配置的构建或测试命令。
+
+### 30.1 严格领取门禁
+
+- 每个 `agent_coding` 任务所属仓库在领取时必须至少有一条验证命令。
+- 没有验证命令时，领取事务返回结构化原因 `verification_not_configured`，不创建租约，不改变任务状态。
+- 领取流程在同一 SQLite 事务中校验验证配置、创建租约并把配置快照写入 `work_runs`；任一写入失败时整体回滚。
+- 验证配置属于仓库，不属于单个任务。第一版不支持任务级命令覆盖或临时跳过。
+- 验证配置的修改只影响后续领取；已领取任务始终使用快照，桌面端改配置不能追溯改变当前任务门禁。
+
+### 30.2 验证命令模型
+
+新增仓库级验证命令，桌面端拥有完整读写权限，MCP 只能通过任务上下文读取快照，不能创建、修改、删除或临时替换命令。
+
+每条命令包含：
+
+- `name`：仓库内唯一，1-80 个字符，只用于展示和失败定位。
+- `executable`：已解析的绝对 Windows `.exe` 路径；不接受相对路径、`.cmd`、`.bat`、`.ps1` 或目录。
+- `args`：字符串数组，每个参数独立保存，不经过 Shell 拼接、变量展开或通配符展开。
+- `timeoutSeconds`：10-900 秒。
+- `position`：仓库内执行顺序。
+
+约束如下：
+
+- 每个仓库最多 8 条命令，全部为必需命令；总计超时预算不超过 3600 秒。
+- 命令名称在同一仓库唯一；参数合计长度上限为 16 KiB，单个参数上限为 2048 个字符。
+- 可执行文件在保存时验证存在、是普通文件、扩展名为 `.exe`，并保存规范化后的绝对路径。
+- 命令工作目录固定为仓库根目录，不能单独配置；不提供 Shell、环境变量插值、命令串联、重定向或管道语法。
+- 命令配置属于普通项目配置，用户不得把 Secret 写入命令或参数；系统不提供从 Credential Manager 读取 Secret 并注入命令的能力。
+
+### 30.3 领取快照与任务上下文
+
+- `work_runs` 增加 `verification_snapshot_json` 和 `verification_snapshot_hash`。快照包含有序命令、名称、绝对可执行路径、参数、超时和总预算。
+- 快照哈希使用规范化 JSON 的 SHA-256；报告、验证记录和任务上下文都引用同一哈希。
+- `get_work_context` 返回验证快照，让 Codex 在开发阶段提前运行相同检查；ColdStart 在报告阶段仍会独立重跑，不信任 Agent 自报的命令结果。
+- 任务上下文中只展示与当前仓库相关的快照，不展示其他仓库、凭据或系统环境变量值。
+
+### 30.4 提交、执行与状态回退
+
+`submit_work_report` 的执行顺序固定为：
+
+1. 校验工作项属于当前活动计划、租约有效、报告状态为 `completed`、契约哈希和验收证据完整。
+2. 校验报告分支、Commit、修改文件和允许路径与真实 Git 仓库一致。
+3. 读取领取时固化的验证快照；缺失快照时拒绝完成并返回 `verification_not_configured`。
+4. 将当前租约延长到“命令总超时预算 + 5 分钟”，把任务置为 `submitted`，创建 `running` 验证记录并提交事务。
+5. 在任务分支上按顺序执行命令；执行前后都校验当前分支、`HEAD` 仍等于报告 Commit，且没有已跟踪文件被命令修改。
+6. 全部成功时在事务中写入 `passed`，报告标记接受，租约消费，运行完成，任务进入 `done` 并刷新依赖。
+7. 任一失败、超时、启动失败或 Git 不变量被破坏时写入 `failed`，报告标记拒绝并保存脱敏输出，任务回到 `in_progress`，租约保持有效，允许同一 Agent 修复后重新报告。
+8. 只有任务成功进入 `done` 后才执行现有远程推送；推送失败仍只记录 Git 同步失败，不回写任务状态。
+
+失败语义：
+
+- 非零退出码、无法启动、超时、命令修改已跟踪文件、切换分支或改写 `HEAD` 都视为验证失败。
+- 失败返回具体命令名称、失败类型、退出码、耗时和有限输出摘要；不返回租约令牌、Secret 或完整环境。
+- 同一报告幂等键在 `running` 时返回 `verification_in_progress`；已完成时返回原报告记录。失败后重试必须使用新的幂等键。
+- 同一工作项最多存在一条 `running` 验证记录，由部分唯一索引保证。
+- 租约在命令执行期间过期、桌面进程崩溃或验证记录长期停留在 `running` 时，租约过期处理必须把运行标为 `expired`、报告标为 `interrupted`、任务回到 `ready`，旧报告不能推进完成。
+
+### 30.5 进程执行、超时与环境边界
+
+- 使用 `std::process::Command` 直接执行绝对 `.exe` 路径和参数数组，不经过 PowerShell、`cmd.exe` 或其他 Shell。
+- 标准输入设为空；标准输出和标准错误并发读取，避免子进程因管道写满而死锁。
+- 每个命令创建 Windows Job Object，并启用关闭即终止；超时时终止整个 Job，确保子进程树被清理。Job 创建或分配失败时不执行命令并记录基础设施失败。
+- 进程环境先清空，再只注入必要白名单：`SystemRoot`、`WINDIR`、`PATH`、`PATHEXT`、`TEMP`、`TMP`、`USERPROFILE`、`LOCALAPPDATA`、`APPDATA`、`ProgramFiles`、`ProgramFiles(x86)`、`CommonProgramFiles`、`ComSpec`、`HOME`、`USERNAME`，以及显式配置的 `CARGO_HOME`、`RUSTUP_HOME`、`PNPM_HOME`、`NODE_HOME`、`JAVA_HOME`、`ANDROID_HOME`、`ANDROID_SDK_ROOT`、`GRADLE_USER_HOME`。
+- 不继承 `NODE_OPTIONS`、`GITHUB_TOKEN`、`GH_TOKEN`、`*_SECRET`、`*_PASSWORD`、`*_API_KEY` 或 Credential Manager 中的任何值。
+- 命令仍以当前 Windows 用户权限运行，不是文件系统或网络沙箱；安全边界是“MCP 不能注入命令或 Secret”，不宣称恶意构建脚本无法访问用户文件。
+- 每个输出流最多保留 32 KiB，合并后最多保留 64 KiB 尾部；截断时写入明确标记。输出去除 ANSI、控制字符，并对常见 Bearer、Token、Password、Secret 和 API Key 形式做尽力脱敏。
+- 原始输出不得写入日志、事件、SQLite、MCP 响应或错误；只持久化脱敏后的有限文本。
+
+### 30.6 持久化、事件与桌面展示
+
+- SQLite 架构版本升级到 6，新增 `repository_verification_commands`，并给 `work_runs` 与 `work_reports` 增加验证快照、状态、结果和时间字段。
+- 验证状态固定为 `not_required`、`running`、`passed`、`failed`、`interrupted`；`accepted` 只在验证通过后变为真。
+- `verification_json` 保存快照哈希、每个命令的名称、退出码、耗时、输出摘要、截断标记、失败类型和整体时间，不保存原始输出。
+- 新增验证开始、通过、失败和中断事件；现有报告提交与任务完成事件继续按最终结果写入。
+- 集成与凭据页的每个仓库提供验证命令列表，支持新增、编辑、删除和排序；使用文件选择器选择 `.exe`，参数按“每行一个”编辑并映射为字符串数组。
+- 仓库没有任何验证命令时，界面必须显示不可领取警告；任务看板显示最近一次验证状态、失败命令和脱敏输出摘要。
+- Tauri 只新增明确的验证命令读写命令；前端不能传入任意工作目录、环境变量或 Shell 命令。
+
+### 30.7 MCP 与错误码
+
+- 不增加 MCP 命令配置工具；`submit_work_report` 的职责扩展为触发并等待本地验证。
+- `get_work_context` 返回 `verification` 快照；`submit_work_report` 返回包含验证结果的报告记录。
+- 新增稳定错误码：`verification_not_configured`、`verification_in_progress`、`verification_failed`、`verification_timeout`、`verification_interrupted`、`verification_command_invalid`。
+- MCP 错误和工具结果不得包含原始输出、租约令牌、Secret、完整环境变量或数据库内部路径。
+
+### 30.8 测试与阶段验收
+
+- 领域测试覆盖命令名称、路径、参数、超时、总量和快照哈希校验。
+- 存储测试覆盖架构迁移、命令 CRUD、领取时原子快照、无配置不可领取、单个运行验证、成功完成、失败回退、幂等和租约过期中断。
+- 适配器测试使用真实本地 `.exe` 测试进程覆盖成功、非零退出、超时、子进程树终止、输出截断、脱敏、环境白名单和 Git 不变量。
+- 应用测试覆盖失败后保持租约并允许修复重试、成功后才推送、桌面改配置不影响已领取任务、旧计划越权和 Secret 扫描。
+- MCP 契约测试覆盖工具列表不变、上下文包含快照、成功与失败结构、错误码和脱敏。
+- 前端测试覆盖验证命令新增/编辑/删除/排序、不可领取警告、任务验证状态和失败输出摘要。
+- 端到端验收使用本地裸 Git 远程和真实测试进程，完成“配置命令 -> 领取 -> 失败报告 -> 修复 -> 成功报告 -> 任务完成 -> 推送”的闭环。
+- 阶段结束继续运行 Rust 全量测试、Rust 1.89 测试、Clippy、格式检查、前端类型检查/测试/构建和 NSIS 安装包构建。
+
+### 30.9 阶段 7 明确不做
+
+- 云 CI、远程执行器、容器沙箱、Windows 用户隔离或命令权限沙箱。
+- 在桌面端或通过 MCP 把任务直接标记完成。
+- 任务级验证覆盖、临时跳过、失败自动修复、自动重试循环或自动提交修改。
+- 执行 `.cmd`、`.bat`、`.ps1`、Shell 片段、管道、重定向或动态环境变量。
+- 注入 Credential Manager Secret、下载外部命令、远程命令签名或构建产物上传。
+- 自动部署、App 打包、商店提审、小程序发布、自动合并或 Release Tag。
