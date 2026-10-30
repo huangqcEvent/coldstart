@@ -4,7 +4,7 @@
 
 ## 计划拆分
 
-1. **核心基础与 CLI**：Rust workspace、领域模型、SQLite、事件日志、项目主目录、`coldstart init` 和 `coldstart status`。详细计划已完成，等待选择执行方式：[2026-10-30-coldstart-01-core-foundation.md](2026-10-30-coldstart-01-core-foundation.md)。
+1. **核心基础与 CLI（已完成）**：Rust workspace、领域模型、SQLite、事件日志、项目主目录、`coldstart init` 和 `coldstart status`。阶段计划与执行记录：[2026-10-30-coldstart-01-core-foundation.md](2026-10-30-coldstart-01-core-foundation.md)。
 2. **Tauri Desktop Shell**：Tauri 2、React/TypeScript、项目创建与状态界面、Tauri 命令边界。
 3. **Requirements and Blueprint**：文档导入、模型适配器、结构化蓝图、来源追踪、缺失信息与 Inbox 基础。
 4. **Plan Engine and MCP**：计划编译、DAG、状态机、租约、上下文编译、MCP stdio 和完成报告。

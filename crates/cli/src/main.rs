@@ -70,7 +70,7 @@ fn print_status(home: ProjectHome, as_json: bool) -> Result<(), CliError> {
 
     let database = Database::open(&database_path)?;
     let stored = database
-        .load_project(&project.id)?
+        .load_project(&project.id, project.root_path.clone())?
         .ok_or(CliError::ProjectMissingFromDatabase(project.id))?;
     if stored.name != project.name || stored.created_at != project.created_at {
         return Err(CliError::ProjectMetadataMismatch(project.id));

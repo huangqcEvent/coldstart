@@ -10,6 +10,8 @@
 
 **规格：** `docs/superpowers/specs/2026-10-30-coldstart-design.md`
 
+> **完成状态（2026-10-30）：已完成并通过最终门禁。** 实际接口相对初始计划有存储层偏差：SQLite schema 已升级到 v2，`projects` 表不持久化 `root_path`，v1→v2 迁移保留项目与事件；`Database::load_project(&self, id: &ProjectId, root_path: PathBuf) -> Result<Option<Project>, StorageError>` 接受调用方传入的当前项目根路径，并结合数据库中的元数据构造 `Project`。下方全部步骤均已执行。
+
 ## 全局约束
 
 - 在 `D:\coldstart` 的 `main` 分支上工作。
@@ -79,7 +81,7 @@ README.md
 - 产出：`Project::new(name: impl Into<String>, root_path: PathBuf) -> Result<Project, ProjectError>`。
 - 产出：`ProjectId: Clone + Copy + Display + FromStr + Serialize + Deserialize`。
 
-- [ ] **步骤 1：检查并安装 Windows Rust 前置依赖**
+- [x] **步骤 1：检查并安装 Windows Rust 前置依赖**
 
 运行：
 
@@ -108,7 +110,7 @@ cargo --version
 
 预期：Rust 为 1.89.0 或更高版本，当前目标为 `x86_64-pc-windows-msvc`。
 
-- [ ] **步骤 2：创建工作区和可编译的 core crate 骨架**
+- [x] **步骤 2：创建工作区和可编译的 core crate 骨架**
 
 创建 `Cargo.toml`：
 
@@ -173,7 +175,7 @@ cargo check --workspace
 
 预期：通过。
 
-- [ ] **步骤 3：编写失败的领域测试**
+- [x] **步骤 3：编写失败的领域测试**
 
 创建 `crates/core/tests/project_model.rs`：
 
@@ -232,7 +234,7 @@ fn accepts_a_project_name_of_exactly_80_characters() {
 }
 ```
 
-- [ ] **步骤 4：运行测试并确认缺少 API 的失败**
+- [x] **步骤 4：运行测试并确认缺少 API 的失败**
 
 运行：
 
@@ -242,7 +244,7 @@ cargo test -p coldstart-core --test project_model
 
 预期：失败，错误为 `unresolved import coldstart_core::Project`。
 
-- [ ] **步骤 5：实现最小项目模型**
+- [x] **步骤 5：实现最小项目模型**
 
 创建 `crates/core/src/error.rs`：
 
@@ -340,7 +342,7 @@ pub use error::ProjectError;
 pub use project::{Project, ProjectId};
 ```
 
-- [ ] **步骤 6：运行领域测试和质量检查**
+- [x] **步骤 6：运行领域测试和质量检查**
 
 运行：
 
@@ -353,7 +355,7 @@ cargo test --workspace
 
 预期：所有测试通过，Clippy 无警告。
 
-- [ ] **步骤 7：提交领域基础**
+- [x] **步骤 7：提交领域基础**
 
 ```powershell
 git add Cargo.toml Cargo.lock rust-toolchain.toml crates/core
@@ -381,7 +383,7 @@ git commit -m "feat: 添加 ColdStart 项目领域模型"
 
 清单是项目身份文档，不是机器相关的状态文件。它有意省略 `Project::root_path`，调用方根据 `coldstart.project.json` 所在目录推导项目根路径。等平台目标、仓库映射和模板版本这些领域类型实现后，再通过后续清单 schema 修订加入。
 
-- [ ] **步骤 1：添加序列化依赖并编写失败的契约测试**
+- [x] **步骤 1：添加序列化依赖并编写失败的契约测试**
 
 在 `crates/core/Cargo.toml` 的 `[dependencies]` 下添加 `serde_json`：
 
@@ -498,7 +500,7 @@ fn event_identity_and_time_are_generated_per_event() {
 }
 ```
 
-- [ ] **步骤 2：运行契约测试并确认缺少 API 的失败**
+- [x] **步骤 2：运行契约测试并确认缺少 API 的失败**
 
 运行：
 
@@ -508,7 +510,7 @@ cargo test -p coldstart-core --test contracts
 
 预期：失败，因为 `coldstart_core::DomainEvent` 和清单相关导出尚不存在。
 
-- [ ] **步骤 3：实现事件和清单契约**
+- [x] **步骤 3：实现事件和清单契约**
 
 创建 `crates/core/src/event.rs`：
 
@@ -643,7 +645,7 @@ pub use manifest::{ManifestError, ProjectManifest, PROJECT_MANIFEST_SCHEMA_VERSI
 pub use project::{Project, ProjectId};
 ```
 
-- [ ] **步骤 4：运行契约测试和全部质量门禁**
+- [x] **步骤 4：运行契约测试和全部质量门禁**
 
 运行：
 
@@ -656,7 +658,7 @@ cargo test --workspace
 
 预期：通过。
 
-- [ ] **步骤 5：提交可迁移契约**
+- [x] **步骤 5：提交可迁移契约**
 
 ```powershell
 git add crates/core
@@ -684,7 +686,7 @@ git commit -m "feat: 添加可迁移项目清单与领域事件"
 - 产出：`Database::append_event(&mut self, event: &DomainEvent) -> Result<(), StorageError>`。
 - 产出：`Database::event_count(&self, project_id: &ProjectId) -> Result<u64, StorageError>`。
 
-- [ ] **步骤 1：添加可编译的 storage crate 和失败的集成测试**
+- [x] **步骤 1：添加可编译的 storage crate 和失败的集成测试**
 
 将根目录 `Cargo.toml` 的 workspace 成员改为：
 
@@ -852,7 +854,7 @@ fn creates_missing_database_parent_directories() {
 }
 ```
 
-- [ ] **步骤 2：运行存储测试并确认缺少 API 的失败**
+- [x] **步骤 2：运行存储测试并确认缺少 API 的失败**
 
 运行：
 
@@ -862,7 +864,7 @@ cargo test -p coldstart-storage --test database
 
 预期：失败，因为 `Database` 和 `StorageError` 尚未实现。
 
-- [ ] **步骤 3：实现迁移和事务持久化**
+- [x] **步骤 3：实现迁移和事务持久化**
 
 将 `crates/storage/src/database.rs` 替换为：
 
@@ -1097,7 +1099,7 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
 }
 ```
 
-- [ ] **步骤 4：运行存储测试和全部质量门禁**
+- [x] **步骤 4：运行存储测试和全部质量门禁**
 
 运行：
 
@@ -1110,7 +1112,7 @@ cargo test --workspace
 
 预期：通过。父目录测试同时证明 `Database::open` 会在目录缺失时创建 `<project-home>/.coldstart/`。
 
-- [ ] **步骤 5：提交 SQLite 持久化**
+- [x] **步骤 5：提交 SQLite 持久化**
 
 ```powershell
 git add Cargo.toml Cargo.lock crates/storage
@@ -1136,7 +1138,7 @@ git commit -m "feat: 使用 SQLite 持久化项目与事件"
 - 产出：`ProjectHome::initialize(&self, name: &str) -> Result<Project, CliError>`。
 - 产出：项目主目录布局 `coldstart.project.json`、`docs/{requirements,architecture,decisions,release}/` 和 `.coldstart/{state.db,artifacts,snapshots}/`。
 
-- [ ] **步骤 1：添加 CLI crate 和失败的初始化测试**
+- [x] **步骤 1：添加 CLI crate 和失败的初始化测试**
 
 将根目录 `Cargo.toml` 的 workspace 成员改为：
 
@@ -1252,7 +1254,7 @@ fn init_refuses_to_overwrite_an_existing_project_manifest() {
 }
 ```
 
-- [ ] **步骤 2：运行 CLI 测试并确认初始化失败**
+- [x] **步骤 2：运行 CLI 测试并确认初始化失败**
 
 运行：
 
@@ -1262,7 +1264,7 @@ cargo test -p coldstart-cli --test cli
 
 预期：失败，因为占位程序以状态码 1 退出，且不会创建项目主目录。
 
-- [ ] **步骤 3：实现项目主目录创建和 init 命令**
+- [x] **步骤 3：实现项目主目录创建和 init 命令**
 
 创建 `crates/cli/src/error.rs`：
 
@@ -1448,7 +1450,7 @@ fn run(cli: Cli) -> Result<(), CliError> {
 }
 ```
 
-- [ ] **步骤 4：运行 CLI 测试和全部质量门禁**
+- [x] **步骤 4：运行 CLI 测试和全部质量门禁**
 
 运行：
 
@@ -1461,7 +1463,7 @@ cargo test --workspace
 
 预期：通过。如果写入清单后数据库初始化失败，实现会删除清单以及本次刚创建的数据库、WAL 和 SHM 文件。
 
-- [ ] **步骤 5：提交项目主目录初始化**
+- [x] **步骤 5：提交项目主目录初始化**
 
 ```powershell
 git add Cargo.toml Cargo.lock crates/cli
@@ -1485,7 +1487,7 @@ git commit -m "feat: 初始化 ColdStart 项目主目录"
 - 产出：`coldstart status [--path <PROJECT_HOME>] [--json]`。
 - 产出 JSON 键 `projectId`、`name`、`rootPath`、`createdAt` 和 `eventCount`。
 
-- [ ] **步骤 1：添加失败的状态查询与端到端测试**
+- [x] **步骤 1：添加失败的状态查询与端到端测试**
 
 在 `crates/cli/tests/cli.rs` 中添加以下导入：
 
@@ -1582,7 +1584,7 @@ fn status_does_not_recreate_a_missing_database() {
 }
 ```
 
-- [ ] **步骤 2：运行状态测试并确认缺少子命令的失败**
+- [x] **步骤 2：运行状态测试并确认缺少子命令的失败**
 
 运行：
 
@@ -1592,7 +1594,7 @@ cargo test -p coldstart-cli --test cli
 
 预期：失败，因为 Clap 报告无法识别 `status` 子命令。
 
-- [ ] **步骤 3：实现清单加载和状态输出**
+- [x] **步骤 3：实现清单加载和状态输出**
 
 将 `crates/cli/src/error.rs` 替换为：
 
@@ -1772,7 +1774,7 @@ fn print_status(home: ProjectHome, as_json: bool) -> Result<(), CliError> {
 }
 ```
 
-- [ ] **步骤 4：记录可用的 CLI 用法**
+- [x] **步骤 4：记录可用的 CLI 用法**
 
 将 `README.md` 中的 `## 当前状态` 小节替换为：
 
@@ -1789,7 +1791,7 @@ cargo run -p coldstart-cli -- status --path D:\work\demo --json
 `coldstart.project.json` 不保存机器绝对路径；移动到其他目录后，项目根路径由该文件所在目录重新推导。
 ````
 
-- [ ] **步骤 5：运行完整的端到端质量门禁**
+- [x] **步骤 5：运行完整的端到端质量门禁**
 
 运行：
 
@@ -1801,7 +1803,7 @@ cargo test --workspace
 
 预期：所有 CLI 测试通过，包括初始化、拒绝覆盖、JSON 状态、清单缺失失败和数据库缺失安全处理。
 
-- [ ] **步骤 6：提交状态查询与文档**
+- [x] **步骤 6：提交状态查询与文档**
 
 ```powershell
 git add crates/cli README.md
