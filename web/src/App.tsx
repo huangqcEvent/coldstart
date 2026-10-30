@@ -1,11 +1,13 @@
 import { useState } from 'react';
 
+import * as planApi from './api/planApi';
 import * as projectApi from './api/projectApi';
 import * as requirementsApi from './api/requirementsApi';
 import type {
   BlueprintContent,
   CommandError,
   ModelConfig,
+  PlanContent,
   ProjectWorkspace,
 } from './api/types';
 import { AppSidebar, type WorkspaceView } from './components/AppSidebar';
@@ -13,6 +15,7 @@ import { BlueprintView } from './components/BlueprintView';
 import { CreateProjectDialog } from './components/CreateProjectDialog';
 import { ErrorBanner } from './components/ErrorBanner';
 import { InboxView } from './components/InboxView';
+import { PlanView } from './components/PlanView';
 import { ProjectOverview } from './components/ProjectOverview';
 import { RequirementsView } from './components/RequirementsView';
 import { WelcomeView } from './components/WelcomeView';
@@ -215,6 +218,67 @@ export default function App() {
     );
   }
 
+  async function handleGeneratePlan() {
+    if (!workspace) {
+      return false;
+    }
+    const path = workspace.status.rootPath;
+    return runWorkspaceAction('正在编译开发计划', () =>
+      planApi.generatePlanDraft(path),
+    );
+  }
+
+  async function handleSavePlan(content: PlanContent) {
+    if (!workspace) {
+      return false;
+    }
+    const path = workspace.status.rootPath;
+    return runWorkspaceAction('正在保存计划草稿', () =>
+      planApi.savePlanDraft(path, content),
+    );
+  }
+
+  async function handlePublishPlan(revisionId: string) {
+    if (!workspace) {
+      return false;
+    }
+    const path = workspace.status.rootPath;
+    return runWorkspaceAction('正在发布计划', () =>
+      planApi.publishPlan(path, revisionId),
+    );
+  }
+
+  async function handleCompleteHumanWork(
+    workItemId: string,
+    note: string,
+    accepted: boolean,
+  ) {
+    if (!workspace) {
+      return false;
+    }
+    const path = workspace.status.rootPath;
+    return runWorkspaceAction(
+      accepted ? '正在完成人工任务' : '正在标记人工阻塞',
+      () => planApi.completeHumanWork(path, workItemId, note, accepted),
+    );
+  }
+
+  async function handlePlanRefresh(): Promise<ProjectWorkspace | null> {
+    if (!workspace) {
+      return null;
+    }
+    try {
+      const refreshed = await planApi.readPlanWorkspace(
+        workspace.status.rootPath,
+      );
+      setWorkspace(refreshed);
+      return refreshed;
+    } catch (refreshError) {
+      setError(normalizeCommandError(refreshError));
+      return null;
+    }
+  }
+
   function handleNavigate(nextView: WorkspaceView) {
     if (nextView !== 'overview' && !workspace) {
       return;
@@ -231,7 +295,7 @@ export default function App() {
       <main className="workspace">
         <div className="workspace__topline" aria-hidden="true">
           <span>LOCAL-FIRST PROJECT SYSTEM</span>
-          <span>PHASE 03 / REQUIREMENTS + BLUEPRINT</span>
+          <span>PHASE 04 / PLAN + MCP</span>
         </div>
 
         {error ? <ErrorBanner error={error} onDismiss={() => setError(null)} /> : null}
@@ -252,6 +316,7 @@ export default function App() {
               busy={busy}
               onRefresh={() => void handleRefresh()}
               onEnterRequirements={() => setView('requirements')}
+              onEnterPlan={() => setView('plan')}
             />
           ) : null}
 
@@ -280,9 +345,30 @@ export default function App() {
             <InboxView
               inbox={workspace.inbox}
               facts={workspace.facts}
+              humanTasks={workspace.plan.workItems.filter(
+                (item) =>
+                  (item.task.kind === 'human_external' ||
+                    item.task.kind === 'approval_gate') &&
+                  !['done', 'cancelled'].includes(item.workItem.status),
+              )}
               busy={busy}
               busyLabel={busyLabel}
               onResolve={handleResolveInfoRequest}
+              onCompleteHuman={handleCompleteHumanWork}
+            />
+          ) : null}
+
+          {workspace && view === 'plan' ? (
+            <PlanView
+              workspace={workspace}
+              busy={busy}
+              busyLabel={busyLabel}
+              onGenerate={handleGeneratePlan}
+              onSave={handleSavePlan}
+              onPublish={handlePublishPlan}
+              onRefresh={handlePlanRefresh}
+              onNavigateBlueprint={() => setView('blueprint')}
+              onNavigateInbox={() => setView('inbox')}
             />
           ) : null}
         </div>

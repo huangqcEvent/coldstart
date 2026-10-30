@@ -8,7 +8,9 @@ use crate::ProjectId;
 
 macro_rules! uuid_id {
     ($name:ident) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[derive(
+            Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+        )]
         #[serde(transparent)]
         pub struct $name(Uuid);
 
@@ -43,9 +45,15 @@ macro_rules! uuid_id {
 uuid_id!(ArtifactId);
 uuid_id!(BlueprintRevisionId);
 uuid_id!(InfoRequestId);
+uuid_id!(LeaseId);
+uuid_id!(PlanRevisionId);
 uuid_id!(ProjectFactId);
+uuid_id!(TaskSpecId);
+uuid_id!(WorkItemId);
+uuid_id!(WorkReportId);
+uuid_id!(WorkRunId);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct BlueprintEntityId(String);
 

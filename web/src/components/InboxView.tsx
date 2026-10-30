@@ -1,13 +1,24 @@
 import { useId, useState } from 'react';
 
-import type { InfoRequest, InfoRequestCategory, ProjectFact } from '../api/types';
+import type {
+  InfoRequest,
+  InfoRequestCategory,
+  ProjectFact,
+  WorkItemView,
+} from '../api/types';
 
 interface InboxViewProps {
   inbox: InfoRequest[];
   facts: ProjectFact[];
+  humanTasks: WorkItemView[];
   busy: boolean;
   busyLabel: string | null;
   onResolve: (requestId: string, answer: string) => Promise<boolean>;
+  onCompleteHuman: (
+    workItemId: string,
+    note: string,
+    accepted: boolean,
+  ) => Promise<boolean>;
 }
 
 const categoryOrder: InfoRequestCategory[] = [
@@ -100,12 +111,96 @@ function InboxRequestCard({
   );
 }
 
+function HumanWorkCard({
+  item,
+  busy,
+  busyLabel,
+  onComplete,
+}: {
+  item: WorkItemView;
+  busy: boolean;
+  busyLabel: string | null;
+  onComplete: (note: string, accepted: boolean) => Promise<boolean>;
+}) {
+  const noteId = useId();
+  const [note, setNote] = useState('');
+  const completing =
+    busyLabel === '正在完成人工任务' || busyLabel === '正在标记人工阻塞';
+
+  return (
+    <article className="inbox-card inbox-card--work">
+      <header className="inbox-card__head">
+        <div>
+          <span className="inbox-badge inbox-badge--external_operation">
+            {item.task.kind === 'approval_gate' ? '人工审批' : '外部操作'}
+          </span>
+          <span className="inbox-badge">计划任务</span>
+        </div>
+        <code>{item.workItem.status}</code>
+      </header>
+      <h3>{item.task.title}</h3>
+      <dl className="inbox-details">
+        <div>
+          <dt>原因</dt>
+          <dd>{item.task.goal}</dd>
+        </div>
+        <div>
+          <dt>范围</dt>
+          <dd>{item.task.scope.join('；') || '未说明'}</dd>
+        </div>
+      </dl>
+      <div className="inbox-work__acceptance">
+        <span>验收标准</span>
+        <ul>
+          {item.task.acceptanceCriteria.map((criterion) => (
+            <li key={criterion.id}>{criterion.text}</li>
+          ))}
+        </ul>
+      </div>
+      <label className="field" htmlFor={noteId}>
+        <span>完成说明</span>
+        <textarea
+          id={noteId}
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+          placeholder="说明账号、配置或审批已经可用；拒绝时写明缺口"
+          aria-label={`完成说明：${item.task.title}`}
+          disabled={busy}
+          rows={3}
+        />
+      </label>
+      <div className="view-actions inbox-work__actions">
+        <button
+          className="button button--primary"
+          type="button"
+          onClick={() => void onComplete(note.trim(), true)}
+          disabled={busy || note.trim().length === 0}
+          aria-label={`确认完成：${item.task.title}`}
+        >
+          {completing ? '处理中…' : '确认完成'}
+        </button>
+        <button
+          className="button button--secondary"
+          type="button"
+          onClick={() => void onComplete(note.trim(), false)}
+          disabled={busy || note.trim().length === 0}
+          aria-label={`标记阻塞：${item.task.title}`}
+        >
+          标记阻塞
+        </button>
+      </div>
+    </article>
+  );
+}
+
 export function InboxView({
   inbox,
   facts,
+  humanTasks,
   busy,
   busyLabel,
   onResolve,
+  onCompleteHuman,
 }: InboxViewProps) {
   const openRequests = inbox.filter((request) => request.status === 'open');
   const resolvedRequests = inbox.filter((request) => request.status !== 'open');
@@ -120,11 +215,36 @@ export function InboxView({
             开发只在缺少信息、需要决策或外部授权时中断。每条回答会成为可追溯的项目事实。
           </p>
         </div>
-        <div className="inbox-counter" aria-label={`${openRequests.length} 条待处理`}>
-          <strong>{openRequests.length}</strong>
+        <div
+          className="inbox-counter"
+          aria-label={`${openRequests.length + humanTasks.length} 条待处理`}
+        >
+          <strong>{openRequests.length + humanTasks.length}</strong>
           <span>待处理</span>
         </div>
       </header>
+
+      {humanTasks.length > 0 ? (
+        <section className="inbox-group inbox-group--work" aria-labelledby="inbox-human-work">
+          <header>
+            <h2 id="inbox-human-work">计划人工任务</h2>
+            <span>{humanTasks.length}</span>
+          </header>
+          <div className="inbox-list">
+            {humanTasks.map((item) => (
+              <HumanWorkCard
+                item={item}
+                busy={busy}
+                busyLabel={busyLabel}
+                onComplete={(note, accepted) =>
+                  onCompleteHuman(item.workItem.id, note, accepted)
+                }
+                key={item.workItem.id}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {openRequests.length === 0 ? (
         <section className="panel inbox-empty">

@@ -5,7 +5,7 @@ use coldstart_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::ProjectStatus;
+use crate::{PlanWorkspace, ProjectStatus};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -17,4 +17,5 @@ pub struct ProjectWorkspace {
     pub published: Option<BlueprintRevision>,
     pub inbox: Vec<InfoRequest>,
     pub facts: Vec<ProjectFact>,
+    pub plan: PlanWorkspace,
 }

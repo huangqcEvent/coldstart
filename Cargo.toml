@@ -5,6 +5,7 @@ members = [
     "crates/storage",
     "crates/app",
     "crates/cli",
+    "crates/mcp",
     "apps/desktop/src-tauri",
 ]
 resolver = "3"
@@ -32,3 +33,5 @@ zip = { version = "9.1.3", default-features = false, features = ["deflate"] }
 pdf-extract = "0.12.1"
 ureq = { version = "3.5.0", features = ["json", "win-system-proxy"] }
 tiny_http = "0.12.0"
+rmcp = { version = "3.8.0", features = ["server", "macros", "transport-io"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "sync", "time"] }

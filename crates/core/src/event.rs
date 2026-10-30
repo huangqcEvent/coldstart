@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    ArtifactId, BlueprintRevisionId, GenerationSource, InfoRequestId, Project, ProjectFactId,
-    ProjectId,
+    ArtifactId, BlueprintRevisionId, GenerationSource, InfoRequestId, LeaseId, PlanRevisionId,
+    Project, ProjectFactId, ProjectId, WorkItemId, WorkReportId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,6 +67,57 @@ pub enum DomainEventKind {
         fact_id: ProjectFactId,
         version: u64,
     },
+    PlanDraftCreated {
+        revision_id: PlanRevisionId,
+        revision_number: u64,
+        task_count: usize,
+    },
+    PlanPublished {
+        revision_id: PlanRevisionId,
+        revision_number: u64,
+        task_count: usize,
+    },
+    WorkClaimed {
+        work_item_id: WorkItemId,
+        task_key: String,
+        lease_id: LeaseId,
+        agent_profile: String,
+    },
+    WorkStarted {
+        work_item_id: WorkItemId,
+    },
+    WorkHeartbeat {
+        work_item_id: WorkItemId,
+        lease_id: LeaseId,
+        expires_at: DateTime<Utc>,
+    },
+    WorkBlocked {
+        work_item_id: WorkItemId,
+        lease_id: LeaseId,
+        reason: String,
+    },
+    WorkReportSubmitted {
+        work_item_id: WorkItemId,
+        report_id: WorkReportId,
+        accepted: bool,
+    },
+    WorkCompleted {
+        work_item_id: WorkItemId,
+        task_key: String,
+    },
+    WorkReleased {
+        work_item_id: WorkItemId,
+        lease_id: LeaseId,
+        reason: String,
+    },
+    LeaseExpired {
+        work_item_id: WorkItemId,
+        lease_id: LeaseId,
+    },
+    HumanWorkCompleted {
+        work_item_id: WorkItemId,
+        accepted: bool,
+    },
 }
 
 impl DomainEventKind {
@@ -78,6 +129,17 @@ impl DomainEventKind {
             Self::BlueprintPublished { .. } => "blueprint_published",
             Self::InfoRequestCreated { .. } => "info_request_created",
             Self::InfoRequestResolved { .. } => "info_request_resolved",
+            Self::PlanDraftCreated { .. } => "plan_draft_created",
+            Self::PlanPublished { .. } => "plan_published",
+            Self::WorkClaimed { .. } => "work_claimed",
+            Self::WorkStarted { .. } => "work_started",
+            Self::WorkHeartbeat { .. } => "work_heartbeat",
+            Self::WorkBlocked { .. } => "work_blocked",
+            Self::WorkReportSubmitted { .. } => "work_report_submitted",
+            Self::WorkCompleted { .. } => "work_completed",
+            Self::WorkReleased { .. } => "work_released",
+            Self::LeaseExpired { .. } => "lease_expired",
+            Self::HumanWorkCompleted { .. } => "human_work_completed",
         }
     }
 }

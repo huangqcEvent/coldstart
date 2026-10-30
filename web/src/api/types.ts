@@ -193,6 +193,200 @@ export interface ProjectFact {
   createdAt: string;
 }
 
+export type PlanStatus = 'draft' | 'published' | 'superseded';
+export type TaskKind =
+  | 'agent_coding'
+  | 'human_external'
+  | 'approval_gate'
+  | 'milestone';
+export type AcceptancePolicy = 'agent_report' | 'human_acceptance';
+export type WorkItemStatus =
+  | 'draft'
+  | 'ready'
+  | 'claimed'
+  | 'in_progress'
+  | 'submitted'
+  | 'done'
+  | 'blocked'
+  | 'failed'
+  | 'reopened'
+  | 'cancelled';
+export type ContractState = 'current' | 'stale';
+export type DependencyKind = 'blocks' | 'informs' | 'conflicts_with';
+export type LeaseStatus = 'active' | 'released' | 'expired' | 'consumed';
+export type WorkRunStatus =
+  | 'claimed'
+  | 'running'
+  | 'submitted'
+  | 'completed'
+  | 'failed'
+  | 'expired'
+  | 'released'
+  | 'blocked';
+export type ReportOutcome = 'completed' | 'failed' | 'blocked';
+
+export interface TaskDependency {
+  taskKey: string;
+  kind: DependencyKind;
+}
+
+export interface AcceptanceCriterion {
+  id: string;
+  text: string;
+  requiredEvidence: boolean;
+}
+
+export interface TaskSpec {
+  taskKey: string;
+  title: string;
+  kind: TaskKind;
+  goal: string;
+  scope: string[];
+  outOfScope: string[];
+  moduleId: string | null;
+  platformId: string | null;
+  repositoryKey: string | null;
+  baseRef: string | null;
+  workBranch: string | null;
+  allowedPaths: string[];
+  contextRefs: string[];
+  acceptanceCriteria: AcceptanceCriterion[];
+  acceptancePolicy: AcceptancePolicy;
+  evidenceRequirements: string[];
+  priority: number;
+  criticalPath: boolean;
+  contextBudgetTokens: number;
+  resourceKeys: string[];
+  dependencies: TaskDependency[];
+}
+
+export interface PlanContent {
+  tasks: TaskSpec[];
+  warnings: string[];
+}
+
+export interface PlanRevision {
+  id: string;
+  projectId: string;
+  revisionNumber: number;
+  blueprintRevisionId: string;
+  blueprintContentHash: string;
+  templateVersion: string;
+  status: PlanStatus;
+  content: PlanContent;
+  contentHash: string;
+  createdAt: string;
+  publishedAt: string | null;
+}
+
+export interface WorkItem {
+  id: string;
+  projectId: string;
+  planRevisionId: string;
+  taskSpecId: string;
+  taskKey: string;
+  status: WorkItemStatus;
+  contractState: ContractState;
+  priority: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface LeaseSummary {
+  id: string;
+  workItemId: string;
+  agentProfile: string;
+  status: LeaseStatus;
+  issuedAt: string;
+  expiresAt: string;
+  lastHeartbeatAt: string;
+  releasedAt: string | null;
+}
+
+export interface WorkRun {
+  id: string;
+  workItemId: string;
+  leaseId: string;
+  agentProfile: string;
+  claimRequestId: string;
+  status: WorkRunStatus;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+export interface AcceptanceResult {
+  criterionId: string;
+  passed: boolean;
+  note: string;
+  evidenceRefs: string[];
+}
+
+export interface CommandRun {
+  command: string;
+  exitCode: number | null;
+  summary: string;
+}
+
+export interface WorkReportInput {
+  status: ReportOutcome;
+  summary: string;
+  branch: string | null;
+  commitSha: string | null;
+  changedFiles: string[];
+  acceptanceResults: AcceptanceResult[];
+  commandsRun: CommandRun[];
+  evidenceRefs: string[];
+  knownIssues: string[];
+  followUpItems: string[];
+  contractHash: string;
+  idempotencyKey: string;
+}
+
+export interface WorkReportRecord {
+  id: string;
+  workItemId: string;
+  workRunId: string;
+  contractHash: string;
+  report: WorkReportInput;
+  reportHash: string;
+  accepted: boolean;
+  rejectionReasons: string[];
+  createdAt: string;
+}
+
+export interface WorkBlockerRecord {
+  workItemId: string;
+  reason: string;
+  neededInput: string[];
+  proposal: string | null;
+  createdAt: string;
+}
+
+export interface WorkItemView {
+  workItem: WorkItem;
+  task: TaskSpec;
+  activeLease: LeaseSummary | null;
+  latestReport: WorkReportRecord | null;
+}
+
+export interface McpConnectionInfo {
+  command: string;
+  projectHome: string;
+  configJson: string;
+}
+
+export interface PlanWorkspace {
+  draft: PlanRevision | null;
+  published: PlanRevision | null;
+  workItems: WorkItemView[];
+  leases: LeaseSummary[];
+  runs: WorkRun[];
+  reports: WorkReportRecord[];
+  blockers: WorkBlockerRecord[];
+  mcp: McpConnectionInfo;
+}
+
 export interface ProjectWorkspace {
   status: ProjectStatus;
   sources: ArtifactMetadata[];
@@ -201,6 +395,7 @@ export interface ProjectWorkspace {
   published: BlueprintRevision | null;
   inbox: InfoRequest[];
   facts: ProjectFact[];
+  plan: PlanWorkspace;
 }
 
 export interface ModelConfig {

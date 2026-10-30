@@ -5,6 +5,7 @@ interface ProjectOverviewProps {
   busy: boolean;
   onRefresh: () => void;
   onEnterRequirements: () => void;
+  onEnterPlan: () => void;
 }
 
 export function ProjectOverview({
@@ -12,6 +13,7 @@ export function ProjectOverview({
   busy,
   onRefresh,
   onEnterRequirements,
+  onEnterPlan,
 }: ProjectOverviewProps) {
   const openInbox = workspace.inbox.filter(
     (request) => request.status === 'open',
@@ -22,6 +24,17 @@ export function ProjectOverview({
   const publishedLabel = workspace.published
     ? `已发布 v${workspace.published.revisionNumber}`
     : '尚未发布';
+  const planDone = workspace.plan.workItems.filter(
+    (item) => item.workItem.status === 'done',
+  ).length;
+  const planTotal = workspace.plan.workItems.length;
+  const planLabel = planTotal > 0
+    ? `${planDone}/${planTotal}`
+    : workspace.plan.published
+      ? '已发布'
+      : workspace.plan.draft
+        ? '待发布'
+        : '未生成';
   const nextStep =
     workspace.sources.length === 0
       ? '下一步：导入需求文档，让模型提出可追溯的结构化蓝图'
@@ -30,7 +43,13 @@ export function ProjectOverview({
         : workspace.draft
           ? '下一步：检查并发布当前蓝图草稿'
           : workspace.published
-            ? '蓝图已发布；下一阶段将编译开发计划并交给外部 Agent 执行'
+            ? workspace.plan.draft
+              ? '下一步：检查并发布开发计划，随后让 Codex 通过 MCP 主动领取'
+              : workspace.plan.published
+                ? planTotal > 0 && planDone === planTotal
+                  ? '计划已全部完成；下一阶段将接入仓库与能力绑定'
+                  : '计划执行中；Codex 通过 MCP 领取任务，桌面端自动观察进度'
+                : '下一步：编译开发计划并发布任务 DAG'
             : '下一步：在需求导入页生成蓝图草稿';
 
   return (
@@ -55,14 +74,14 @@ export function ProjectOverview({
           <button
             className="button button--primary"
             type="button"
-            onClick={onEnterRequirements}
+            onClick={workspace.published ? onEnterPlan : onEnterRequirements}
           >
-            进入需求导入
+            {workspace.published ? '进入计划看板' : '进入需求导入'}
           </button>
         </div>
       </header>
 
-      <div className="metrics-grid" aria-label="项目流程指标">
+      <div className="metrics-grid metrics-grid--five" aria-label="项目流程指标">
         <article className="metric-card">
           <span className="metric-card__index">01</span>
           <p>来源文档</p>
@@ -86,6 +105,12 @@ export function ProjectOverview({
           <p>待处理 Inbox</p>
           <strong>{openInbox}</strong>
           <small>{openInbox > 0 ? '需要人工提供信息' : '当前无阻塞项'}</small>
+        </article>
+        <article className="metric-card">
+          <span className="metric-card__index">05</span>
+          <p>计划进度</p>
+          <strong>{planLabel}</strong>
+          <small>{planTotal > 0 ? '任务状态实时观察' : '从已发布蓝图编译'}</small>
         </article>
       </div>
 

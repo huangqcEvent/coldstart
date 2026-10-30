@@ -2,7 +2,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::StorageError;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let current = read_schema_version(connection)?;
@@ -28,12 +28,18 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
         0 => {
             create_schema_v2(&transaction)?;
             create_schema_v3(&transaction)?;
+            create_schema_v4(&transaction)?;
         }
         1 => {
             migrate_v1_to_v2(&transaction)?;
             create_schema_v3(&transaction)?;
+            create_schema_v4(&transaction)?;
         }
-        2 => create_schema_v3(&transaction)?,
+        2 => {
+            create_schema_v3(&transaction)?;
+            create_schema_v4(&transaction)?;
+        }
+        3 => create_schema_v4(&transaction)?,
         _ => return Err(unsupported_schema(current)),
     }
 
@@ -165,6 +171,133 @@ fn create_schema_v3(transaction: &Transaction<'_>) -> Result<(), StorageError> {
 
             CREATE INDEX project_facts_by_key
                 ON project_facts(project_id, fact_key, version DESC);
+            ",
+    )?;
+    Ok(())
+}
+
+fn create_schema_v4(transaction: &Transaction<'_>) -> Result<(), StorageError> {
+    transaction.execute_batch(
+        "
+            CREATE TABLE plan_revisions (
+                id TEXT PRIMARY KEY NOT NULL,
+                project_id TEXT NOT NULL,
+                revision_number INTEGER NOT NULL,
+                blueprint_revision_id TEXT NOT NULL,
+                blueprint_content_hash TEXT NOT NULL,
+                template_version TEXT NOT NULL,
+                status TEXT NOT NULL,
+                content_json TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                published_at TEXT,
+                UNIQUE(project_id, revision_number),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (blueprint_revision_id)
+                    REFERENCES blueprint_revisions(id) ON DELETE RESTRICT
+            );
+
+            CREATE INDEX plan_revisions_by_project
+                ON plan_revisions(project_id, revision_number DESC);
+
+            CREATE TABLE task_specs (
+                id TEXT PRIMARY KEY NOT NULL,
+                plan_revision_id TEXT NOT NULL,
+                task_key TEXT NOT NULL,
+                contract_hash TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                spec_json TEXT NOT NULL,
+                UNIQUE(plan_revision_id, task_key),
+                FOREIGN KEY (plan_revision_id) REFERENCES plan_revisions(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX task_specs_by_plan ON task_specs(plan_revision_id, task_key);
+
+            CREATE TABLE work_items (
+                id TEXT PRIMARY KEY NOT NULL,
+                project_id TEXT NOT NULL,
+                plan_revision_id TEXT NOT NULL,
+                task_spec_id TEXT NOT NULL,
+                task_key TEXT NOT NULL,
+                status TEXT NOT NULL,
+                contract_state TEXT NOT NULL,
+                priority INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                completed_at TEXT,
+                UNIQUE(project_id, plan_revision_id, task_key),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (plan_revision_id) REFERENCES plan_revisions(id) ON DELETE CASCADE,
+                FOREIGN KEY (task_spec_id) REFERENCES task_specs(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX work_items_by_project_status
+                ON work_items(project_id, status, priority DESC, task_key ASC);
+
+            CREATE TABLE leases (
+                id TEXT PRIMARY KEY NOT NULL,
+                work_item_id TEXT NOT NULL,
+                agent_profile TEXT NOT NULL,
+                token_hash TEXT NOT NULL,
+                status TEXT NOT NULL,
+                issued_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                last_heartbeat_at TEXT NOT NULL,
+                released_at TEXT,
+                FOREIGN KEY (work_item_id) REFERENCES work_items(id) ON DELETE CASCADE
+            );
+
+            CREATE UNIQUE INDEX one_active_lease_per_work_item
+                ON leases(work_item_id) WHERE status = 'active';
+
+            CREATE TABLE work_runs (
+                id TEXT PRIMARY KEY NOT NULL,
+                work_item_id TEXT NOT NULL,
+                lease_id TEXT NOT NULL,
+                agent_profile TEXT NOT NULL,
+                claim_request_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                UNIQUE(claim_request_id),
+                FOREIGN KEY (work_item_id) REFERENCES work_items(id) ON DELETE CASCADE,
+                FOREIGN KEY (lease_id) REFERENCES leases(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX work_runs_by_work_item ON work_runs(work_item_id, started_at DESC);
+
+            CREATE TABLE work_reports (
+                id TEXT PRIMARY KEY NOT NULL,
+                work_item_id TEXT NOT NULL,
+                work_run_id TEXT NOT NULL,
+                contract_hash TEXT NOT NULL,
+                idempotency_key_hash TEXT NOT NULL,
+                report_json TEXT NOT NULL,
+                report_hash TEXT NOT NULL,
+                accepted INTEGER NOT NULL,
+                rejection_reasons_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(work_item_id, idempotency_key_hash),
+                FOREIGN KEY (work_item_id) REFERENCES work_items(id) ON DELETE CASCADE,
+                FOREIGN KEY (work_run_id) REFERENCES work_runs(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX work_reports_by_work_item
+                ON work_reports(work_item_id, created_at DESC);
+
+            CREATE TABLE work_blockers (
+                id TEXT PRIMARY KEY NOT NULL,
+                work_item_id TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                needed_input_json TEXT NOT NULL,
+                proposal TEXT,
+                created_at TEXT NOT NULL,
+                resolved_at TEXT,
+                FOREIGN KEY (work_item_id) REFERENCES work_items(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX work_blockers_by_work_item
+                ON work_blockers(work_item_id, created_at DESC);
             ",
     )?;
     Ok(())

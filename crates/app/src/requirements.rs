@@ -15,7 +15,9 @@ use coldstart_core::{
 };
 use coldstart_storage::Database;
 
-use crate::{AppError, ProjectWorkspace, context::OpenProject};
+use crate::{
+    AppError, ProjectWorkspace, context::OpenProject, plan_workspace::build_plan_workspace,
+};
 
 pub const MAX_SOURCE_CONTEXT_CHARACTERS: usize = 80_000;
 const MODEL_PROVIDER: &str = "OpenAI Compatible";
@@ -211,6 +213,7 @@ impl<M: BlueprintModel> RequirementsService<M> {
 }
 
 fn build_workspace(project: OpenProject) -> Result<ProjectWorkspace, AppError> {
+    let plan = build_plan_workspace(&project)?;
     let status = project.status()?;
     let sources = project.database.list_artifacts(&project.project.id)?;
     let mut source_anchors = BTreeMap::new();
@@ -236,6 +239,7 @@ fn build_workspace(project: OpenProject) -> Result<ProjectWorkspace, AppError> {
         published,
         inbox,
         facts,
+        plan,
     })
 }
 

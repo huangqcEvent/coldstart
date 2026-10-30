@@ -11,7 +11,8 @@ ColdStart 不生成业务代码，也不替代 Agent。它负责项目的认知�
 - 第一阶段 Rust 核心与 CLI 已完成：可创建可迁移的项目主目录，在本地 SQLite 中保存项目和追加式事件，并查询项目状态。
 - 第二阶段 Tauri 桌面壳已完成：可通过桌面窗口创建、打开并刷新项目状态。
 - 第三阶段需求与蓝图已完成：可导入需求、调用 OpenAI 兼容模型生成结构化蓝图、人工编辑与发布，并在 Inbox 中补充阻塞信息。
-- 计划引擎、MCP、Git/GitHub、凭据引用、发布门禁与安装包仍属于后续阶段。
+- 第四阶段计划引擎与 MCP 已完成：可从已发布蓝图编译确定性任务 DAG，通过租约领取工作、编译上下文、提交结构化报告，并在桌面看板观察进度。
+- Git/GitHub、凭据引用、发布门禁与安装包仍属于后续阶段。
 
 ```powershell
 cargo run -p coldstart-cli -- init --name "Demo Project" --path D:\work\demo
@@ -35,7 +36,7 @@ pnpm --dir apps/desktop build
 
 开发窗口同时依赖 Vite 与 Tauri，Tauri CLI 从工作区 `node_modules` 运行；pnpm store 固定在仓库内的 `.pnpm-store`，Rust 构建产物位于 `target`，均留在 D 盘。生产构建输出 `target\release\coldstart-desktop.exe`，当前不生成安装包。
 
-桌面应用现在支持项目创建与打开、需求导入、蓝图生成与人工编辑、不可变版本发布，以及 Inbox 回答与项目事实归档。
+桌面应用现在支持项目创建与打开、需求导入、蓝图生成与人工编辑、不可变版本发布、计划编译与发布、任务状态观察，以及 Inbox 回答、人工计划任务和项目事实归档。
 
 ## 需求与蓝图
 
@@ -48,6 +49,47 @@ pnpm --dir apps/desktop build
 支持单个不超过 20 MiB 的需求文档，单次抽取的锚点文本总量上限为 80,000 字符。扫描型 PDF 当前会返回“无可提取文本”的明确错误，不执行 OCR。
 
 模型 API Key 只存在于当前界面内存和本次 IPC 调用中，不写入项目文件、SQLite、事件、日志或错误消息。切换页面或重启应用后需要重新输入。
+
+## 开发计划与 MCP
+
+1. 发布蓝图后进入“计划看板”，编译由 `plan-v1` 模板确定性生成的开发计划。模板覆盖平台工程基础、服务端契约、模块纵向切片、三方能力准备与接入、发布条件和平台发布里程碑。
+2. 计划草稿可人工调整标题、目标、范围、明确不做、优先级、关键路径、验收标准、证据要求和 `blocks` 依赖；保存时重新校验任务键、DAG、路径边界和验收结构。
+3. 发布计划后，任务按 `blocks` 依赖解锁。编码任务只能由持有有效租约的 MCP Agent 提交完成报告；桌面 UI 只允许完成 `human_external` 与 `approval_gate` 任务。
+4. 计划看板每 3 秒刷新，窗口重新获得焦点时立即刷新；刷新失败会保留最后一次成功快照并显示错误。
+
+构建 release MCP 二进制：
+
+```powershell
+. D:\DevTools\coldstart-env.ps1
+cargo build -p coldstart-mcp --release
+```
+
+Codex 或兼容 MCP 客户端使用以下配置主动连接项目：
+
+```json
+{
+  "mcpServers": {
+    "coldstart": {
+      "command": "D:\\coldstart\\target\\release\\coldstart-mcp.exe",
+      "args": ["--project-home", "D:\\work\\your-project"]
+    }
+  }
+}
+```
+
+MCP 只暴露七个工作工具：
+
+- `claim_next_work`：按 Agent 与逻辑仓库原子领取下一个可执行任务。
+- `get_work_context`：返回所选任务在预算内编译的上下文包。
+- `read_task_reference`：读取任务白名单内的额外引用。
+- `heartbeat_work`：续租并记录活动。
+- `report_work_blocker`：上报阻塞与需要人工提供的最小输入。
+- `submit_work_report`：提交带契约哈希、验收结果、证据和幂等键的结构化报告。
+- `release_work`：释放无法继续的任务租约。
+
+ColdStart 不启动 Codex，也不常驻后台。默认租约为 30 分钟，建议每 5 分钟心跳；默认上下文预算为 12,000 tokens。租约令牌是 256 位随机值，SQLite 只保存 SHA-256 哈希，令牌不会写入事件、日志、UI、报告或 MCP 回放。授权类项目事实在 Agent 上下文中只标记为“已登记”，具体值不会展开。
+
+阶段 4 不实现 Git/GitHub 操作、真实 Commit 校验、真实 OSS/短信/支付密钥、自动部署、App 打包、商店提审与命令自动验证。
 
 ## 解决的问题
 
@@ -105,6 +147,7 @@ MVP 采用 Tauri 2、Rust、React、TypeScript 和 SQLite。Rust 负责领域模
 - [第一阶段实施计划：Rust 核心与 CLI](docs/superpowers/plans/2026-10-30-coldstart-01-core-foundation.md)
 - [第二阶段实施计划：Tauri Desktop Shell](docs/superpowers/plans/2026-10-30-coldstart-02-desktop-shell.md)
 - [第三阶段实施计划：需求与蓝图](docs/superpowers/plans/2026-10-30-coldstart-03-requirements-blueprint.md)
+- [第四阶段实施计划：计划引擎与 MCP](docs/superpowers/plans/2026-10-30-coldstart-04-plan-engine-mcp.md)
 
 ## 安全说明
 
