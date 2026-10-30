@@ -7,8 +7,8 @@
 1. **核心基础与 CLI（已完成）**：Rust workspace、领域模型、SQLite、事件日志、项目主目录、`coldstart init` 和 `coldstart status`。阶段计划与执行记录：[2026-10-30-coldstart-01-core-foundation.md](2026-10-30-coldstart-01-core-foundation.md)。
 2. **Tauri Desktop Shell（已完成）**：Tauri 2、React/TypeScript、项目创建、打开与状态刷新界面、Tauri 命令边界。阶段计划：[2026-10-30-coldstart-02-desktop-shell.md](2026-10-30-coldstart-02-desktop-shell.md)。
 3. **Requirements and Blueprint（已完成）**：文档导入、模型适配器、结构化蓝图、来源追踪、不可变发布、缺失信息与 Inbox 基础。阶段计划与执行记录：[2026-10-30-coldstart-03-requirements-blueprint.md](2026-10-30-coldstart-03-requirements-blueprint.md)。
-4. **Plan Engine and MCP（下一步）**：计划编译、DAG、状态机、租约、上下文编译、MCP stdio 和完成报告。
-5. **Git, GitHub, Capabilities and Release Gates**：仓库远程、GitHub OAuth、任务分支推送、凭据引用、三方能力、发布清单与审批。
+4. **Plan Engine and MCP（已完成）**：计划编译、DAG、状态机、租约、上下文编译、MCP stdio 和完成报告。阶段计划与执行记录：[2026-10-30-coldstart-04-plan-engine-mcp.md](2026-10-30-coldstart-04-plan-engine-mcp.md)。
+5. **Git, GitHub, Capabilities and Release Gates（下一步）**：仓库远程、GitHub OAuth、任务分支推送、凭据引用、三方能力、发布清单与审批。
 6. **Integration and Hardening**：跨子系统端到端测试、安全测试、变更重规划、打包和 MVP 验收。
 
 ## 阶段门禁

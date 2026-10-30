@@ -12,8 +12,9 @@ use coldstart_core::{
     ArtifactFormat, ArtifactId, ArtifactMetadata, BlueprintContent, BlueprintGeneration,
     BlueprintRevision, BlueprintRevisionId, BlueprintStatus, BlueprintValidationError,
     DocumentAnchor, DomainEvent, DomainEventKind, GenerationSource, InfoRequest,
-    InfoRequestCategory, InfoRequestDraft, InfoRequestId, InfoRequestStatus, Project, ProjectFact,
-    ProjectFactId, ProjectId, validate_blueprint_structure,
+    InfoRequestCategory, InfoRequestDraft, InfoRequestId, InfoRequestStatus, PlanRevisionId,
+    PlanValidationError, Project, ProjectFact, ProjectFactId, ProjectId, WorkItemId,
+    validate_blueprint_structure,
 };
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Row, Transaction, TransactionBehavior, params,
@@ -61,8 +62,42 @@ pub enum StorageError {
     InfoRequestNotOpen(InfoRequestId),
     #[error("info request answer cannot be empty")]
     EmptyInfoRequestAnswer,
+    #[error("plan revision {0} does not exist")]
+    PlanNotFound(PlanRevisionId),
+    #[error("plan revision {0} is not a draft")]
+    PlanNotDraft(PlanRevisionId),
+    #[error("a plan revision is already active for this project")]
+    PlanAlreadyActive,
+    #[error("publishing a plan requires a published blueprint")]
+    PublishedBlueprintRequired,
+    #[error("plan blueprint hash does not match the published blueprint")]
+    BlueprintContentMismatch,
+    #[error("work item {0} does not exist")]
+    WorkItemNotFound(WorkItemId),
+    #[error("work item {0} cannot be claimed in its current state")]
+    WorkNotClaimable(WorkItemId),
+    #[error("lease token is invalid for work item {0}")]
+    LeaseInvalid(WorkItemId),
+    #[error("lease for work item {0} has expired")]
+    LeaseExpired(WorkItemId),
+    #[error("work report contract hash does not match the active task contract")]
+    ContractMismatch,
+    #[error("work report was rejected: {0}")]
+    ReportRejected(String),
+    #[error("claim request id was already used: {0}")]
+    DuplicateClaimRequest(String),
+    #[error("claim request fields cannot be empty")]
+    EmptyClaimRequest,
+    #[error("release or blocker reason cannot be empty")]
+    EmptyWorkReason,
+    #[error("human completion note cannot be empty")]
+    EmptyHumanWorkNote,
+    #[error("work item {0} is not a human task")]
+    HumanWorkRequired(WorkItemId),
     #[error("invalid blueprint: {0}")]
     InvalidBlueprint(#[from] BlueprintValidationError),
+    #[error("invalid plan: {0}")]
+    InvalidPlan(#[from] PlanValidationError),
     #[error("database schema version {found} is newer than supported version {supported}")]
     UnsupportedSchema { found: i64, supported: i64 },
     #[error("SQLite did not enable WAL mode; active journal mode is {0}")]
@@ -111,6 +146,14 @@ impl Database {
         insert_event(&transaction, &DomainEvent::project_initialized(project))?;
         transaction.commit()?;
         Ok(())
+    }
+
+    pub(crate) fn connection(&self) -> &Connection {
+        &self.connection
+    }
+
+    pub(crate) fn connection_mut(&mut self) -> &mut Connection {
+        &mut self.connection
     }
 
     pub fn load_project(
@@ -927,7 +970,10 @@ fn event_exists(transaction: &Transaction<'_>, id: Uuid) -> Result<bool, Storage
     Ok(exists)
 }
 
-fn insert_event(transaction: &Transaction<'_>, event: &DomainEvent) -> Result<(), StorageError> {
+pub(crate) fn insert_event(
+    transaction: &Transaction<'_>,
+    event: &DomainEvent,
+) -> Result<(), StorageError> {
     transaction.execute(
         "INSERT INTO events (event_id, project_id, occurred_at, event_type, payload_json)
          VALUES (?1, ?2, ?3, ?4, ?5)",

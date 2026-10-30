@@ -1,0 +1,31 @@
+[package]
+name = "coldstart-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "coldstart_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "coldstart-mcp"
+path = "src/main.rs"
+
+[dependencies]
+chrono.workspace = true
+coldstart-app = { path = "../app" }
+coldstart-core = { path = "../core" }
+rmcp.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+coldstart-storage = { path = "../storage" }
+rusqlite.workspace = true
+sha2.workspace = true
+tempfile.workspace = true

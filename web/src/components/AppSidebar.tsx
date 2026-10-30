@@ -2,6 +2,7 @@ export type WorkspaceView =
   | 'overview'
   | 'requirements'
   | 'blueprint'
+  | 'plan'
   | 'inbox';
 
 interface AppSidebarProps {
@@ -19,11 +20,11 @@ const workspaceItems: Array<{
   { view: 'requirements', label: '需求导入', index: '02' },
   { view: 'blueprint', label: '蓝图编排', index: '03' },
   { view: 'inbox', label: '人工 Inbox', index: '04' },
+  { view: 'plan', label: '计划看板', index: '05' },
 ];
 
 const futureItems = [
-  { label: '计划引擎', index: '05' },
-  { label: 'MCP 接入', index: '06' },
+  { label: '仓库与能力', index: '06' },
   { label: '发布中心', index: '07' },
 ];
 

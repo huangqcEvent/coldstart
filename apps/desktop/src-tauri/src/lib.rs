@@ -12,7 +12,12 @@ pub fn run() {
             commands::generate_blueprint,
             commands::save_blueprint_draft,
             commands::publish_blueprint,
-            commands::resolve_info_request
+            commands::resolve_info_request,
+            commands::read_plan_workspace,
+            commands::generate_plan_draft,
+            commands::save_plan_draft,
+            commands::publish_plan,
+            commands::complete_human_work
         ])
         .run(tauri::generate_context!())
         .expect("failed to run ColdStart desktop");

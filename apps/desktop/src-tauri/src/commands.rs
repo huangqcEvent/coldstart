@@ -1,8 +1,12 @@
 use std::path::PathBuf;
 
 use coldstart_adapters::{ModelConfig, OpenAiCompatibleModel};
-use coldstart_app::{ProjectService, ProjectStatus, ProjectWorkspace, RequirementsService};
-use coldstart_core::{BlueprintContent, BlueprintRevisionId, InfoRequestId};
+use coldstart_app::{
+    PlanService, ProjectService, ProjectStatus, ProjectWorkspace, RequirementsService,
+};
+use coldstart_core::{
+    BlueprintContent, BlueprintRevisionId, InfoRequestId, PlanContent, PlanRevisionId, WorkItemId,
+};
 
 use crate::error::CommandError;
 
@@ -152,6 +156,99 @@ pub async fn resolve_info_request(
     .map_err(join_error)?
 }
 
+pub fn read_plan_workspace_sync(path: String) -> Result<ProjectWorkspace, CommandError> {
+    read_requirements_workspace_sync(path)
+}
+
+#[tauri::command]
+pub async fn read_plan_workspace(path: String) -> Result<ProjectWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || read_plan_workspace_sync(path))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn generate_plan_draft_sync(path: String) -> Result<ProjectWorkspace, CommandError> {
+    PlanService::new()
+        .generate_draft(PathBuf::from(&path))
+        .map_err(CommandError::from)?;
+    read_requirements_workspace_sync(path)
+}
+
+#[tauri::command]
+pub async fn generate_plan_draft(path: String) -> Result<ProjectWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || generate_plan_draft_sync(path))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn save_plan_draft_sync(
+    path: String,
+    content: PlanContent,
+) -> Result<ProjectWorkspace, CommandError> {
+    PlanService::new()
+        .save_draft(PathBuf::from(&path), content)
+        .map_err(CommandError::from)?;
+    read_requirements_workspace_sync(path)
+}
+
+#[tauri::command]
+pub async fn save_plan_draft(
+    path: String,
+    content: PlanContent,
+) -> Result<ProjectWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || save_plan_draft_sync(path, content))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn publish_plan_sync(
+    path: String,
+    revision_id: String,
+) -> Result<ProjectWorkspace, CommandError> {
+    let revision_id = parse_plan_revision_id(&revision_id)?;
+    PlanService::new()
+        .publish(PathBuf::from(&path), revision_id)
+        .map_err(CommandError::from)?;
+    read_requirements_workspace_sync(path)
+}
+
+#[tauri::command]
+pub async fn publish_plan(
+    path: String,
+    revision_id: String,
+) -> Result<ProjectWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || publish_plan_sync(path, revision_id))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn complete_human_work_sync(
+    path: String,
+    work_item_id: String,
+    note: String,
+    accepted: bool,
+) -> Result<ProjectWorkspace, CommandError> {
+    let work_item_id = parse_work_item_id(&work_item_id)?;
+    PlanService::new()
+        .complete_human_work(PathBuf::from(&path), work_item_id, note, accepted)
+        .map_err(CommandError::from)?;
+    read_requirements_workspace_sync(path)
+}
+
+#[tauri::command]
+pub async fn complete_human_work(
+    path: String,
+    work_item_id: String,
+    note: String,
+    accepted: bool,
+) -> Result<ProjectWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        complete_human_work_sync(path, work_item_id, note, accepted)
+    })
+    .await
+    .map_err(join_error)?
+}
+
 fn parse_revision_id(value: &str) -> Result<BlueprintRevisionId, CommandError> {
     value.parse().map_err(|_| CommandError {
         code: "invalid_id".to_owned(),
@@ -163,6 +260,20 @@ fn parse_info_request_id(value: &str) -> Result<InfoRequestId, CommandError> {
     value.parse().map_err(|_| CommandError {
         code: "invalid_id".to_owned(),
         message: "信息请求 ID 无效".to_owned(),
+    })
+}
+
+fn parse_plan_revision_id(value: &str) -> Result<PlanRevisionId, CommandError> {
+    value.parse().map_err(|_| CommandError {
+        code: "invalid_id".to_owned(),
+        message: "计划版本 ID 无效".to_owned(),
+    })
+}
+
+fn parse_work_item_id(value: &str) -> Result<WorkItemId, CommandError> {
+    value.parse().map_err(|_| CommandError {
+        code: "invalid_id".to_owned(),
+        message: "工作项 ID 无效".to_owned(),
     })
 }
 

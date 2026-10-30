@@ -1,7 +1,10 @@
 use std::{io, path::PathBuf};
 
 use coldstart_adapters::{DocumentError, ModelError};
-use coldstart_core::{BlueprintRevisionId, InfoRequestId, ManifestError, ProjectError, ProjectId};
+use coldstart_core::{
+    BlueprintRevisionId, InfoRequestId, ManifestError, PlanCompileError, PlanRevisionId,
+    ProjectError, ProjectId, WorkItemId,
+};
 use coldstart_storage::StorageError;
 use thiserror::Error;
 
@@ -33,6 +36,32 @@ pub enum AppError {
     SourceContextTooLarge { actual: usize, limit: usize },
     #[error("project has no imported requirement sources")]
     NoRequirementSources,
+    #[error("publishing a plan requires a published blueprint")]
+    PublishedBlueprintRequired,
+    #[error("invalid plan: {0}")]
+    InvalidPlan(String),
+    #[error("plan revision {0} does not exist")]
+    PlanNotFound(PlanRevisionId),
+    #[error("plan revision {0} is not a draft")]
+    PlanNotDraft(PlanRevisionId),
+    #[error("a plan revision is already active")]
+    PlanAlreadyActive,
+    #[error("work item {0} does not exist")]
+    WorkItemNotFound(WorkItemId),
+    #[error("work item {0} cannot be operated in its current state")]
+    WorkNotClaimable(WorkItemId),
+    #[error("lease token is invalid for work item {0}")]
+    LeaseInvalid(WorkItemId),
+    #[error("lease for work item {0} has expired")]
+    LeaseExpired(WorkItemId),
+    #[error("work item {0} is not a human task")]
+    HumanWorkRequired(WorkItemId),
+    #[error("work report was rejected: {0}")]
+    ReportRejected(String),
+    #[error("claim request was already used: {0}")]
+    DuplicateClaimRequest(String),
+    #[error("task reference not found: {0}")]
+    ReferenceNotFound(String),
     #[error("blueprint revision {0} does not exist")]
     BlueprintNotFound(BlueprintRevisionId),
     #[error("blueprint revision {0} is not a draft")]
@@ -79,6 +108,19 @@ impl AppError {
             Self::InvalidSourceReference(_) => "invalid_source_reference",
             Self::SourceContextTooLarge { .. } => "source_context_too_large",
             Self::NoRequirementSources => "no_requirement_sources",
+            Self::PublishedBlueprintRequired => "published_blueprint_required",
+            Self::InvalidPlan(_) => "invalid_plan",
+            Self::PlanNotFound(_) => "plan_not_found",
+            Self::PlanNotDraft(_) => "plan_not_draft",
+            Self::PlanAlreadyActive => "plan_already_active",
+            Self::WorkItemNotFound(_) => "work_item_not_found",
+            Self::WorkNotClaimable(_) => "work_not_claimable",
+            Self::LeaseInvalid(_) => "lease_invalid",
+            Self::LeaseExpired(_) => "lease_expired",
+            Self::HumanWorkRequired(_) => "human_work_required",
+            Self::ReportRejected(_) => "report_invalid",
+            Self::DuplicateClaimRequest(_) => "claim_request_duplicate",
+            Self::ReferenceNotFound(_) => "reference_not_found",
             Self::BlueprintNotFound(_) => "blueprint_not_found",
             Self::BlueprintNotDraft(_) => "blueprint_not_draft",
             Self::InfoRequestNotFound(_) => "info_request_not_found",
@@ -93,9 +135,34 @@ impl AppError {
             Self::Storage(StorageError::InfoRequestNotOpen(_)) => "info_request_not_open",
             Self::Storage(StorageError::EmptyInfoRequestAnswer) => "info_request_answer_empty",
             Self::Storage(StorageError::InvalidBlueprint(_)) => "invalid_blueprint",
+            Self::Storage(StorageError::PlanNotFound(_)) => "plan_not_found",
+            Self::Storage(StorageError::PlanNotDraft(_)) => "plan_not_draft",
+            Self::Storage(StorageError::PlanAlreadyActive) => "plan_already_active",
+            Self::Storage(StorageError::PublishedBlueprintRequired) => {
+                "published_blueprint_required"
+            }
+            Self::Storage(StorageError::BlueprintContentMismatch) => "blueprint_content_mismatch",
+            Self::Storage(StorageError::WorkItemNotFound(_)) => "work_item_not_found",
+            Self::Storage(StorageError::WorkNotClaimable(_)) => "work_not_claimable",
+            Self::Storage(StorageError::LeaseInvalid(_)) => "lease_invalid",
+            Self::Storage(StorageError::LeaseExpired(_)) => "lease_expired",
+            Self::Storage(StorageError::ContractMismatch) => "contract_stale",
+            Self::Storage(StorageError::ReportRejected(_)) => "report_invalid",
+            Self::Storage(StorageError::DuplicateClaimRequest(_)) => "claim_request_duplicate",
+            Self::Storage(StorageError::HumanWorkRequired(_)) => "human_work_required",
+            Self::Storage(StorageError::EmptyClaimRequest) => "invalid_claim_request",
+            Self::Storage(StorageError::EmptyWorkReason) => "empty_work_reason",
+            Self::Storage(StorageError::EmptyHumanWorkNote) => "empty_human_work_note",
+            Self::Storage(StorageError::InvalidPlan(_)) => "invalid_plan",
             Self::Storage(_) => "storage",
             Self::Io(_) => "io",
             Self::RollbackFailed { .. } => "rollback_failed",
         }
+    }
+}
+
+impl From<PlanCompileError> for AppError {
+    fn from(error: PlanCompileError) -> Self {
+        Self::InvalidPlan(error.to_string())
     }
 }
