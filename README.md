@@ -8,7 +8,10 @@ ColdStart 不生成业务代码，也不替代 Agent。它负责项目的认知�
 
 ## 当前状态
 
-第一阶段 Rust 核心与 CLI 已实现：可以创建可迁移的项目主目录，在本地 SQLite 中保存项目和追加式事件，并查询项目状态。第二阶段 Tauri 桌面壳已实现：可以通过桌面窗口创建、打开并刷新项目状态。蓝图、计划引擎、MCP、Git 与凭据管理仍在后续阶段。
+- 第一阶段 Rust 核心与 CLI 已完成：可创建可迁移的项目主目录，在本地 SQLite 中保存项目和追加式事件，并查询项目状态。
+- 第二阶段 Tauri 桌面壳已完成：可通过桌面窗口创建、打开并刷新项目状态。
+- 第三阶段需求与蓝图已完成：可导入需求、调用 OpenAI 兼容模型生成结构化蓝图、人工编辑与发布，并在 Inbox 中补充阻塞信息。
+- 计划引擎、MCP、Git/GitHub、凭据引用、发布门禁与安装包仍属于后续阶段。
 
 ```powershell
 cargo run -p coldstart-cli -- init --name "Demo Project" --path D:\work\demo
@@ -21,15 +24,30 @@ cargo run -p coldstart-cli -- status --path D:\work\demo --json
 
 ## 桌面应用
 
-在仓库根目录安装工作区依赖并启动桌面开发窗口：
+本机已将 Rust 与构建工具安装在 D 盘。新终端可先加载环境脚本，再在仓库根目录安装工作区依赖：
 
 ```powershell
+. D:\DevTools\coldstart-env.ps1
 pnpm install
 pnpm --dir apps/desktop dev
 pnpm --dir apps/desktop build
 ```
 
-开发窗口同时依赖 Vite 与 Tauri，Tauri CLI 从工作区 `node_modules` 运行。生产构建输出 `target\release\coldstart-desktop.exe`，本阶段不生成安装包。当前桌面只实现项目创建、打开与状态刷新。
+开发窗口同时依赖 Vite 与 Tauri，Tauri CLI 从工作区 `node_modules` 运行；pnpm store 固定在仓库内的 `.pnpm-store`，Rust 构建产物位于 `target`，均留在 D 盘。生产构建输出 `target\release\coldstart-desktop.exe`，当前不生成安装包。
+
+桌面应用现在支持项目创建与打开、需求导入、蓝图生成与人工编辑、不可变版本发布，以及 Inbox 回答与项目事实归档。
+
+## 需求与蓝图
+
+1. 创建或打开项目后进入“需求导入”，导入 Markdown、TXT、DOCX 或 PDF 文档。
+2. 配置 OpenAI 兼容服务的 Base URL、模型名称与 API Key，并明确确认将需求文本发送到该服务。
+3. 生成结构化蓝图，检查平台矩阵、模块依赖、技术栈、三方服务和发布前置条件，再按需人工修改。
+4. 保存会创建新的草稿版本；只有通过结构、来源引用和模块 DAG 校验后才能发布。发布版本只读，后续修改会生成新版本。
+5. 阻塞性缺失信息进入人工 Inbox；回答后请求自动归档，并形成带版本的项目事实。
+
+支持单个不超过 20 MiB 的需求文档，单次抽取的锚点文本总量上限为 80,000 字符。扫描型 PDF 当前会返回“无可提取文本”的明确错误，不执行 OCR。
+
+模型 API Key 只存在于当前界面内存和本次 IPC 调用中，不写入项目文件、SQLite、事件、日志或错误消息。切换页面或重启应用后需要重新输入。
 
 ## 解决的问题
 
@@ -86,6 +104,7 @@ MVP 采用 Tauri 2、Rust、React、TypeScript 和 SQLite。Rust 负责领域模
 - [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
 - [第一阶段实施计划：Rust 核心与 CLI](docs/superpowers/plans/2026-10-30-coldstart-01-core-foundation.md)
 - [第二阶段实施计划：Tauri Desktop Shell](docs/superpowers/plans/2026-10-30-coldstart-02-desktop-shell.md)
+- [第三阶段实施计划：需求与蓝图](docs/superpowers/plans/2026-10-30-coldstart-03-requirements-blueprint.md)
 
 ## 安全说明
 

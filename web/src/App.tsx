@@ -1,41 +1,31 @@
 import { useState } from 'react';
 
 import * as projectApi from './api/projectApi';
-import type { CommandError, ProjectStatus } from './api/types';
+import * as requirementsApi from './api/requirementsApi';
+import type {
+  BlueprintContent,
+  CommandError,
+  ModelConfig,
+  ProjectWorkspace,
+} from './api/types';
+import { AppSidebar, type WorkspaceView } from './components/AppSidebar';
+import { BlueprintView } from './components/BlueprintView';
 import { CreateProjectDialog } from './components/CreateProjectDialog';
 import { ErrorBanner } from './components/ErrorBanner';
-import { ProjectStatusView } from './components/ProjectStatusView';
-import { Sidebar } from './components/Sidebar';
+import { InboxView } from './components/InboxView';
+import { ProjectOverview } from './components/ProjectOverview';
+import { RequirementsView } from './components/RequirementsView';
 import { WelcomeView } from './components/WelcomeView';
-
-type AppState =
-  | { kind: 'welcome' }
-  | { kind: 'loading'; label: string }
-  | { kind: 'project'; status: ProjectStatus }
-  | { kind: 'error'; error: CommandError; previous: ProjectStatus | null };
 
 function normalizeCommandError(error: unknown): CommandError {
   if (typeof error === 'object' && error !== null) {
     const candidate = error as Record<string, unknown>;
-    if (
-      typeof candidate.code === 'string' &&
-      typeof candidate.message === 'string'
-    ) {
+    if (typeof candidate.code === 'string' && typeof candidate.message === 'string') {
       return { code: candidate.code, message: candidate.message };
     }
   }
 
   return { code: 'unknown', message: String(error) };
-}
-
-function currentStatus(state: AppState): ProjectStatus | null {
-  if (state.kind === 'project') {
-    return state.status;
-  }
-  if (state.kind === 'error') {
-    return state.previous;
-  }
-  return null;
 }
 
 function LoadingView({ label }: { label: string }) {
@@ -46,135 +36,253 @@ function LoadingView({ label }: { label: string }) {
       </div>
       <p className="eyebrow">SYNCING LOCAL WORKSPACE</p>
       <h1>{label}</h1>
-      <p>正在读取项目清单与本地事件状态，请稍候。</p>
+      <p>正在读取项目清单、来源文档与本地蓝图状态，请稍候。</p>
     </section>
   );
 }
 
 export default function App() {
-  const [state, setState] = useState<AppState>({ kind: 'welcome' });
+  const [workspace, setWorkspace] = useState<ProjectWorkspace | null>(null);
+  const [view, setView] = useState<WorkspaceView>('overview');
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+  const [error, setError] = useState<CommandError | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
 
-  async function handleOpenProject() {
-    const previous = currentStatus(state);
-    setState({ kind: 'loading', label: '正在打开项目' });
-
+  async function loadProject(path: string, label: string) {
+    setBusyLabel(label);
+    setError(null);
     try {
-      const path = await projectApi.pickProjectHome();
-      if (path === null) {
-        setState(
-          previous
-            ? { kind: 'project', status: previous }
-            : { kind: 'welcome' },
-        );
-        return;
-      }
+      const [status, loadedWorkspace] = await Promise.all([
+        projectApi.readProjectStatus(path),
+        projectApi.readProjectWorkspace(path),
+      ]);
+      setWorkspace({ ...loadedWorkspace, status });
+      setView('overview');
+      return true;
+    } catch (loadError) {
+      setError(normalizeCommandError(loadError));
+      return false;
+    } finally {
+      setBusyLabel(null);
+    }
+  }
 
-      const status = await projectApi.readProjectStatus(path);
-      setState({ kind: 'project', status });
-    } catch (error) {
-      setState({
-        kind: 'error',
-        error: normalizeCommandError(error),
-        previous,
-      });
+  async function handleOpenProject() {
+    if (busyLabel) {
+      return;
+    }
+
+    let path: string | null;
+    try {
+      path = await projectApi.pickProjectHome();
+    } catch (pickError) {
+      setError(normalizeCommandError(pickError));
+      return;
+    }
+    if (path !== null) {
+      await loadProject(path, '正在打开项目');
     }
   }
 
   async function handleCreateProject(name: string, path: string) {
-    const previous = currentStatus(state);
-    setState({ kind: 'loading', label: '正在创建项目' });
+    if (busyLabel) {
+      return;
+    }
 
+    setBusyLabel('正在创建项目');
+    setError(null);
     try {
       const status = await projectApi.createProject(name, path);
+      const loadedWorkspace = await projectApi.readProjectWorkspace(path);
+      setWorkspace({ ...loadedWorkspace, status });
+      setView('overview');
       setIsCreateOpen(false);
-      setState({ kind: 'project', status });
-    } catch (error) {
+    } catch (createError) {
       setIsCreateOpen(false);
-      setState({
-        kind: 'error',
-        error: normalizeCommandError(error),
-        previous,
-      });
+      setError(normalizeCommandError(createError));
+    } finally {
+      setBusyLabel(null);
     }
   }
 
   async function handlePickProjectHome() {
     try {
       return await projectApi.pickProjectHome();
-    } catch (error) {
-      setIsCreateOpen(false);
-      setState({
-        kind: 'error',
-        error: normalizeCommandError(error),
-        previous: currentStatus(state),
-      });
+    } catch (pickError) {
+      setError(normalizeCommandError(pickError));
       return null;
     }
   }
 
-  async function handleRefresh(status: ProjectStatus) {
-    setState({ kind: 'loading', label: '正在刷新项目状态' });
-
+  async function handleRefresh() {
+    if (!workspace || busyLabel) {
+      return;
+    }
+    const path = workspace.status.rootPath;
+    setBusyLabel('正在刷新项目状态');
+    setError(null);
     try {
-      const refreshed = await projectApi.readProjectStatus(status.rootPath);
-      setState({ kind: 'project', status: refreshed });
-    } catch (error) {
-      setState({
-        kind: 'error',
-        error: normalizeCommandError(error),
-        previous: status,
-      });
+      const [status, refreshed] = await Promise.all([
+        projectApi.readProjectStatus(path),
+        projectApi.readProjectWorkspace(path),
+      ]);
+      setWorkspace({ ...refreshed, status });
+    } catch (refreshError) {
+      setError(normalizeCommandError(refreshError));
+    } finally {
+      setBusyLabel(null);
     }
   }
 
-  function dismissError() {
-    if (state.kind !== 'error') {
-      return;
+  async function runWorkspaceAction(
+    label: string,
+    operation: () => Promise<ProjectWorkspace>,
+  ) {
+    if (!workspace || busyLabel) {
+      return false;
     }
 
-    setState(
-      state.previous
-        ? { kind: 'project', status: state.previous }
-        : { kind: 'welcome' },
+    setBusyLabel(label);
+    setError(null);
+    try {
+      setWorkspace(await operation());
+      return true;
+    } catch (actionError) {
+      setError(normalizeCommandError(actionError));
+      return false;
+    } finally {
+      setBusyLabel(null);
+    }
+  }
+
+  async function handleImport() {
+    if (!workspace || busyLabel) {
+      return;
+    }
+    const path = workspace.status.rootPath;
+    let filePath: string | null;
+    try {
+      filePath = await requirementsApi.pickRequirementFile();
+    } catch (pickError) {
+      setError(normalizeCommandError(pickError));
+      return;
+    }
+    if (filePath === null) {
+      return;
+    }
+    await runWorkspaceAction('正在导入需求文档', () =>
+      requirementsApi.importRequirementDocument(path, filePath),
     );
   }
 
-  const visibleStatus =
-    state.kind === 'project'
-      ? state.status
-      : state.kind === 'error'
-        ? state.previous
-        : null;
+  async function handleGenerate(config: ModelConfig) {
+    if (!workspace) {
+      return;
+    }
+    const path = workspace.status.rootPath;
+    await runWorkspaceAction('正在生成蓝图草稿', () =>
+      requirementsApi.generateBlueprint(path, config),
+    );
+  }
+
+  async function handleSaveBlueprint(content: BlueprintContent) {
+    if (!workspace) {
+      return false;
+    }
+    const path = workspace.status.rootPath;
+    return runWorkspaceAction('正在保存蓝图草稿', () =>
+      requirementsApi.saveBlueprintDraft(path, content),
+    );
+  }
+
+  async function handlePublishBlueprint(revisionId: string) {
+    if (!workspace) {
+      return false;
+    }
+    const path = workspace.status.rootPath;
+    return runWorkspaceAction('正在发布蓝图', () =>
+      requirementsApi.publishBlueprint(path, revisionId),
+    );
+  }
+
+  async function handleResolveInfoRequest(requestId: string, answer: string) {
+    if (!workspace) {
+      return false;
+    }
+    const path = workspace.status.rootPath;
+    return runWorkspaceAction('正在提交 Inbox 回答', () =>
+      requirementsApi.resolveInfoRequest(path, requestId, answer),
+    );
+  }
+
+  function handleNavigate(nextView: WorkspaceView) {
+    if (nextView !== 'overview' && !workspace) {
+      return;
+    }
+    setView(nextView);
+  }
+
+  const busy = busyLabel !== null;
 
   return (
     <div className="app-shell">
-      <Sidebar />
+      <AppSidebar view={view} hasProject={workspace !== null} onNavigate={handleNavigate} />
 
       <main className="workspace">
         <div className="workspace__topline" aria-hidden="true">
           <span>LOCAL-FIRST PROJECT SYSTEM</span>
-          <span>PHASE 02 / SHELL</span>
+          <span>PHASE 03 / REQUIREMENTS + BLUEPRINT</span>
         </div>
 
-        {state.kind === 'error' ? (
-          <ErrorBanner error={state.error} onDismiss={dismissError} />
-        ) : null}
+        {error ? <ErrorBanner error={error} onDismiss={() => setError(null)} /> : null}
 
         <div className="workspace__content">
-          {state.kind === 'loading' ? <LoadingView label={state.label} /> : null}
+          {!workspace && busyLabel ? <LoadingView label={busyLabel} /> : null}
 
-          {state.kind !== 'loading' && visibleStatus ? (
-            <ProjectStatusView
-              status={visibleStatus}
-              onRefresh={() => void handleRefresh(visibleStatus)}
-            />
-          ) : null}
-
-          {state.kind !== 'loading' && !visibleStatus ? (
+          {!workspace && !busyLabel ? (
             <WelcomeView
               onCreate={() => setIsCreateOpen(true)}
               onOpen={() => void handleOpenProject()}
+            />
+          ) : null}
+
+          {workspace && view === 'overview' ? (
+            <ProjectOverview
+              workspace={workspace}
+              busy={busy}
+              onRefresh={() => void handleRefresh()}
+              onEnterRequirements={() => setView('requirements')}
+            />
+          ) : null}
+
+          {workspace && view === 'requirements' ? (
+            <RequirementsView
+              sources={workspace.sources}
+              busy={busy}
+              busyLabel={busyLabel}
+              onImport={() => void handleImport()}
+              onGenerate={(config) => void handleGenerate(config)}
+            />
+          ) : null}
+
+          {workspace && view === 'blueprint' ? (
+            <BlueprintView
+              workspace={workspace}
+              busy={busy}
+              busyLabel={busyLabel}
+              onSave={handleSaveBlueprint}
+              onPublish={handlePublishBlueprint}
+              onNavigateRequirements={() => setView('requirements')}
+            />
+          ) : null}
+
+          {workspace && view === 'inbox' ? (
+            <InboxView
+              inbox={workspace.inbox}
+              facts={workspace.facts}
+              busy={busy}
+              busyLabel={busyLabel}
+              onResolve={handleResolveInfoRequest}
             />
           ) : null}
         </div>
@@ -182,7 +290,7 @@ export default function App() {
 
       {isCreateOpen ? (
         <CreateProjectDialog
-          submitting={state.kind === 'loading'}
+          submitting={busy}
           onCancel={() => setIsCreateOpen(false)}
           onPickDirectory={handlePickProjectHome}
           onCreate={(name, path) => void handleCreateProject(name, path)}
