@@ -1,14 +1,7 @@
-mod error;
-mod project_home;
-
 use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
-use coldstart_storage::Database;
-use project_home::ProjectHome;
-use serde_json::json;
-
-use crate::error::CliError;
+use coldstart_app::{AppError, ProjectService};
 
 #[derive(Debug, Parser)]
 #[command(name = "coldstart", version, about = "ColdStart project control plane")]
@@ -41,64 +34,37 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run(cli: Cli) -> Result<(), CliError> {
+fn run(cli: Cli) -> Result<(), AppError> {
     match cli.command {
         Command::Init { name, path } => {
-            let home = ProjectHome::at(path);
-            let project = home.initialize(&name)?;
+            let status = ProjectService::new().create_project(&name, path)?;
             println!(
                 "Initialized project \"{}\" at {}",
-                project.name,
-                project.root_path.display()
+                status.name,
+                status.root_path.display()
             );
         }
-        Command::Status { path, json } => {
-            print_status(ProjectHome::at(path), json)?;
-        }
+        Command::Status { path, json } => print_status(path, json)?,
     }
     Ok(())
 }
 
-fn print_status(home: ProjectHome, as_json: bool) -> Result<(), CliError> {
-    let root = home.absolute_root()?;
-    let manifest = home.load_manifest()?;
-    let project = manifest.to_project(root)?;
-    let database_path = home.database_path();
-    if !database_path.exists() {
-        return Err(CliError::DatabaseMissing(database_path));
-    }
-
-    let database = Database::open(&database_path)?;
-    let stored = database
-        .load_project(&project.id, project.root_path.clone())?
-        .ok_or(CliError::ProjectMissingFromDatabase(project.id))?;
-    if stored.name != project.name || stored.created_at != project.created_at {
-        return Err(CliError::ProjectMetadataMismatch(project.id));
-    }
-    let event_count = database.event_count(&project.id)?;
-    let root_path = project
+fn print_status(path: PathBuf, as_json: bool) -> Result<(), AppError> {
+    let status = ProjectService::new().read_status(path)?;
+    let root_path = status
         .root_path
         .to_str()
-        .ok_or_else(|| CliError::NonUtf8Path(project.root_path.clone()))?;
-    let created_at = serde_json::to_value(project.created_at)?;
+        .ok_or_else(|| AppError::NonUtf8Path(status.root_path.clone()))?;
 
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "projectId": project.id,
-                "name": project.name,
-                "rootPath": root_path,
-                "createdAt": created_at,
-                "eventCount": event_count,
-            }))?
-        );
+        println!("{}", serde_json::to_string_pretty(&status)?);
     } else {
-        println!("Project: {}", project.name);
-        println!("ID: {}", project.id);
+        let created_at = serde_json::to_value(status.created_at)?;
+        println!("Project: {}", status.name);
+        println!("ID: {}", status.project_id);
         println!("Root: {root_path}");
         println!("Created: {}", created_at.as_str().unwrap_or_default());
-        println!("Events: {event_count}");
+        println!("Events: {}", status.event_count);
     }
 
     Ok(())

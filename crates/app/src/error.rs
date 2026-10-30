@@ -5,7 +5,7 @@ use coldstart_storage::StorageError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum CliError {
+pub enum AppError {
     #[error("project home path is not a directory: {0}")]
     NotADirectory(PathBuf),
     #[error("project is already initialized: {0}")]
@@ -35,7 +35,28 @@ pub enum CliError {
     #[error("initialization failed: {source}; cleanup left residual paths: {residual_paths:?}")]
     RollbackFailed {
         #[source]
-        source: Box<CliError>,
+        source: Box<AppError>,
         residual_paths: Vec<PathBuf>,
     },
+}
+
+impl AppError {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::NotADirectory(_) => "not_a_directory",
+            Self::AlreadyInitialized(_) => "already_initialized",
+            Self::StateAlreadyExists(_) => "state_already_exists",
+            Self::ManifestMissing(_) => "manifest_missing",
+            Self::DatabaseMissing(_) => "database_missing",
+            Self::InvalidManifest(_) => "invalid_manifest",
+            Self::InvalidProject(_) => "invalid_project",
+            Self::ProjectMissingFromDatabase(_) => "project_missing_from_database",
+            Self::ProjectMetadataMismatch(_) => "project_metadata_mismatch",
+            Self::NonUtf8Path(_) => "non_utf8_path",
+            Self::Json(_) => "json",
+            Self::Storage(_) => "storage",
+            Self::Io(_) => "io",
+            Self::RollbackFailed { .. } => "rollback_failed",
+        }
+    }
 }

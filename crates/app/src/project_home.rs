@@ -9,7 +9,7 @@ use coldstart_core::{Project, ProjectManifest};
 use coldstart_storage::Database;
 use tempfile::NamedTempFile;
 
-use crate::CliError;
+use crate::AppError;
 
 const MANIFEST_FILE: &str = "coldstart.project.json";
 const STATE_DIRECTORY: &str = ".coldstart";
@@ -34,24 +34,24 @@ impl ProjectHome {
         Self { root: root.into() }
     }
 
-    pub fn initialize(&self, name: &str) -> Result<Project, CliError> {
+    pub fn initialize(&self, name: &str) -> Result<Project, AppError> {
         if self.root.exists() && !self.root.is_dir() {
-            return Err(CliError::NotADirectory(self.root.clone()));
+            return Err(AppError::NotADirectory(self.root.clone()));
         }
 
         let root = std::path::absolute(&self.root)?;
         if root.to_str().is_none() {
-            return Err(CliError::NonUtf8Path(root));
+            return Err(AppError::NonUtf8Path(root));
         }
         let project = Project::new(name, root)?;
         let manifest_path = self.manifest_path();
         if manifest_path.exists() {
-            return Err(CliError::AlreadyInitialized(self.root.clone()));
+            return Err(AppError::AlreadyInitialized(self.root.clone()));
         }
 
         let database_path = self.database_path();
         if database_path.exists() {
-            return Err(CliError::StateAlreadyExists(database_path));
+            return Err(AppError::StateAlreadyExists(database_path));
         }
 
         fs::create_dir_all(&self.root)?;
@@ -67,7 +67,7 @@ impl ProjectHome {
             cleanup.track_if_absent(path);
         }
 
-        let result: Result<(), CliError> = (|| {
+        let result: Result<(), AppError> = (|| {
             for relative in PROJECT_DIRECTORIES {
                 fs::create_dir_all(self.root.join(relative))?;
             }
@@ -83,7 +83,7 @@ impl ProjectHome {
         }
     }
 
-    pub fn absolute_root(&self) -> Result<PathBuf, CliError> {
+    pub fn absolute_root(&self) -> Result<PathBuf, AppError> {
         Ok(std::path::absolute(&self.root)?)
     }
 
@@ -91,12 +91,12 @@ impl ProjectHome {
         self.root.join(STATE_DIRECTORY).join(DATABASE_FILE)
     }
 
-    pub fn load_manifest(&self) -> Result<ProjectManifest, CliError> {
+    pub fn load_manifest(&self) -> Result<ProjectManifest, AppError> {
         let path = self.manifest_path();
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Err(CliError::ManifestMissing(path));
+                return Err(AppError::ManifestMissing(path));
             }
             Err(error) => return Err(error.into()),
         };
@@ -110,7 +110,7 @@ impl ProjectHome {
     }
 }
 
-fn write_manifest_temp(root: &Path, encoded: &[u8]) -> Result<NamedTempFile, CliError> {
+fn write_manifest_temp(root: &Path, encoded: &[u8]) -> Result<NamedTempFile, AppError> {
     let mut temporary = NamedTempFile::new_in(root)?;
     temporary.write_all(encoded)?;
     temporary.as_file().sync_all()?;
@@ -121,15 +121,15 @@ fn publish_manifest(
     temporary: NamedTempFile,
     root: &Path,
     manifest_path: &Path,
-) -> Result<(), CliError> {
+) -> Result<(), AppError> {
     match temporary.persist_noclobber(manifest_path) {
         Ok(_) => Ok(()),
         Err(error)
             if error.error.kind() == io::ErrorKind::AlreadyExists || manifest_path.exists() =>
         {
-            Err(CliError::AlreadyInitialized(root.to_path_buf()))
+            Err(AppError::AlreadyInitialized(root.to_path_buf()))
         }
-        Err(error) => Err(CliError::Io(error.error)),
+        Err(error) => Err(AppError::Io(error.error)),
     }
 }
 
@@ -177,12 +177,12 @@ impl CleanupSet {
     }
 }
 
-fn rollback(source: CliError, mut cleanup: CleanupSet) -> CliError {
+fn rollback(source: AppError, mut cleanup: CleanupSet) -> AppError {
     let residual_paths = cleanup.remove_owned();
     if residual_paths.is_empty() {
         source
     } else {
-        CliError::RollbackFailed {
+        AppError::RollbackFailed {
             source: Box::new(source),
             residual_paths,
         }
@@ -224,7 +224,7 @@ mod tests {
             .expect_err("non-UTF-8 root must be rejected");
 
         assert!(
-            matches!(error, CliError::NonUtf8Path(_)),
+            matches!(error, AppError::NonUtf8Path(_)),
             "unexpected error: {error}"
         );
         assert_eq!(
@@ -247,7 +247,7 @@ mod tests {
         let error = publish_manifest(temporary, temp.path(), &manifest_path)
             .expect_err("publication must not overwrite");
 
-        assert!(matches!(error, CliError::AlreadyInitialized(_)));
+        assert!(matches!(error, AppError::AlreadyInitialized(_)));
         assert_eq!(
             fs::read(&manifest_path).expect("manifest must remain readable"),
             b"competing manifest\n"
@@ -291,16 +291,16 @@ mod tests {
         let mut cleanup = CleanupSet::default();
         cleanup.own(&residual_path);
 
-        let error = rollback(CliError::NotADirectory(temp.path().to_path_buf()), cleanup);
+        let error = rollback(AppError::NotADirectory(temp.path().to_path_buf()), cleanup);
 
-        let CliError::RollbackFailed {
+        let AppError::RollbackFailed {
             source,
             residual_paths,
         } = error
         else {
             panic!("cleanup failure must produce RollbackFailed");
         };
-        assert!(matches!(*source, CliError::NotADirectory(_)));
+        assert!(matches!(*source, AppError::NotADirectory(_)));
         assert_eq!(residual_paths, vec![residual_path]);
     }
 }
