@@ -3,19 +3,25 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from './App';
+import * as integrationApi from './api/integrationApi';
 import * as planApi from './api/planApi';
 import * as projectApi from './api/projectApi';
 import * as requirementsApi from './api/requirementsApi';
 import type {
   BlueprintContent,
   BlueprintRevision,
+  CapabilityStatusView,
+  CredentialMetadata,
   DocumentAnchor,
+  GitSyncRecord,
   InfoRequest,
+  IntegrationWorkspace,
   PlanContent,
   PlanRevision,
   PlanWorkspace,
   ProjectStatus,
   ProjectWorkspace,
+  Repository,
   TaskSpec,
   WorkItemView,
 } from './api/types';
@@ -42,6 +48,19 @@ vi.mock('./api/planApi', () => ({
   savePlanDraft: vi.fn(),
   publishPlan: vi.fn(),
   completeHumanWork: vi.fn(),
+}));
+
+vi.mock('./api/integrationApi', () => ({
+  readIntegrationWorkspace: vi.fn(),
+  validateRepository: vi.fn(),
+  saveRepository: vi.fn(),
+  saveCredential: vi.fn(),
+  deleteCredential: vi.fn(),
+  updateCapability: vi.fn(),
+  importGitHubSession: vi.fn(),
+  startGitHubDeviceFlow: vi.fn(),
+  pollGitHubDeviceFlow: vi.fn(),
+  createGitHubPrivateRepository: vi.fn(),
 }));
 
 const projectPath = String.raw`D:\coldstart-projects\permafrost`;
@@ -310,6 +329,78 @@ function makePlanWorkspace(overrides: Partial<PlanWorkspace> = {}): PlanWorkspac
   };
 }
 
+const repository: Repository = {
+  id: '99999999-9999-4999-8999-999999999999',
+  projectId: status.projectId,
+  key: 'web',
+  name: 'Web 前台',
+  localPath: String.raw`D:\repos\web`,
+  remoteUrl: 'https://github.com/example/web.git',
+  defaultBranch: 'main',
+  protectedBranches: ['main'],
+  authMode: 'credential',
+  credentialId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  syncPolicy: 'fetch_before_claim',
+  createdAt: '2026-10-30T12:00:00Z',
+  updatedAt: '2026-10-30T12:00:00Z',
+};
+
+const credential: CredentialMetadata = {
+  id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+  projectId: status.projectId,
+  name: 'GitHub 发布账号',
+  provider: 'github',
+  kind: 'personal_access_token',
+  environment: 'shared',
+  secretRef: 'coldstart:credential:github',
+  createdAt: '2026-10-30T12:01:00Z',
+  updatedAt: '2026-10-30T12:01:00Z',
+};
+
+const capability: CapabilityStatusView = {
+  projectId: status.projectId,
+  capabilityId: 'capability_oss',
+  name: '阿里云 OSS',
+  provider: 'aliyun_oss',
+  environment: 'development',
+  status: 'configured',
+  credentialId: credential.id,
+  credentialRef: credential.secretRef,
+  note: '开发环境已配置',
+  updatedAt: '2026-10-30T12:02:00Z',
+};
+
+const gitSync: GitSyncRecord = {
+  id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+  projectId: status.projectId,
+  workItemId: '77777777-7777-4777-8777-777777777777',
+  repositoryId: repository.id,
+  branch: 'codex/order-web',
+  commitSha: 'abcdef1',
+  status: 'failed',
+  errorMessage: 'network unavailable',
+  createdAt: '2026-10-30T12:03:00Z',
+};
+
+function makeIntegrationWorkspace(
+  overrides: Partial<IntegrationWorkspace> = {},
+): IntegrationWorkspace {
+  return {
+    projectId: status.projectId,
+    repositories: [repository],
+    credentials: [credential],
+    capabilities: [capability],
+    gitSyncs: [gitSync],
+    release: {
+      prerequisites: [makeHumanWorkItem()],
+      milestones: [makeAgentWorkItem()],
+      approvalGates: [],
+      humanTasks: [],
+    },
+    ...overrides,
+  };
+}
+
 const infoRequest: InfoRequest = {
   id: '33333333-3333-4333-8333-333333333333',
   projectId: status.projectId,
@@ -361,6 +452,16 @@ async function openProject(workspace = makeWorkspace()) {
   return user;
 }
 
+async function openIntegrationView(
+  workspace = makeIntegrationWorkspace(),
+) {
+  vi.mocked(integrationApi.readIntegrationWorkspace).mockResolvedValue(workspace);
+  const user = await openProject();
+  await user.click(screen.getByRole('button', { name: '仓库与能力' }));
+  await screen.findByRole('heading', { name: '仓库与能力' });
+  return user;
+}
+
 beforeEach(() => {
   vi.mocked(projectApi.createProject).mockReset();
   vi.mocked(projectApi.readProjectStatus).mockReset();
@@ -377,6 +478,16 @@ beforeEach(() => {
   vi.mocked(planApi.savePlanDraft).mockReset();
   vi.mocked(planApi.publishPlan).mockReset();
   vi.mocked(planApi.completeHumanWork).mockReset();
+  vi.mocked(integrationApi.readIntegrationWorkspace).mockReset();
+  vi.mocked(integrationApi.validateRepository).mockReset();
+  vi.mocked(integrationApi.saveRepository).mockReset();
+  vi.mocked(integrationApi.saveCredential).mockReset();
+  vi.mocked(integrationApi.deleteCredential).mockReset();
+  vi.mocked(integrationApi.updateCapability).mockReset();
+  vi.mocked(integrationApi.importGitHubSession).mockReset();
+  vi.mocked(integrationApi.startGitHubDeviceFlow).mockReset();
+  vi.mocked(integrationApi.pollGitHubDeviceFlow).mockReset();
+  vi.mocked(integrationApi.createGitHubPrivateRepository).mockReset();
 });
 
 describe('ColdStart project workspace', () => {
@@ -736,5 +847,188 @@ describe('ColdStart project workspace', () => {
       '账号已可用',
       true,
     );
+  });
+
+  it('saves a validated repository draft from the integration workspace', async () => {
+    const user = await openIntegrationView(
+      makeIntegrationWorkspace({ repositories: [] }),
+    );
+    const localPath = String.raw`D:\work\coldstart-web`;
+    const remoteUrl = 'https://github.com/example/coldstart-web.git';
+    vi.mocked(integrationApi.saveRepository).mockResolvedValue(
+      makeIntegrationWorkspace({
+        repositories: [{ ...repository, localPath, remoteUrl }],
+      }),
+    );
+
+    await user.type(screen.getByLabelText('仓库名称'), 'Web 前台');
+    await user.type(screen.getByLabelText('本地路径'), localPath);
+    await user.type(screen.getByLabelText('远程 URL'), remoteUrl);
+    await user.click(screen.getByRole('button', { name: '保存仓库' }));
+
+    await waitFor(() =>
+      expect(integrationApi.saveRepository).toHaveBeenCalledWith(projectPath, {
+        key: 'web',
+        name: 'Web 前台',
+        localPath,
+        remoteUrl,
+        defaultBranch: 'main',
+        protectedBranches: ['main'],
+        authMode: 'none',
+        credentialId: null,
+        syncPolicy: 'fetch_before_claim',
+      }),
+    );
+  });
+
+  it('stores a credential secret without rendering it afterward', async () => {
+    const user = await openIntegrationView(
+      makeIntegrationWorkspace({ credentials: [] }),
+    );
+    const secret = 'plaintext-secret-must-disappear';
+    vi.mocked(integrationApi.saveCredential).mockResolvedValue(
+      makeIntegrationWorkspace({
+        credentials: [{ ...credential, name: '阿里云 OSS 凭据' }],
+      }),
+    );
+
+    await user.type(screen.getByLabelText('凭据名称'), '阿里云 OSS 凭据');
+    await user.type(screen.getByLabelText('提供方'), 'aliyun');
+    await user.type(
+      screen.getByLabelText('Secret（仅写入 Windows 凭据库）'),
+      secret,
+    );
+    await user.click(screen.getByRole('button', { name: '保存凭据' }));
+
+    await waitFor(() =>
+      expect(integrationApi.saveCredential).toHaveBeenCalledWith(projectPath, {
+        name: '阿里云 OSS 凭据',
+        provider: 'aliyun',
+        kind: 'api_key',
+        environment: 'development',
+        secret,
+      }),
+    );
+    await screen.findByText('阿里云 OSS 凭据');
+    expect(
+      screen.getByLabelText('Secret（仅写入 Windows 凭据库）'),
+    ).toHaveValue('');
+    expect(document.body.textContent).not.toContain(secret);
+  });
+
+  it('updates a capability environment status and credential reference', async () => {
+    const user = await openIntegrationView();
+    vi.mocked(integrationApi.updateCapability).mockResolvedValue(
+      makeIntegrationWorkspace({
+        capabilities: [{ ...capability, status: 'verified' }],
+      }),
+    );
+
+    await user.selectOptions(
+      screen.getByLabelText('能力状态：阿里云 OSS / development'),
+      'verified',
+    );
+    await user.click(
+      screen.getByRole('button', {
+        name: '更新能力：阿里云 OSS / development',
+      }),
+    );
+
+    expect(integrationApi.updateCapability).toHaveBeenCalledWith(
+      projectPath,
+      capability.capabilityId,
+      'development',
+      'verified',
+      credential.id,
+      '开发环境已配置',
+    );
+    expect(await screen.findByText('verified')).toBeInTheDocument();
+  });
+
+  it('shows the GitHub device code and checks authorization status', async () => {
+    const user = await openIntegrationView();
+    vi.mocked(integrationApi.startGitHubDeviceFlow).mockResolvedValue({
+      sessionId: 'device-session-1',
+      userCode: 'ABCD-EFGH',
+      verificationUri: 'https://github.com/login/device',
+      expiresIn: 900,
+      interval: 5,
+    });
+    vi.mocked(integrationApi.pollGitHubDeviceFlow).mockResolvedValue({
+      state: 'pending',
+      sessionId: 'device-session-1',
+      interval: 5,
+    });
+
+    await user.type(screen.getByLabelText('GitHub OAuth Client ID'), 'client-123');
+    await user.click(screen.getByRole('button', { name: '启动 GitHub 授权' }));
+
+    expect(await screen.findByText('ABCD-EFGH')).toBeInTheDocument();
+    expect(screen.getByText('https://github.com/login/device')).toBeInTheDocument();
+    await user.click(
+      screen.getByRole('button', { name: '检查 GitHub 授权状态' }),
+    );
+    expect(integrationApi.pollGitHubDeviceFlow).toHaveBeenCalledWith(
+      projectPath,
+      'device-session-1',
+    );
+  });
+
+  it('requires confirmation before creating a private GitHub repository', async () => {
+    const user = await openIntegrationView();
+    vi.mocked(integrationApi.createGitHubPrivateRepository).mockResolvedValue({
+      id: 42,
+      name: 'coldstart-demo',
+      fullName: 'example/coldstart-demo',
+      private: true,
+      cloneUrl: 'https://github.com/example/coldstart-demo.git',
+      sshUrl: 'git@github.com:example/coldstart-demo.git',
+      htmlUrl: 'https://github.com/example/coldstart-demo',
+      defaultBranch: 'main',
+    });
+
+    await user.type(screen.getByLabelText('私有仓库名称'), 'coldstart-demo');
+    await user.type(screen.getByLabelText('仓库描述'), 'ColdStart demo');
+    await user.click(
+      screen.getByRole('button', { name: '创建 GitHub 私有仓库' }),
+    );
+
+    expect(integrationApi.createGitHubPrivateRepository).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole('dialog', { name: '确认创建 GitHub 私有仓库' }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '确认创建' }));
+
+    expect(
+      integrationApi.createGitHubPrivateRepository,
+    ).toHaveBeenCalledWith(projectPath, {
+      credentialId: credential.id,
+      repositoryKey: repository.key,
+      name: 'coldstart-demo',
+      description: 'ColdStart demo',
+    });
+    expect(await screen.findByText('example/coldstart-demo')).toBeInTheDocument();
+  });
+
+  it('summarizes release gates without offering deploy or submission actions', async () => {
+    const user = await openIntegrationView();
+    await user.click(screen.getByRole('button', { name: '发布中心' }));
+
+    expect(
+      await screen.findByRole('heading', { name: '发布中心' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: '发布前置条件' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '发布里程碑' })).toBeInTheDocument();
+    expect(
+      screen.getByText('只汇总状态，不部署、不打包、不提审'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('准备应用商店账号')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '进入人工 Inbox' }));
+    expect(
+      await screen.findByRole('heading', { name: '人工 Inbox' }),
+    ).toBeInTheDocument();
   });
 });

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use coldstart_app::{AppError, ClaimRequest, PlanService};
-use coldstart_core::WorkItemId;
+use coldstart_app::{AppError, ClaimRequest, IntegrationService, PlanService};
+use coldstart_core::{BlueprintEntityId, WorkItemId};
 use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -11,10 +11,10 @@ use rmcp::{
 use serde::Serialize;
 
 use crate::{
-    error::{app_error_result, invalid_id_result},
+    error::{app_error_result, invalid_capability_id_result, invalid_id_result},
     types::{
-        ClaimNextWorkArgs, ReadTaskReferenceArgs, ReleaseWorkArgs, ReportWorkBlockerArgs,
-        SubmitWorkReportArgs, WorkLeaseArgs,
+        CapabilityStatusArgs, ClaimNextWorkArgs, ReadTaskReferenceArgs, ReleaseWorkArgs,
+        ReportWorkBlockerArgs, SubmitWorkReportArgs, WorkLeaseArgs,
     },
 };
 
@@ -66,6 +66,28 @@ impl ColdStartMcp {
 
 #[tool_router]
 impl ColdStartMcp {
+    #[tool(
+        description = "Read a capability's configured status for one environment. Returns only a credential reference, never a secret."
+    )]
+    pub async fn get_capability_status(
+        &self,
+        Parameters(args): Parameters<CapabilityStatusArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let capability_id = match args.capability_id.parse::<BlueprintEntityId>() {
+            Ok(capability_id) => capability_id,
+            Err(_) => return Ok(invalid_capability_id_result(&args.capability_id)),
+        };
+        let project_home = self.project_home.clone();
+        Self::execute(move || {
+            IntegrationService::new().get_capability_status(
+                project_home,
+                &capability_id,
+                &args.environment,
+            )
+        })
+        .await
+    }
+
     #[tool(
         description = "Atomically claim the next eligible coding task. Reuses request_id for idempotent retries."
     )]

@@ -44,10 +44,13 @@ macro_rules! uuid_id {
 
 uuid_id!(ArtifactId);
 uuid_id!(BlueprintRevisionId);
+uuid_id!(CredentialId);
+uuid_id!(GitSyncId);
 uuid_id!(InfoRequestId);
 uuid_id!(LeaseId);
 uuid_id!(PlanRevisionId);
 uuid_id!(ProjectFactId);
+uuid_id!(RepositoryId);
 uuid_id!(TaskSpecId);
 uuid_id!(WorkItemId);
 uuid_id!(WorkReportId);

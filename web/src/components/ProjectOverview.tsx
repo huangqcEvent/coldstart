@@ -47,8 +47,8 @@ export function ProjectOverview({
               ? '下一步：检查并发布开发计划，随后让 Codex 通过 MCP 主动领取'
               : workspace.plan.published
                 ? planTotal > 0 && planDone === planTotal
-                  ? '计划已全部完成；下一阶段将接入仓库与能力绑定'
-                  : '计划执行中；Codex 通过 MCP 领取任务，桌面端自动观察进度'
+                  ? '计划已全部完成；进入发布中心核对上架、提审与审批状态'
+                  : '计划执行中；Codex 通过 MCP 领取任务，仓库分支与推送风险可实时观察'
                 : '下一步：编译开发计划并发布任务 DAG'
             : '下一步：在需求导入页生成蓝图草稿';
 

@@ -15,8 +15,10 @@ import { BlueprintView } from './components/BlueprintView';
 import { CreateProjectDialog } from './components/CreateProjectDialog';
 import { ErrorBanner } from './components/ErrorBanner';
 import { InboxView } from './components/InboxView';
+import { IntegrationView } from './components/IntegrationView';
 import { PlanView } from './components/PlanView';
 import { ProjectOverview } from './components/ProjectOverview';
+import { ReleaseCenterView } from './components/ReleaseCenterView';
 import { RequirementsView } from './components/RequirementsView';
 import { WelcomeView } from './components/WelcomeView';
 
@@ -295,7 +297,7 @@ export default function App() {
       <main className="workspace">
         <div className="workspace__topline" aria-hidden="true">
           <span>LOCAL-FIRST PROJECT SYSTEM</span>
-          <span>PHASE 04 / PLAN + MCP</span>
+          <span>PHASE 05 / GIT + CAPABILITIES</span>
         </div>
 
         {error ? <ErrorBanner error={error} onDismiss={() => setError(null)} /> : null}
@@ -369,6 +371,17 @@ export default function App() {
               onRefresh={handlePlanRefresh}
               onNavigateBlueprint={() => setView('blueprint')}
               onNavigateInbox={() => setView('inbox')}
+            />
+          ) : null}
+
+          {workspace && view === 'integration' ? (
+            <IntegrationView path={workspace.status.rootPath} />
+          ) : null}
+
+          {workspace && view === 'release' ? (
+            <ReleaseCenterView
+              path={workspace.status.rootPath}
+              onEnterInbox={() => setView('inbox')}
             />
           ) : null}
         </div>

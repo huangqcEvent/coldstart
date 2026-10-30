@@ -403,3 +403,170 @@ export interface ModelConfig {
   model: string;
   apiKey: string;
 }
+
+export type RepositoryAuthMode = 'none' | 'credential' | 'ssh_agent';
+export type RepositorySyncPolicy = 'manual' | 'fetch_before_claim';
+export type CredentialKind =
+  | 'api_key'
+  | 'oauth_token'
+  | 'personal_access_token'
+  | 'username_password'
+  | 'signing_certificate'
+  | 'other';
+export type CredentialEnvironment =
+  | 'shared'
+  | 'development'
+  | 'staging'
+  | 'production';
+export type CapabilityStatus =
+  | 'missing'
+  | 'configured'
+  | 'verified'
+  | 'auth_required'
+  | 'disabled';
+export type GitSyncStatus = 'pushed' | 'failed';
+
+export interface Repository {
+  id: string;
+  projectId: string;
+  key: string;
+  name: string;
+  localPath: string;
+  remoteUrl: string;
+  defaultBranch: string;
+  protectedBranches: string[];
+  authMode: RepositoryAuthMode;
+  credentialId: string | null;
+  syncPolicy: RepositorySyncPolicy;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RepositoryDraft {
+  key: string;
+  name: string;
+  localPath: string;
+  remoteUrl: string;
+  defaultBranch: string;
+  protectedBranches: string[];
+  authMode: RepositoryAuthMode;
+  credentialId: string | null;
+  syncPolicy: RepositorySyncPolicy;
+}
+
+export interface GitRepositoryStatus {
+  path: string;
+  branch: string | null;
+  headSha: string | null;
+  clean: boolean;
+  changedPaths: string[];
+}
+
+export interface RepositoryValidation {
+  repositoryKey: string;
+  remoteUrl: string;
+  status: GitRepositoryStatus;
+}
+
+export interface CredentialMetadata {
+  id: string;
+  projectId: string;
+  name: string;
+  provider: string;
+  kind: CredentialKind;
+  environment: CredentialEnvironment;
+  secretRef: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SaveCredentialInput {
+  name: string;
+  provider: string;
+  kind: CredentialKind;
+  environment: CredentialEnvironment;
+  secret: string;
+}
+
+export interface CapabilityStatusView {
+  projectId: string;
+  capabilityId: string;
+  name: string;
+  provider: string;
+  environment: string;
+  status: CapabilityStatus;
+  credentialId: string | null;
+  credentialRef: string | null;
+  note: string | null;
+  updatedAt: string;
+}
+
+export interface GitSyncRecord {
+  id: string;
+  projectId: string;
+  workItemId: string;
+  repositoryId: string;
+  branch: string;
+  commitSha: string;
+  status: GitSyncStatus;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
+export interface ReleaseCenter {
+  prerequisites: WorkItemView[];
+  milestones: WorkItemView[];
+  approvalGates: WorkItemView[];
+  humanTasks: WorkItemView[];
+}
+
+export interface IntegrationWorkspace {
+  projectId: string;
+  repositories: Repository[];
+  credentials: CredentialMetadata[];
+  capabilities: CapabilityStatusView[];
+  gitSyncs: GitSyncRecord[];
+  release: ReleaseCenter;
+}
+
+export interface GitHubSession {
+  credentialId: string;
+  credentialRef: string;
+  login: string;
+  name: string | null;
+  avatarUrl: string | null;
+  scopes: string[];
+}
+
+export interface GitHubDeviceFlow {
+  sessionId: string;
+  userCode: string;
+  verificationUri: string;
+  expiresIn: number;
+  interval: number;
+}
+
+export type GitHubDevicePoll =
+  | { state: 'pending'; sessionId: string; interval: number }
+  | { state: 'slow_down'; sessionId: string; interval: number }
+  | { state: 'authorized'; session: GitHubSession }
+  | { state: 'access_denied' }
+  | { state: 'expired' };
+
+export interface CreatePrivateRepositoryInput {
+  credentialId: string;
+  repositoryKey: string;
+  name: string;
+  description: string | null;
+}
+
+export interface GitHubRepository {
+  id: number;
+  name: string;
+  fullName: string;
+  private: boolean;
+  cloneUrl: string;
+  sshUrl: string;
+  htmlUrl: string;
+  defaultBranch: string;
+}

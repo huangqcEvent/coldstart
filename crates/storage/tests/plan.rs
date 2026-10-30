@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use support::{PlanFixture, agent_task};
 
 #[test]
-fn migrates_v3_database_to_v4_and_preserves_the_published_blueprint() {
+fn migrates_v3_database_to_v5_and_preserves_the_published_blueprint() {
     let fixture = PlanFixture::new(vec![agent_task("foundation:demo", &[])]);
     let database_path = fixture.database_path.clone();
     let project_id = fixture.project_id;
@@ -17,6 +17,11 @@ fn migrates_v3_database_to_v4_and_preserves_the_published_blueprint() {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP TABLE project_settings;
+             DROP TABLE git_syncs;
+             DROP TABLE capability_states;
+             DROP TABLE repositories;
+             DROP TABLE credentials;
              DROP TABLE work_blockers;
              DROP TABLE work_reports;
              DROP TABLE work_runs;
@@ -29,7 +34,7 @@ fn migrates_v3_database_to_v4_and_preserves_the_published_blueprint() {
         .expect("v3 state must be restored");
     drop(connection);
 
-    let database = Database::open(&database_path).expect("v4 migration must run");
+    let database = Database::open(&database_path).expect("v5 migration must run");
     let published = database
         .latest_blueprint(&project_id, BlueprintStatus::Published)
         .expect("blueprint query must work")
@@ -40,7 +45,7 @@ fn migrates_v3_database_to_v4_and_preserves_the_published_blueprint() {
         .expect("read connection must open")
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("schema version must be readable");
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
 }
 
 #[test]

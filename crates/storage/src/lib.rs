@@ -1,4 +1,5 @@
 mod database;
+mod integration_store;
 mod migrations;
 mod plan_store;
 

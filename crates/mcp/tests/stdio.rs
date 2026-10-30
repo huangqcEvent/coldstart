@@ -2,13 +2,15 @@ use std::{
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    sync::Arc,
 };
 
-use coldstart_app::{PlanService, ProjectService};
+use coldstart_adapters::{GitAdapter, MemorySecretStore};
+use coldstart_app::{IntegrationService, PlanService, ProjectService, SaveCredentialInput};
 use coldstart_core::{
-    ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration, GenerationSource,
-    ModuleDefinition, PlatformDefinition, PlatformKind, ProjectId, SourceReference, TraceableText,
-    WorkItemStatus,
+    ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration, CapabilityObligation,
+    CapabilityStatus, CredentialEnvironment, CredentialKind, GenerationSource, ModuleDefinition,
+    PlatformDefinition, PlatformKind, ProjectId, SourceReference, TraceableText, WorkItemStatus,
 };
 use coldstart_storage::Database;
 use rusqlite::Connection;
@@ -19,6 +21,7 @@ use tempfile::TempDir;
 struct Fixture {
     _directory: TempDir,
     home: PathBuf,
+    project_id: ProjectId,
 }
 
 impl Fixture {
@@ -60,7 +63,38 @@ impl Fixture {
         Self {
             _directory: directory,
             home,
+            project_id: status.project_id,
         }
+    }
+
+    fn seed_configured_capability(&self) -> (String, String) {
+        let secrets = Arc::new(MemorySecretStore::default());
+        let service = IntegrationService::with_dependencies(secrets, GitAdapter::new(), None);
+        let workspace = service
+            .save_credential(
+                self.home.clone(),
+                SaveCredentialInput {
+                    name: "阿里云 OSS".to_owned(),
+                    provider: "aliyun".to_owned(),
+                    kind: CredentialKind::ApiKey,
+                    environment: CredentialEnvironment::Development,
+                    secret: "MCP_CAPABILITY_SECRET_MARKER".to_owned(),
+                },
+            )
+            .expect("credential must save");
+        let credential = workspace.credentials[0].clone();
+        let capability_id = BlueprintEntityId::derive(&self.project_id, "capability", "阿里云 OSS");
+        service
+            .update_capability(
+                self.home.clone(),
+                capability_id.clone(),
+                "development".to_owned(),
+                CapabilityStatus::Configured,
+                Some(credential.id),
+                Some("MCP 测试能力".to_owned()),
+            )
+            .expect("capability must update");
+        (capability_id.to_string(), credential.secret_ref)
     }
 }
 
@@ -96,7 +130,17 @@ fn blueprint_content(project_id: ProjectId) -> BlueprintContent {
             sources: vec![source],
         }],
         technologies: vec![],
-        capabilities: vec![],
+        capabilities: vec![CapabilityObligation {
+            id: BlueprintEntityId::derive(&project_id, "capability", "阿里云 OSS"),
+            name: "阿里云 OSS".to_owned(),
+            provider: "aliyun_oss".to_owned(),
+            description: "上传订单附件".to_owned(),
+            sources: vec![SourceReference {
+                artifact_id: ArtifactId::new(),
+                anchor_id: "section_1".to_owned(),
+                quote: Some("需要文件上传".to_owned()),
+            }],
+        }],
         release_prerequisites: vec![],
         assumptions: vec![],
         risks: vec![],
@@ -332,6 +376,7 @@ fn stdio_server_lists_all_work_tools_and_rejects_an_unknown_tool() {
         names,
         vec![
             "claim_next_work",
+            "get_capability_status",
             "get_work_context",
             "heartbeat_work",
             "read_task_reference",
@@ -345,6 +390,47 @@ fn stdio_server_lists_all_work_tools_and_rejects_an_unknown_tool() {
     assert!(
         error.contains("tool not found"),
         "unexpected error: {error}"
+    );
+}
+
+#[test]
+fn stdio_server_returns_capability_status_without_the_secret() {
+    let fixture = Fixture::new();
+    let (capability_id, credential_ref) = fixture.seed_configured_capability();
+    let mut client = McpStdioClient::spawn(&fixture.home);
+    client.initialize();
+
+    let status = client.call_tool(
+        "get_capability_status",
+        json!({
+            "capability_id": capability_id,
+            "environment": "development"
+        }),
+    );
+    let status = structured(&status);
+    assert_eq!(status["name"].as_str(), Some("阿里云 OSS"));
+    assert_eq!(status["provider"].as_str(), Some("aliyun_oss"));
+    assert_eq!(status["environment"].as_str(), Some("development"));
+    assert_eq!(status["status"].as_str(), Some("configured"));
+    assert_eq!(
+        status["credentialRef"].as_str(),
+        Some(credential_ref.as_str())
+    );
+    assert_eq!(status["note"].as_str(), Some("MCP 测试能力"));
+    let serialized = serde_json::to_string(&status).expect("status must serialize");
+    assert!(!serialized.contains("MCP_CAPABILITY_SECRET_MARKER"));
+
+    let missing = BlueprintEntityId::derive(&fixture.project_id, "capability", "missing");
+    let missing = client.call_tool(
+        "get_capability_status",
+        json!({
+            "capability_id": missing.to_string(),
+            "environment": "development"
+        }),
+    );
+    assert_eq!(
+        tool_error(&missing)["code"].as_str(),
+        Some("capability_not_found")
     );
 }
 

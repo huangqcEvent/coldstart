@@ -17,6 +17,15 @@ pub(crate) struct ClaimNextWorkArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct CapabilityStatusArgs {
+    #[schemars(description = "Blueprint capability ID")]
+    pub capability_id: String,
+    #[schemars(description = "One of development, staging, or production")]
+    pub environment: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WorkLeaseArgs {
     pub work_id: String,
     pub lease_token: String,

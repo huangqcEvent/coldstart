@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    ArtifactId, BlueprintRevisionId, GenerationSource, InfoRequestId, LeaseId, PlanRevisionId,
-    Project, ProjectFactId, ProjectId, WorkItemId, WorkReportId,
+    ArtifactId, BlueprintRevisionId, CredentialId, GenerationSource, GitSyncId, InfoRequestId,
+    LeaseId, PlanRevisionId, Project, ProjectFactId, ProjectId, RepositoryId, WorkItemId,
+    WorkReportId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,6 +119,33 @@ pub enum DomainEventKind {
         work_item_id: WorkItemId,
         accepted: bool,
     },
+    RepositorySaved {
+        repository_id: RepositoryId,
+        repository_key: String,
+        remote_url: String,
+    },
+    CredentialSaved {
+        credential_id: CredentialId,
+        provider: String,
+        environment: String,
+    },
+    CredentialDeleted {
+        credential_id: CredentialId,
+    },
+    CapabilityUpdated {
+        capability_id: String,
+        environment: String,
+        status: String,
+    },
+    GitSyncRecorded {
+        sync_id: GitSyncId,
+        work_item_id: WorkItemId,
+        repository_id: RepositoryId,
+        status: String,
+    },
+    ProjectSettingUpdated {
+        setting_key: String,
+    },
 }
 
 impl DomainEventKind {
@@ -140,6 +168,12 @@ impl DomainEventKind {
             Self::WorkReleased { .. } => "work_released",
             Self::LeaseExpired { .. } => "lease_expired",
             Self::HumanWorkCompleted { .. } => "human_work_completed",
+            Self::RepositorySaved { .. } => "repository_saved",
+            Self::CredentialSaved { .. } => "credential_saved",
+            Self::CredentialDeleted { .. } => "credential_deleted",
+            Self::CapabilityUpdated { .. } => "capability_updated",
+            Self::GitSyncRecorded { .. } => "git_sync_recorded",
+            Self::ProjectSettingUpdated { .. } => "project_setting_updated",
         }
     }
 }

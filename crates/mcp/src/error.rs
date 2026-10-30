@@ -28,3 +28,11 @@ pub(crate) fn invalid_id_result(field: &str, value: &str) -> CallToolResult {
         Some(json!({ "field": field, "value": value })),
     )
 }
+
+pub(crate) fn invalid_capability_id_result(value: &str) -> CallToolResult {
+    tool_error_result(
+        "invalid_id",
+        "capability_id must be a valid blueprint capability ID",
+        Some(json!({ "field": "capability_id", "value": value })),
+    )
+}

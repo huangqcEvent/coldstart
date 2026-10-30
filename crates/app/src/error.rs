@@ -1,9 +1,9 @@
 use std::{io, path::PathBuf};
 
-use coldstart_adapters::{DocumentError, ModelError};
+use coldstart_adapters::{DocumentError, GitError, GitHubError, ModelError, SecretStoreError};
 use coldstart_core::{
-    BlueprintRevisionId, InfoRequestId, ManifestError, PlanCompileError, PlanRevisionId,
-    ProjectError, ProjectId, WorkItemId,
+    BlueprintRevisionId, CredentialId, InfoRequestId, IntegrationValidationError, ManifestError,
+    PlanCompileError, PlanRevisionId, ProjectError, ProjectId, RepositoryId, WorkItemId,
 };
 use coldstart_storage::StorageError;
 use thiserror::Error;
@@ -90,6 +90,36 @@ pub enum AppError {
         source: Box<AppError>,
         residual_paths: Vec<PathBuf>,
     },
+    #[error("invalid integration configuration: {0}")]
+    InvalidIntegration(#[from] IntegrationValidationError),
+    #[error("Git failure: {0}")]
+    Git(#[from] GitError),
+    #[error("GitHub failure: {0}")]
+    GitHub(#[from] GitHubError),
+    #[error("secret store failure: {0}")]
+    SecretStore(#[from] SecretStoreError),
+    #[error("Git preparation failed: {source}; lease release also failed: {release_error}")]
+    GitPreparationFailed {
+        source: Box<AppError>,
+        release_error: String,
+    },
+    #[error("credential {0} does not exist")]
+    CredentialNotFound(CredentialId),
+    #[error("repository {0} does not exist")]
+    RepositoryNotFound(String),
+    #[error("repository {0} is configured for credential authentication without a credential")]
+    RepositoryCredentialMissing(RepositoryId),
+    #[error("capability {capability_id} is not configured for environment {environment}")]
+    CapabilityNotFound {
+        capability_id: String,
+        environment: String,
+    },
+    #[error("GitHub client is not configured")]
+    GitHubNotConfigured,
+    #[error("GitHub device flow session does not exist: {0}")]
+    DeviceFlowNotFound(String),
+    #[error("integration operation failed: {0}")]
+    Integration(String),
 }
 
 impl AppError {
@@ -157,6 +187,18 @@ impl AppError {
             Self::Storage(_) => "storage",
             Self::Io(_) => "io",
             Self::RollbackFailed { .. } => "rollback_failed",
+            Self::InvalidIntegration(_) => "invalid_integration",
+            Self::Git(error) => error.code(),
+            Self::GitHub(error) => error.code(),
+            Self::SecretStore(_) => "secret_store_failed",
+            Self::GitPreparationFailed { .. } => "git_preparation_failed",
+            Self::CredentialNotFound(_) => "credential_not_found",
+            Self::RepositoryNotFound(_) => "repository_not_found",
+            Self::RepositoryCredentialMissing(_) => "repository_credential_missing",
+            Self::CapabilityNotFound { .. } => "capability_not_found",
+            Self::GitHubNotConfigured => "github_not_configured",
+            Self::DeviceFlowNotFound(_) => "device_flow_not_found",
+            Self::Integration(_) => "integration_failed",
         }
     }
 }

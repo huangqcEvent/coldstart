@@ -12,9 +12,9 @@ use coldstart_core::{
     ArtifactFormat, ArtifactId, ArtifactMetadata, BlueprintContent, BlueprintGeneration,
     BlueprintRevision, BlueprintRevisionId, BlueprintStatus, BlueprintValidationError,
     DocumentAnchor, DomainEvent, DomainEventKind, GenerationSource, InfoRequest,
-    InfoRequestCategory, InfoRequestDraft, InfoRequestId, InfoRequestStatus, PlanRevisionId,
-    PlanValidationError, Project, ProjectFact, ProjectFactId, ProjectId, WorkItemId,
-    validate_blueprint_structure,
+    InfoRequestCategory, InfoRequestDraft, InfoRequestId, InfoRequestStatus,
+    IntegrationValidationError, PlanRevisionId, PlanValidationError, Project, ProjectFact,
+    ProjectFactId, ProjectId, WorkItemId, validate_blueprint_structure,
 };
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Row, Transaction, TransactionBehavior, params,
@@ -94,10 +94,24 @@ pub enum StorageError {
     EmptyHumanWorkNote,
     #[error("work item {0} is not a human task")]
     HumanWorkRequired(WorkItemId),
+    #[error("repository key {key} already exists for project {project_id}")]
+    RepositoryKeyAlreadyExists { project_id: ProjectId, key: String },
+    #[error("credential secret reference already exists: {0}")]
+    CredentialSecretRefAlreadyExists(String),
+    #[error("credential {0} does not belong to the requested project")]
+    CredentialProjectMismatch(coldstart_core::CredentialId),
+    #[error("project setting key cannot be empty")]
+    EmptyProjectSettingKey,
+    #[error("git sync branch and commit SHA cannot be empty")]
+    EmptyGitSyncFields,
+    #[error("git sync repository or work item does not belong to project {0}")]
+    GitSyncScopeMismatch(ProjectId),
     #[error("invalid blueprint: {0}")]
     InvalidBlueprint(#[from] BlueprintValidationError),
     #[error("invalid plan: {0}")]
     InvalidPlan(#[from] PlanValidationError),
+    #[error("invalid integration configuration: {0}")]
+    InvalidIntegration(#[from] IntegrationValidationError),
     #[error("database schema version {found} is newer than supported version {supported}")]
     UnsupportedSchema { found: i64, supported: i64 },
     #[error("SQLite did not enable WAL mode; active journal mode is {0}")]
@@ -124,6 +138,12 @@ impl Database {
         migrations::migrate(&mut connection)?;
 
         Ok(Self { connection })
+    }
+
+    pub fn schema_version(&self) -> Result<i64, StorageError> {
+        Ok(self
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))?)
     }
 
     pub fn initialize_project(&mut self, project: &Project) -> Result<(), StorageError> {
@@ -952,7 +972,10 @@ fn enable_wal(connection: &Connection) -> Result<(), StorageError> {
     }
 }
 
-fn project_exists(transaction: &Transaction<'_>, id: &ProjectId) -> Result<bool, StorageError> {
+pub(crate) fn project_exists(
+    transaction: &Transaction<'_>,
+    id: &ProjectId,
+) -> Result<bool, StorageError> {
     let exists = transaction.query_row(
         "SELECT EXISTS(SELECT 1 FROM projects WHERE id = ?1)",
         [id.to_string()],

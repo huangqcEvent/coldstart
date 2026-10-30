@@ -5,8 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+base64 = "0.22.1"
 coldstart-core = { path = "../core" }
 encoding_rs.workspace = true
+keyring = { version = "3.6.3", features = ["windows-native"] }
 pdf-extract.workspace = true
 quick-xml.workspace = true
 schemars.workspace = true

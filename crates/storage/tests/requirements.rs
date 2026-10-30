@@ -137,7 +137,7 @@ fn info_request(question: &str) -> InfoRequestDraft {
 }
 
 #[test]
-fn migrates_v2_to_v4_without_losing_projects_or_events() {
+fn migrates_v2_to_v5_without_losing_projects_or_events() {
     let directory = tempfile::tempdir().expect("temporary directory must exist");
     let project =
         Project::new("迁移项目", directory.path().join("project")).expect("project must be valid");
@@ -170,7 +170,7 @@ fn migrates_v2_to_v4_without_losing_projects_or_events() {
             |row| row.get(0),
         )
         .expect("tables must be readable");
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     assert_eq!(table_count, 4);
 }
 

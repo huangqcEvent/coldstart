@@ -1,0 +1,82 @@
+import { invoke } from '@tauri-apps/api/core';
+
+import type {
+  CapabilityStatus,
+  CreatePrivateRepositoryInput,
+  GitHubDeviceFlow,
+  GitHubDevicePoll,
+  GitHubRepository,
+  GitHubSession,
+  IntegrationWorkspace,
+  RepositoryDraft,
+  RepositoryValidation,
+  SaveCredentialInput,
+} from './types';
+
+export async function readIntegrationWorkspace(path: string) {
+  return invoke<IntegrationWorkspace>('read_integration_workspace', { path });
+}
+
+export async function validateRepository(path: string, draft: RepositoryDraft) {
+  return invoke<RepositoryValidation>('validate_repository', { path, draft });
+}
+
+export async function saveRepository(path: string, draft: RepositoryDraft) {
+  return invoke<IntegrationWorkspace>('save_repository', { path, draft });
+}
+
+export async function saveCredential(path: string, input: SaveCredentialInput) {
+  return invoke<IntegrationWorkspace>('save_credential', { path, input });
+}
+
+export async function deleteCredential(path: string, credentialId: string) {
+  return invoke<IntegrationWorkspace>('delete_credential', {
+    path,
+    credentialId,
+  });
+}
+
+export async function updateCapability(
+  path: string,
+  capabilityId: string,
+  environment: string,
+  status: CapabilityStatus,
+  credentialId: string | null,
+  note: string | null,
+) {
+  return invoke<IntegrationWorkspace>('update_capability', {
+    path,
+    capabilityId,
+    environment,
+    status,
+    credentialId,
+    note,
+  });
+}
+
+export async function importGitHubSession(path: string) {
+  return invoke<GitHubSession>('import_github_session', { path });
+}
+
+export async function startGitHubDeviceFlow(clientId: string) {
+  return invoke<GitHubDeviceFlow>('start_github_device_flow', {
+    clientId,
+  });
+}
+
+export async function pollGitHubDeviceFlow(path: string, sessionId: string) {
+  return invoke<GitHubDevicePoll>('poll_github_device_flow', {
+    path,
+    sessionId,
+  });
+}
+
+export async function createGitHubPrivateRepository(
+  path: string,
+  input: CreatePrivateRepositoryInput,
+) {
+  return invoke<GitHubRepository>('create_github_private_repository', {
+    path,
+    input,
+  });
+}

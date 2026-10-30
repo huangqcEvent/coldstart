@@ -532,8 +532,10 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 name = "coldstart-adapters"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "coldstart-core",
  "encoding_rs",
+ "keyring",
  "pdf-extract",
  "quick-xml",
  "schemars 1.2.3",
@@ -559,6 +561,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tiny_http",
+ "uuid",
 ]
 
 [[package]]
@@ -609,6 +613,7 @@ name = "coldstart-mcp"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "coldstart-adapters",
  "coldstart-app",
  "coldstart-core",
  "coldstart-storage",
@@ -2154,6 +2159,18 @@ dependencies = [
  "bitflags 2.13.2",
  "serde",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "keyring"
+version = "3.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
+dependencies = [
+ "byteorder",
+ "log",
+ "windows-sys 0.60.2",
+ "zeroize",
 ]
 
 [[package]]
