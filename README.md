@@ -8,7 +8,7 @@ ColdStart 不生成业务代码，也不替代 Agent。它负责项目的认知�
 
 ## 当前状态
 
-第一阶段 Rust 核心与 CLI 已实现：可以创建可迁移的项目主目录，在本地 SQLite 中保存项目和追加式事件，并查询项目状态。Tauri 桌面界面、蓝图、计划引擎、MCP、Git 与凭据管理仍在后续阶段。
+第一阶段 Rust 核心与 CLI 已实现：可以创建可迁移的项目主目录，在本地 SQLite 中保存项目和追加式事件，并查询项目状态。第二阶段 Tauri 桌面壳已实现：可以通过桌面窗口创建、打开并刷新项目状态。蓝图、计划引擎、MCP、Git 与凭据管理仍在后续阶段。
 
 ```powershell
 cargo run -p coldstart-cli -- init --name "Demo Project" --path D:\work\demo
@@ -18,6 +18,18 @@ cargo run -p coldstart-cli -- status --path D:\work\demo --json
 `coldstart.project.json` 不保存机器绝对路径；移动到其他目录后，项目根路径由该文件所在目录重新推导。
 
 当前 CLI 的 `status --json` 要求项目根路径为 UTF-8；`init` 会在写入清单前以明确错误拒绝非 UTF-8 根路径。
+
+## 桌面应用
+
+在仓库根目录安装工作区依赖并启动桌面开发窗口：
+
+```powershell
+pnpm install
+pnpm --dir apps/desktop dev
+pnpm --dir apps/desktop build
+```
+
+开发窗口同时依赖 Vite 与 Tauri，Tauri CLI 从工作区 `node_modules` 运行。生产构建输出 `target\release\coldstart-desktop.exe`，本阶段不生成安装包。当前桌面只实现项目创建、打开与状态刷新。
 
 ## 解决的问题
 
@@ -73,6 +85,7 @@ MVP 采用 Tauri 2、Rust、React、TypeScript 和 SQLite。Rust 负责领域模
 - [产品与系统架构规格](docs/superpowers/specs/2026-10-30-coldstart-design.md)
 - [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
 - [第一阶段实施计划：Rust 核心与 CLI](docs/superpowers/plans/2026-10-30-coldstart-01-core-foundation.md)
+- [第二阶段实施计划：Tauri Desktop Shell](docs/superpowers/plans/2026-10-30-coldstart-02-desktop-shell.md)
 
 ## 安全说明
 
