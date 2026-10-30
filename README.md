@@ -62,6 +62,8 @@ MVP 采用 Tauri 2、Rust、React、TypeScript 和 SQLite。Rust 负责领域模
 ## 文档
 
 - [产品与系统架构规格](docs/superpowers/specs/2026-10-30-coldstart-design.md)
+- [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
+- [第一阶段实施计划：Rust 核心与 CLI](docs/superpowers/plans/2026-10-30-coldstart-01-core-foundation.md)
 
 ## 安全说明
 
