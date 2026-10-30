@@ -4,7 +4,8 @@
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
-    "build": "tauri build --no-bundle"
+    "build": "tauri build --no-bundle",
+    "build:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer.ps1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

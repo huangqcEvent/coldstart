@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-import type { PlanContent, ProjectWorkspace } from './types';
+import type { PlanContent, PlanPublishPreview, ProjectWorkspace } from './types';
 
 export async function readPlanWorkspace(path: string) {
   return invoke<ProjectWorkspace>('read_plan_workspace', { path });
@@ -14,8 +14,23 @@ export async function savePlanDraft(path: string, content: PlanContent) {
   return invoke<ProjectWorkspace>('save_plan_draft', { path, content });
 }
 
-export async function publishPlan(path: string, revisionId: string) {
-  return invoke<ProjectWorkspace>('publish_plan', { path, revisionId });
+export async function previewPlanPublish(path: string, revisionId: string) {
+  return invoke<PlanPublishPreview>('preview_plan_publish', {
+    path,
+    revisionId,
+  });
+}
+
+export async function publishPlan(
+  path: string,
+  revisionId: string,
+  confirmed: boolean,
+) {
+  return invoke<ProjectWorkspace>('publish_plan', {
+    path,
+    revisionId,
+    confirmed,
+  });
 }
 
 export async function completeHumanWork(

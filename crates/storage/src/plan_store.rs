@@ -6,11 +6,12 @@ use std::{
 
 use chrono::{DateTime, Duration, Utc};
 use coldstart_core::{
-    ClaimFailure, ClaimResult, ClaimedWork, DomainEvent, DomainEventKind, LeaseId, LeaseStatus,
-    LeaseSummary, PlanContent, PlanRevision, PlanRevisionId, PlanStatus, ProjectId, TaskKind,
-    TaskSpec, TaskSpecId, WorkAuthorization, WorkBlockerRecord, WorkItem, WorkItemId,
-    WorkItemStatus, WorkReportId, WorkReportInput, WorkReportRecord, WorkRun, WorkRunId,
-    WorkRunStatus, sha256_hex, validate_work_report,
+    ClaimFailure, ClaimResult, ClaimedWork, ContractState, DomainEvent, DomainEventKind, LeaseId,
+    LeaseStatus, LeaseSummary, PlanContent, PlanPublishPreview, PlanRevision, PlanRevisionId,
+    PlanStatus, PlanTaskDiff, ProjectId, TaskKind, TaskSpec, TaskSpecId, WorkAuthorization,
+    WorkBlockerRecord, WorkItem, WorkItemId, WorkItemStatus, WorkReportId, WorkReportInput,
+    WorkReportRecord, WorkRun, WorkRunId, WorkRunStatus, inherited_work_status, sha256_hex,
+    validate_work_report,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 use uuid::Uuid;
@@ -158,6 +159,27 @@ impl Database {
         Ok(plans)
     }
 
+    pub fn preview_plan_revision(
+        &mut self,
+        project_id: &ProjectId,
+        plan_revision_id: &PlanRevisionId,
+        now: DateTime<Utc>,
+    ) -> Result<PlanPublishPreview, StorageError> {
+        let transaction = self
+            .connection_mut()
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let plan = query_plan(&transaction, plan_revision_id)?
+            .filter(|plan| plan.project_id == *project_id)
+            .ok_or(StorageError::PlanNotFound(*plan_revision_id))?;
+        if plan.status != PlanStatus::Draft {
+            return Err(StorageError::PlanNotDraft(*plan_revision_id));
+        }
+        expire_active_leases(&transaction, project_id, now)?;
+        let preview = build_publish_preview(&transaction, project_id, &plan)?;
+        transaction.commit()?;
+        Ok(preview)
+    }
+
     pub fn publish_plan_revision(
         &mut self,
         project_id: &ProjectId,
@@ -173,40 +195,62 @@ impl Database {
         if plan.status != PlanStatus::Draft {
             return Err(StorageError::PlanNotDraft(*plan_revision_id));
         }
-
-        let blueprint = transaction
-            .query_row(
-                "SELECT status, content_hash FROM blueprint_revisions
-                 WHERE id = ?1 AND project_id = ?2",
-                params![
-                    plan.blueprint_revision_id.to_string(),
-                    project_id.to_string()
-                ],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()?
-            .ok_or(StorageError::PublishedBlueprintRequired)?;
-        if blueprint.0 != "published" {
-            return Err(StorageError::PublishedBlueprintRequired);
-        }
-        if blueprint.1 != plan.blueprint_content_hash {
-            return Err(StorageError::BlueprintContentMismatch);
+        validate_plan_blueprint(&transaction, project_id, &plan)?;
+        expire_active_leases(&transaction, project_id, now)?;
+        let preview = build_publish_preview(&transaction, project_id, &plan)?;
+        if preview.active_lease_count > 0 {
+            return Err(StorageError::PlanLeaseActive);
         }
 
-        let active_leases: i64 = transaction.query_row(
-            "SELECT COUNT(*) FROM leases l
-             JOIN work_items w ON w.id = l.work_item_id
-             WHERE w.project_id = ?1 AND l.status = 'active'",
-            [project_id.to_string()],
-            |row| row.get(0),
-        )?;
-        let published_plans: i64 = transaction.query_row(
-            "SELECT COUNT(*) FROM plan_revisions WHERE project_id = ?1 AND status = 'published'",
-            [project_id.to_string()],
-            |row| row.get(0),
-        )?;
-        if active_leases > 0 || published_plans > 0 {
-            return Err(StorageError::PlanAlreadyActive);
+        let base = latest_published_plan(&transaction, project_id)?;
+        let base_items = match &base {
+            Some(base) => load_plan_items(&transaction, &base.id, project_id)?,
+            None => Vec::new(),
+        };
+        let base_by_key = base_items
+            .iter()
+            .map(|(item, task)| (task.task_key.as_str(), (item, task)))
+            .collect::<BTreeMap<_, _>>();
+
+        if let Some(base) = &base {
+            transaction.execute(
+                "UPDATE plan_revisions SET status = 'superseded' WHERE id = ?1",
+                [base.id.to_string()],
+            )?;
+            for (item, task) in &base_items {
+                let replacement = plan.content.task(&task.task_key);
+                let contract_changed = replacement
+                    .is_some_and(|replacement| replacement.contract_hash() != task.contract_hash());
+                if replacement.is_none() {
+                    let next_status = if item.status == WorkItemStatus::Done {
+                        WorkItemStatus::Done
+                    } else {
+                        WorkItemStatus::Cancelled
+                    };
+                    transaction.execute(
+                        "UPDATE work_items
+                         SET status = ?1, contract_state = 'stale', updated_at = ?2
+                         WHERE id = ?3",
+                        params![next_status.as_str(), now.to_rfc3339(), item.id.to_string()],
+                    )?;
+                } else if contract_changed {
+                    transaction.execute(
+                        "UPDATE work_items SET contract_state = 'stale', updated_at = ?1
+                         WHERE id = ?2",
+                        params![now.to_rfc3339(), item.id.to_string()],
+                    )?;
+                }
+            }
+            insert_event(
+                &transaction,
+                &DomainEvent::new(
+                    *project_id,
+                    DomainEventKind::PlanSuperseded {
+                        revision_id: base.id,
+                        superseded_by: plan.id,
+                    },
+                ),
+            )?;
         }
 
         transaction.execute(
@@ -219,19 +263,33 @@ impl Database {
                 params![plan_revision_id.to_string(), task.task_key],
                 |row| row.get(0),
             )?;
+            let previous = base_by_key.get(task.task_key.as_str()).copied();
+            let (status, completed_at) = match previous {
+                Some((item, previous_task)) => {
+                    let contract_changed = previous_task.contract_hash() != task.contract_hash();
+                    let status = inherited_work_status(item.status, contract_changed);
+                    let completed_at = (status == WorkItemStatus::Done)
+                        .then(|| item.completed_at.map(|value| value.to_rfc3339()))
+                        .flatten();
+                    (status, completed_at)
+                }
+                None => (WorkItemStatus::Draft, None),
+            };
             transaction.execute(
                 "INSERT INTO work_items (
                     id, project_id, plan_revision_id, task_spec_id, task_key,
                     status, contract_state, priority, created_at, updated_at, completed_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, 'draft', 'current', ?6, ?7, ?7, NULL)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'current', ?7, ?8, ?8, ?9)",
                 params![
                     coldstart_core::WorkItemId::new().to_string(),
                     project_id.to_string(),
                     plan_revision_id.to_string(),
                     spec_id,
                     task.task_key,
+                    status.as_str(),
                     task.priority,
                     now.to_rfc3339(),
+                    completed_at,
                 ],
             )?;
         }
@@ -260,6 +318,29 @@ impl Database {
              ORDER BY priority DESC, task_key ASC",
         )?;
         let rows = statement.query_map([project_id.to_string()], read_work_item_row)?;
+        let mut work_items = Vec::new();
+        for row in rows {
+            work_items.push(row?.into_work_item()?);
+        }
+        Ok(work_items)
+    }
+
+    pub fn list_work_items_for_plan(
+        &self,
+        project_id: &ProjectId,
+        plan_revision_id: &PlanRevisionId,
+    ) -> Result<Vec<WorkItem>, StorageError> {
+        let mut statement = self.connection().prepare(
+            "SELECT id, project_id, plan_revision_id, task_spec_id, task_key,
+                    status, contract_state, priority, created_at, updated_at, completed_at
+             FROM work_items
+             WHERE project_id = ?1 AND plan_revision_id = ?2
+             ORDER BY priority DESC, task_key ASC",
+        )?;
+        let rows = statement.query_map(
+            params![project_id.to_string(), plan_revision_id.to_string()],
+            read_work_item_row,
+        )?;
         let mut work_items = Vec::new();
         for row in rows {
             work_items.push(row?.into_work_item()?);
@@ -794,6 +875,7 @@ impl Database {
         let item = query_work_item(&transaction, work_item_id)?
             .filter(|item| item.project_id == *project_id)
             .ok_or(StorageError::WorkItemNotFound(*work_item_id))?;
+        ensure_active_plan_item(&transaction, &item)?;
         let task = query_task_spec_for_work_item(&transaction, work_item_id)?
             .ok_or(StorageError::WorkItemNotFound(*work_item_id))?;
         if !matches!(task.kind, TaskKind::HumanExternal | TaskKind::ApprovalGate) {
@@ -1016,6 +1098,156 @@ fn latest_published_plan(
     query_plan(transaction, &parse_id(&id, "plan revision")?)
 }
 
+fn validate_plan_blueprint(
+    transaction: &Transaction<'_>,
+    project_id: &ProjectId,
+    plan: &PlanRevision,
+) -> Result<(), StorageError> {
+    let blueprint = transaction
+        .query_row(
+            "SELECT status, content_hash FROM blueprint_revisions
+             WHERE id = ?1 AND project_id = ?2",
+            params![
+                plan.blueprint_revision_id.to_string(),
+                project_id.to_string()
+            ],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
+        .ok_or(StorageError::PublishedBlueprintRequired)?;
+    if blueprint.0 != "published" {
+        return Err(StorageError::PublishedBlueprintRequired);
+    }
+    if blueprint.1 != plan.blueprint_content_hash {
+        return Err(StorageError::BlueprintContentMismatch);
+    }
+    Ok(())
+}
+
+fn build_publish_preview(
+    transaction: &Transaction<'_>,
+    project_id: &ProjectId,
+    candidate: &PlanRevision,
+) -> Result<PlanPublishPreview, StorageError> {
+    let base = latest_published_plan(transaction, project_id)?;
+    let base_items = match &base {
+        Some(base) => load_plan_items(transaction, &base.id, project_id)?,
+        None => Vec::new(),
+    };
+    let base_by_key = base_items
+        .iter()
+        .map(|(item, task)| (task.task_key.as_str(), (item, task)))
+        .collect::<BTreeMap<_, _>>();
+    let mut added = Vec::new();
+    let mut changed = Vec::new();
+    let mut unchanged = Vec::new();
+    let mut carried_completed = 0;
+    let mut reopened = 0;
+    for task in &candidate.content.tasks {
+        let previous = base_by_key.get(task.task_key.as_str()).copied();
+        let contract_changed = previous.is_some_and(|(_, previous_task)| {
+            previous_task.contract_hash() != task.contract_hash()
+        });
+        let previous_status = previous.map(|(item, _)| item.status);
+        let next_status = previous.map_or(WorkItemStatus::Draft, |(item, _)| {
+            inherited_work_status(item.status, contract_changed)
+        });
+        if previous_status == Some(WorkItemStatus::Done) && !contract_changed {
+            carried_completed += 1;
+        }
+        if next_status == WorkItemStatus::Reopened {
+            reopened += 1;
+        }
+        let diff = PlanTaskDiff {
+            task_key: task.task_key.clone(),
+            title: task.title.clone(),
+            previous_status,
+            next_status: Some(next_status),
+            contract_changed,
+        };
+        if previous.is_none() {
+            added.push(diff);
+        } else if contract_changed {
+            changed.push(diff);
+        } else {
+            unchanged.push(diff);
+        }
+    }
+
+    let candidate_keys = candidate
+        .content
+        .tasks
+        .iter()
+        .map(|task| task.task_key.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut removed = Vec::new();
+    let mut cancelled = 0;
+    for (item, task) in &base_items {
+        if candidate_keys.contains(task.task_key.as_str()) {
+            continue;
+        }
+        let next_status = if item.status == WorkItemStatus::Done {
+            WorkItemStatus::Done
+        } else {
+            cancelled += 1;
+            WorkItemStatus::Cancelled
+        };
+        removed.push(PlanTaskDiff {
+            task_key: task.task_key.clone(),
+            title: task.title.clone(),
+            previous_status: Some(item.status),
+            next_status: Some(next_status),
+            contract_changed: false,
+        });
+    }
+
+    let active_lease_count: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM leases l
+         JOIN work_items w ON w.id = l.work_item_id
+         WHERE w.project_id = ?1 AND l.status = 'active'",
+        [project_id.to_string()],
+        |row| row.get(0),
+    )?;
+    let active_lease_count = usize::try_from(active_lease_count).unwrap_or(usize::MAX);
+    let blockers = if active_lease_count == 0 {
+        Vec::new()
+    } else {
+        vec![format!(
+            "仍有 {active_lease_count} 个活动租约，必须完成、释放或等待过期后才能替换活动计划"
+        )]
+    };
+    Ok(PlanPublishPreview {
+        base_revision_id: base.as_ref().map(|base| base.id),
+        base_revision_number: base.as_ref().map(|base| base.revision_number),
+        candidate_revision_id: candidate.id,
+        candidate_revision_number: candidate.revision_number,
+        added,
+        changed,
+        unchanged,
+        removed,
+        carried_completed,
+        reopened,
+        cancelled,
+        active_lease_count,
+        publishable: blockers.is_empty(),
+        blockers,
+    })
+}
+
+fn ensure_active_plan_item(
+    transaction: &Transaction<'_>,
+    item: &WorkItem,
+) -> Result<(), StorageError> {
+    let active_plan_id = latest_published_plan(transaction, &item.project_id)?.map(|plan| plan.id);
+    if active_plan_id != Some(item.plan_revision_id) {
+        return Err(StorageError::PlanNoLongerActive(item.plan_revision_id));
+    }
+    if item.contract_state != ContractState::Current {
+        return Err(StorageError::ContractStale(item.id));
+    }
+    Ok(())
+}
+
 fn load_plan_items(
     transaction: &Transaction<'_>,
     plan_revision_id: &PlanRevisionId,
@@ -1073,6 +1305,7 @@ fn authorize_in_tx(
     expire_active_leases(transaction, &initial_item.project_id, now)?;
     let item = query_work_item(transaction, work_item_id)?
         .ok_or(StorageError::WorkItemNotFound(*work_item_id))?;
+    ensure_active_plan_item(transaction, &item)?;
     if !matches!(
         item.status,
         WorkItemStatus::Claimed | WorkItemStatus::InProgress

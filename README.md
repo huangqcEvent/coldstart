@@ -13,7 +13,8 @@ ColdStart 不生成业务代码，也不替代 Agent。它负责项目的认知�
 - 第三阶段需求与蓝图已完成：可导入需求、调用 OpenAI 兼容模型生成结构化蓝图、人工编辑与发布，并在 Inbox 中补充阻塞信息。
 - 第四阶段计划引擎与 MCP 已完成：可从已发布蓝图编译确定性任务 DAG，通过租约领取工作、编译上下文、提交结构化报告，并在桌面看板观察进度。
 - 第五阶段仓库、能力与发布门禁已完成：可映射多仓库、使用 Windows Credential Manager 保存 Secret、验证并推送任务分支、配置 GitHub 与三方能力，并在只读发布中心汇总上架和审批状态。
-- 安装包、自动部署、App 打包、商店提审和已激活计划的变更重规划仍属于后续阶段。
+- 第六阶段集成、重规划与安全加固已完成：活动计划可在无租约时安全替换，历史任务与旧契约不能推进新计划；跨子系统 MVP 验收通过，并生成包含桌面端与 MCP 的 Windows NSIS 安装包。
+- 自动部署、App 打包、商店提审、小程序发布、自动合并和 Release Tag 仍明确不在当前 MVP 内。
 
 ```powershell
 cargo run -p coldstart-cli -- init --name "Demo Project" --path D:\work\demo
@@ -33,11 +34,26 @@ cargo run -p coldstart-cli -- status --path D:\work\demo --json
 pnpm install
 pnpm --dir apps/desktop dev
 pnpm --dir apps/desktop build
+pnpm --dir apps/desktop build:installer
 ```
 
-开发窗口同时依赖 Vite 与 Tauri，Tauri CLI 从工作区 `node_modules` 运行；pnpm store 固定在仓库内的 `.pnpm-store`，Rust 构建产物位于 `target`，均留在 D 盘。生产构建输出 `target\release\coldstart-desktop.exe`，当前不生成安装包。
+开发窗口同时依赖 Vite 与 Tauri，Tauri CLI 从工作区 `node_modules` 运行；pnpm store 固定在仓库内的 `.pnpm-store`，Rust 构建产物位于 `target`，均留在 D 盘。只构建桌面二进制时输出 `target\release\coldstart-desktop.exe`；完整安装包由 `build:installer` 生成。
 
-桌面应用现在支持项目创建与打开、需求导入、蓝图生成与人工编辑、不可变版本发布、计划编译与发布、任务状态观察、Inbox 回答与人工计划任务，以及仓库映射、GitHub 授权、系统凭据、三方能力状态和发布中心。
+桌面应用现在支持项目创建与打开、需求导入、蓝图生成与人工编辑、不可变版本发布、计划编译与发布、重规划差异确认、任务状态观察、Inbox 回答与人工计划任务，以及仓库映射、GitHub 授权、系统凭据、三方能力状态和发布中心。
+
+## Windows 安装包
+
+完整安装包位于 `target\release\bundle\nsis\ColdStart_0.1.0_x64-setup.exe`，使用 Tauri NSIS 为当前用户安装，不要求管理员权限，并允许把安装目录改到 D 盘：
+
+```powershell
+& 'D:\coldstart\target\release\bundle\nsis\ColdStart_0.1.0_x64-setup.exe' /S /D=D:\DevTools\ColdStart
+```
+
+安装目录同时包含 `coldstart-desktop.exe`、`coldstart-mcp.exe`、Web 资源和卸载器。安装版计划看板会优先定位桌面 EXE 同级的 MCP 二进制，也会识别 Tauri 的 `resources\coldstart-mcp.exe`。卸载会移除程序文件和开始菜单入口，但不会删除用户项目目录、SQLite 数据库、报告或 Git 仓库。
+
+安装包尚未代码签名，Windows SmartScreen 可能提示“未知发布者”。这是当前已知限制，不代表安装包已经签名。自动更新、崩溃上报和安装统计均未启用。
+
+若构建环境无法稳定下载 NSIS，可预先准备 `nsis-3.13` 与 `nsis_tauri_utils.dll`，放到 `target\.tauri\NSIS`，并保持 `bundle.useLocalToolsDir=true`；构建脚本会先把 MCP release 二进制放进安装资源，再执行 Tauri NSIS 构建并输出 SHA-256。
 
 ## 需求与蓝图
 
@@ -56,7 +72,9 @@ pnpm --dir apps/desktop build
 1. 发布蓝图后进入“计划看板”，编译由 `plan-v1` 模板确定性生成的开发计划。模板覆盖平台工程基础、服务端契约、模块纵向切片、三方能力准备与接入、发布条件和平台发布里程碑。
 2. 计划草稿可人工调整标题、目标、范围、明确不做、优先级、关键路径、验收标准、证据要求和 `blocks` 依赖；保存时重新校验任务键、DAG、路径边界和验收结构。
 3. 发布计划后，任务按 `blocks` 依赖解锁。编码任务只能由持有有效租约的 MCP Agent 提交完成报告；桌面 UI 只允许完成 `human_external` 与 `approval_gate` 任务。
-4. 计划看板每 3 秒刷新，窗口重新获得焦点时立即刷新；刷新失败会保留最后一次成功快照并显示错误。
+4. 需要替换已激活计划时，桌面端先展示新增、变更、未变化和删除任务，以及继承完成、重新打开、取消与活动租约数量；用户确认后才提交替换事务。存在活动租约时禁止发布。
+5. 新计划按稳定 `task_key` 继承安全状态；契约变化的旧工作项标记为过期并重新打开，删除任务会取消。旧计划、报告和事件永久保留，但计划看板、Inbox、发布中心、任务上下文和 MCP 引用只读取当前活动计划。
+6. 计划看板每 3 秒刷新，窗口重新获得焦点时立即刷新；刷新失败会保留最后一次成功快照并显示错误。
 
 构建 release MCP 二进制：
 
@@ -101,7 +119,7 @@ ColdStart 不启动 Codex，也不常驻后台。默认租约为 30 分钟，建
 6. GitHub 支持导入本机 `gh` 已登录账号，也支持通过用户提供的 OAuth App Client ID 启动 Device Flow。创建私有仓库必须由桌面界面二次确认，成功后只更新对应本地仓库的 `origin`；MCP 不提供仓库 CRUD。
 7. 发布中心只汇总 `release-prereq:*`、`release:*`、人工审批闸门和人工外部任务。它不部署、不打包、不提审，也不提供绕过 Inbox 的高风险任务完成入口。
 
-阶段 5 仍不执行自动合并、创建 Release Tag、生产部署、App 打包、商店提审、小程序发布和命令自动验证。MCP 不会获得 Secret，只会获得能力状态和环境变量名称。
+当前 MVP 仍不执行自动合并、创建 Release Tag、生产部署、App 打包、商店提审、小程序发布和命令自动验证。MCP 不会获得 Secret，只会获得能力状态和环境变量名称。
 
 ## 解决的问题
 
@@ -161,7 +179,8 @@ MVP 采用 Tauri 2、Rust、React、TypeScript 和 SQLite。Rust 负责领域模
 - [第三阶段实施计划：需求与蓝图](docs/superpowers/plans/2026-10-30-coldstart-03-requirements-blueprint.md)
 - [第四阶段实施计划：计划引擎与 MCP](docs/superpowers/plans/2026-10-30-coldstart-04-plan-engine-mcp.md)
 - [第五阶段实施计划：仓库、能力与发布门禁](docs/superpowers/plans/2026-10-30-coldstart-05-git-capabilities-release.md)
+- [第六阶段实施计划：集成、重规划与安全加固](docs/superpowers/plans/2026-10-30-coldstart-06-integration-hardening.md)
 
 ## 安全说明
 
-ColdStart 避免把明文凭据交给模型，通过 Windows Credential Manager 保存 Secret，并限制 MCP 可访问的项目范围。MVP 不是面向恶意本地进程的完整沙箱；运行 Agent 的账户权限仍应与敏感生产凭据隔离。Git 推送主动拒绝保护分支、强推和越过任务范围的 Commit 变更。
+ColdStart 避免把明文凭据交给模型，通过 Windows Credential Manager 保存 Secret，并限制 MCP 可访问的项目范围。MVP 不是面向恶意本地进程的完整沙箱；运行 Agent 的账户权限仍应与敏感生产凭据隔离。Git 推送主动拒绝保护分支、强推和越过任务范围的 Commit 变更。安装包未签名，分发时不要把它误标为已通过代码签名或商店审核。

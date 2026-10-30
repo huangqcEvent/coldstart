@@ -8,6 +8,7 @@ import type {
   CommandError,
   ModelConfig,
   PlanContent,
+  PlanPublishPreview,
   ProjectWorkspace,
 } from './api/types';
 import { AppSidebar, type WorkspaceView } from './components/AppSidebar';
@@ -246,8 +247,25 @@ export default function App() {
     }
     const path = workspace.status.rootPath;
     return runWorkspaceAction('正在发布计划', () =>
-      planApi.publishPlan(path, revisionId),
+      planApi.publishPlan(path, revisionId, true),
     );
+  }
+
+  async function handlePreviewPlanPublish(
+    revisionId: string,
+  ): Promise<PlanPublishPreview | null> {
+    if (!workspace) {
+      return null;
+    }
+    try {
+      return await planApi.previewPlanPublish(
+        workspace.status.rootPath,
+        revisionId,
+      );
+    } catch (previewError) {
+      setError(normalizeCommandError(previewError));
+      return null;
+    }
   }
 
   async function handleCompleteHumanWork(
@@ -297,7 +315,7 @@ export default function App() {
       <main className="workspace">
         <div className="workspace__topline" aria-hidden="true">
           <span>LOCAL-FIRST PROJECT SYSTEM</span>
-          <span>PHASE 05 / GIT + CAPABILITIES</span>
+          <span>PHASE 06 / INTEGRATION + HARDENING</span>
         </div>
 
         {error ? <ErrorBanner error={error} onDismiss={() => setError(null)} /> : null}
@@ -367,6 +385,7 @@ export default function App() {
               busyLabel={busyLabel}
               onGenerate={handleGeneratePlan}
               onSave={handleSavePlan}
+              onPreviewPublish={handlePreviewPlanPublish}
               onPublish={handlePublishPlan}
               onRefresh={handlePlanRefresh}
               onNavigateBlueprint={() => setView('blueprint')}

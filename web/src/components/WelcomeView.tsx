@@ -29,7 +29,7 @@ export function WelcomeView({ onCreate, onOpen }: WelcomeViewProps) {
 
       <div className="welcome__panel" aria-label="当前阶段">
         <div className="welcome__panel-head">
-          <span>PHASE 05</span>
+          <span>PHASE 06</span>
           <span className="status-dot">READY</span>
         </div>
         <div className="welcome__orbit" aria-hidden="true">
@@ -38,8 +38,8 @@ export function WelcomeView({ onCreate, onOpen }: WelcomeViewProps) {
           <span className="welcome__orbit-ring welcome__orbit-ring--two" />
         </div>
         <div className="welcome__panel-copy">
-          <p>计划与 MCP</p>
-          <span>编译任务 DAG，让 Codex 主动领取并回报进度</span>
+          <p>集成与加固</p>
+          <span>安全重规划、跨子系统验收与可安装的桌面交付</span>
         </div>
       </div>
     </section>

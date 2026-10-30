@@ -1,7 +1,8 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use chrono::Utc;
-use coldstart_app::{ClaimRequest, PlanService, ProjectService};
+use coldstart_adapters::{GitAdapter, MemorySecretStore};
+use coldstart_app::{ClaimRequest, IntegrationService, PlanService, ProjectService};
 use coldstart_core::{
     AcceptanceResult, ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration,
     ClaimResult, GenerationSource, InfoRequestCategory, InfoRequestDraft, ModuleDefinition,
@@ -322,4 +323,271 @@ fn authorization_facts_never_enter_the_agent_context() {
     assert!(!context.markdown.contains(SENSITIVE_VALUE));
     assert!(context.markdown.contains("阿里云 OSS 的访问密钥是什么？"));
     assert!(context.markdown.contains("敏感值不进入 Agent 上下文"));
+}
+
+#[test]
+fn replanning_requires_a_preview_and_explicit_confirmation() {
+    let fixture = Fixture::new();
+    let service = PlanService::new();
+    let first = service
+        .generate_draft(fixture.home.clone())
+        .expect("first plan draft must generate")
+        .draft
+        .expect("first draft must exist");
+    service
+        .publish(fixture.home.clone(), first.id)
+        .expect("first plan must publish");
+
+    let second = service
+        .generate_draft(fixture.home.clone())
+        .expect("replacement draft must generate")
+        .draft
+        .expect("replacement draft must exist");
+    let preview = service
+        .preview_publish(fixture.home.clone(), second.id)
+        .expect("replacement preview must load");
+    assert_eq!(preview.base_revision_id, Some(first.id));
+    assert!(preview.publishable);
+    assert!(preview.added.is_empty());
+    assert_eq!(preview.unchanged.len(), second.content.tasks.len());
+
+    let error = service
+        .publish_confirmed(fixture.home.clone(), second.id, false)
+        .expect_err("unconfirmed replacement must fail");
+    assert_eq!(error.code(), "replan_confirmation_required");
+
+    let workspace = service
+        .publish_confirmed(fixture.home.clone(), second.id, true)
+        .expect("confirmed replacement must publish");
+    assert_eq!(
+        workspace.published.expect("published plan must exist").id,
+        second.id
+    );
+}
+
+#[test]
+fn replan_workspace_projects_only_the_active_plan() {
+    let fixture = Fixture::new();
+    let secrets = Arc::new(MemorySecretStore::default());
+    let service = PlanService::with_dependencies(secrets.clone(), GitAdapter::new());
+    let first = service
+        .generate_draft(fixture.home.clone())
+        .expect("first plan draft must generate")
+        .draft
+        .expect("first draft must exist");
+    let first_workspace = service
+        .publish(fixture.home.clone(), first.id)
+        .expect("first plan must publish");
+    let claimed = service
+        .claim_next(
+            fixture.home.clone(),
+            ClaimRequest {
+                agent_profile: "codex".to_owned(),
+                repository: Some("web".to_owned()),
+                request_id: "replan-projection-claim".to_owned(),
+            },
+        )
+        .expect("claim must call");
+    let ClaimResult::Claimed(claimed) = claimed else {
+        panic!("work must be claimed");
+    };
+    let task = first_workspace
+        .work_items
+        .iter()
+        .find(|view| view.work_item.id == claimed.work_item.id)
+        .expect("claimed task must exist")
+        .task
+        .clone();
+    service
+        .submit_report(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token,
+            report_for(&task, "replan-projection-report"),
+        )
+        .expect("report must submit");
+
+    let second = service
+        .generate_draft(fixture.home.clone())
+        .expect("replacement draft must generate")
+        .draft
+        .expect("replacement draft must exist");
+    let second_id = second.id;
+    let expected_task_count = second.content.tasks.len();
+    service
+        .publish_confirmed(fixture.home.clone(), second_id, true)
+        .expect("replacement plan must publish");
+
+    let workspace = service
+        .load_workspace(fixture.home.clone())
+        .expect("workspace must load");
+    assert_eq!(workspace.work_items.len(), expected_task_count);
+    assert!(
+        workspace
+            .work_items
+            .iter()
+            .all(|view| view.work_item.plan_revision_id == second_id)
+    );
+    let inherited = workspace
+        .work_items
+        .iter()
+        .find(|view| view.work_item.task_key == claimed.work_item.task_key)
+        .expect("inherited task must exist");
+    assert_eq!(inherited.work_item.status, WorkItemStatus::Done);
+
+    let integrations = IntegrationService::with_dependencies(secrets, GitAdapter::new(), None);
+    let release = integrations
+        .load_workspace(fixture.home.clone())
+        .expect("integration workspace must load")
+        .release;
+    for view in release
+        .prerequisites
+        .iter()
+        .chain(release.milestones.iter())
+        .chain(release.approval_gates.iter())
+        .chain(release.human_tasks.iter())
+    {
+        assert_eq!(view.work_item.plan_revision_id, second_id);
+    }
+
+    let database = Database::open(&fixture.home.join(".coldstart").join("state.db"))
+        .expect("database must reopen");
+    assert!(
+        database
+            .list_work_items(&fixture.project_id)
+            .expect("history must load")
+            .len()
+            > expected_task_count
+    );
+    assert_eq!(
+        database
+            .load_plan(&first.id)
+            .expect("old plan must load")
+            .expect("old plan must remain")
+            .status,
+        coldstart_core::PlanStatus::Superseded
+    );
+}
+
+#[test]
+fn task_context_and_references_use_only_the_active_plan() {
+    let fixture = Fixture::new();
+    let service = PlanService::new();
+    let first = service
+        .generate_draft(fixture.home.clone())
+        .expect("first plan draft must generate")
+        .draft
+        .expect("first draft must exist");
+    let first_workspace = service
+        .publish(fixture.home.clone(), first.id)
+        .expect("first plan must publish");
+    let claimed = service
+        .claim_next(
+            fixture.home.clone(),
+            ClaimRequest {
+                agent_profile: "codex".to_owned(),
+                repository: Some("web".to_owned()),
+                request_id: "active-context-first".to_owned(),
+            },
+        )
+        .expect("claim must call");
+    let ClaimResult::Claimed(claimed) = claimed else {
+        panic!("first work must be claimed");
+    };
+    let foundation_task = first_workspace
+        .work_items
+        .iter()
+        .find(|view| view.work_item.id == claimed.work_item.id)
+        .expect("claimed task must exist")
+        .task
+        .clone();
+    service
+        .submit_report(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token,
+            report_for(&foundation_task, "active-context-foundation"),
+        )
+        .expect("foundation report must submit");
+
+    let second = service
+        .generate_draft(fixture.home.clone())
+        .expect("replacement draft must generate")
+        .draft
+        .expect("replacement draft must exist");
+    let second_id = second.id;
+    service
+        .publish_confirmed(fixture.home.clone(), second_id, true)
+        .expect("replacement plan must publish");
+
+    let connection = rusqlite::Connection::open(fixture.home.join(".coldstart").join("state.db"))
+        .expect("tamper connection must open");
+    connection
+        .execute(
+            "UPDATE work_items SET status = 'ready', priority = 999999 WHERE id = ?1",
+            [claimed.work_item.id.to_string()],
+        )
+        .expect("historical work item must update");
+    drop(connection);
+
+    let workspace = service
+        .load_workspace(fixture.home.clone())
+        .expect("replacement workspace must load");
+    let dependent = workspace
+        .work_items
+        .iter()
+        .find(|view| {
+            view.task.kind == coldstart_core::TaskKind::AgentCoding
+                && view
+                    .task
+                    .dependencies
+                    .iter()
+                    .any(|dependency| dependency.task_key == foundation_task.task_key)
+        })
+        .expect("dependent task must exist");
+    let dependent_key = dependent.work_item.task_key.clone();
+    let claimed = service
+        .claim_next(
+            fixture.home.clone(),
+            ClaimRequest {
+                agent_profile: "codex".to_owned(),
+                repository: Some("web".to_owned()),
+                request_id: "active-context-dependent".to_owned(),
+            },
+        )
+        .expect("dependent claim must call");
+    let ClaimResult::Claimed(claimed) = claimed else {
+        panic!("dependent work must be claimed");
+    };
+    assert_eq!(claimed.work_item.task_key, dependent_key);
+
+    let context = service
+        .get_context(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token.clone(),
+        )
+        .expect("context must compile");
+    assert!(
+        context
+            .markdown
+            .contains(&format!("- {}：Done（Blocks）", foundation_task.task_key))
+    );
+    assert!(
+        !context
+            .markdown
+            .contains(&format!("- {}：Ready（Blocks）", foundation_task.task_key))
+    );
+
+    let reference = service
+        .read_reference(
+            fixture.home,
+            claimed.work_item.id,
+            claimed.lease_token,
+            foundation_task.task_key,
+        )
+        .expect("dependency reference must load");
+    assert!(reference.content.contains("状态：Done"));
+    assert!(reference.content.contains(&second_id.to_string()));
+    assert!(!reference.content.contains(&first.id.to_string()));
 }

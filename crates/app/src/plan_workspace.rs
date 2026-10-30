@@ -54,7 +54,12 @@ pub(crate) fn build_plan_workspace(project: &OpenProject) -> Result<PlanWorkspac
     let published = project
         .database
         .latest_plan(&project.project.id, PlanStatus::Published)?;
-    let work_items = project.database.list_work_items(&project.project.id)?;
+    let work_items = match &published {
+        Some(plan) => project
+            .database
+            .list_work_items_for_plan(&project.project.id, &plan.id)?,
+        None => Vec::new(),
+    };
     let leases = project.database.list_leases(&project.project.id)?;
     let runs = project.database.list_work_runs(&project.project.id)?;
     let reports = project.database.list_work_reports(&project.project.id)?;
@@ -118,11 +123,47 @@ fn mcp_binary_path(project_home: &Path) -> String {
     let _ = project_home;
     if let Ok(current_exe) = std::env::current_exe()
         && let Some(directory) = current_exe.parent()
+        && let Some(candidate) = find_mcp_binary(directory)
     {
-        let candidate = directory.join("coldstart-mcp.exe");
-        if candidate.exists() {
-            return candidate.to_string_lossy().into_owned();
-        }
+        return candidate.to_string_lossy().into_owned();
     }
     "coldstart-mcp.exe".to_owned()
+}
+
+fn find_mcp_binary(application_directory: &Path) -> Option<std::path::PathBuf> {
+    [
+        application_directory.join("coldstart-mcp.exe"),
+        application_directory
+            .join("resources")
+            .join("coldstart-mcp.exe"),
+    ]
+    .into_iter()
+    .find(|candidate| candidate.is_file())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::find_mcp_binary;
+
+    #[test]
+    fn mcp_binary_is_found_beside_the_desktop_executable() {
+        let directory = tempfile::tempdir().expect("temporary directory must exist");
+        let binary = directory.path().join("coldstart-mcp.exe");
+        fs::write(&binary, b"mcp").expect("binary must write");
+
+        assert_eq!(find_mcp_binary(directory.path()), Some(binary));
+    }
+
+    #[test]
+    fn mcp_binary_is_found_in_the_tauri_resource_directory() {
+        let directory = tempfile::tempdir().expect("temporary directory must exist");
+        let resources = directory.path().join("resources");
+        fs::create_dir_all(&resources).expect("resource directory must create");
+        let binary = resources.join("coldstart-mcp.exe");
+        fs::write(&binary, b"mcp").expect("binary must write");
+
+        assert_eq!(find_mcp_binary(directory.path()), Some(binary));
+    }
 }

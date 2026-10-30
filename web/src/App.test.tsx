@@ -17,6 +17,7 @@ import type {
   InfoRequest,
   IntegrationWorkspace,
   PlanContent,
+  PlanPublishPreview,
   PlanRevision,
   PlanWorkspace,
   ProjectStatus,
@@ -46,6 +47,7 @@ vi.mock('./api/planApi', () => ({
   readPlanWorkspace: vi.fn(),
   generatePlanDraft: vi.fn(),
   savePlanDraft: vi.fn(),
+  previewPlanPublish: vi.fn(),
   publishPlan: vi.fn(),
   completeHumanWork: vi.fn(),
 }));
@@ -237,6 +239,36 @@ function makePlanRevision(overrides: Partial<PlanRevision> = {}): PlanRevision {
     contentHash: 'd'.repeat(64),
     createdAt: '2026-10-30T11:00:00Z',
     publishedAt: null,
+    ...overrides,
+  };
+}
+
+function makePublishPreview(
+  overrides: Partial<PlanPublishPreview> = {},
+): PlanPublishPreview {
+  return {
+    baseRevisionId: null,
+    baseRevisionNumber: null,
+    candidateRevisionId: makePlanRevision().id,
+    candidateRevisionNumber: 1,
+    added: [
+      {
+        taskKey: agentTask.taskKey,
+        title: agentTask.title,
+        previousStatus: null,
+        nextStatus: 'draft',
+        contractChanged: false,
+      },
+    ],
+    changed: [],
+    unchanged: [],
+    removed: [],
+    carriedCompleted: 0,
+    reopened: 0,
+    cancelled: 0,
+    activeLeaseCount: 0,
+    publishable: true,
+    blockers: [],
     ...overrides,
   };
 }
@@ -476,6 +508,7 @@ beforeEach(() => {
   vi.mocked(planApi.readPlanWorkspace).mockReset();
   vi.mocked(planApi.generatePlanDraft).mockReset();
   vi.mocked(planApi.savePlanDraft).mockReset();
+  vi.mocked(planApi.previewPlanPublish).mockReset();
   vi.mocked(planApi.publishPlan).mockReset();
   vi.mocked(planApi.completeHumanWork).mockReset();
   vi.mocked(integrationApi.readIntegrationWorkspace).mockReset();
@@ -495,6 +528,10 @@ describe('ColdStart project workspace', () => {
     render(<App />);
 
     expect(screen.getByText('COLDSTART / 冷启动')).toBeInTheDocument();
+    expect(screen.getByText('PHASE 06 / INTEGRATION + HARDENING')).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText('当前阶段')).getByText('PHASE 06'),
+    ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '冷启动' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '项目总览' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '需求导入' })).toBeDisabled();
@@ -798,14 +835,97 @@ describe('ColdStart project workspace', () => {
         }),
       }),
     );
+    vi.mocked(planApi.previewPlanPublish).mockResolvedValue(
+      makePublishPreview({
+        candidateRevisionId: draftPlan.id,
+        candidateRevisionNumber: 1,
+      }),
+    );
 
     await user.click(screen.getByRole('button', { name: '计划看板' }));
     await user.click(screen.getByRole('button', { name: '编译开发计划' }));
     expect(await screen.findByText('计划草稿 v1')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '发布计划' }));
+    expect(planApi.previewPlanPublish).toHaveBeenCalledWith(
+      projectPath,
+      draftPlan.id,
+    );
+    const dialog = await screen.findByRole('dialog', {
+      name: '确认发布计划 v1',
+    });
+    expect(within(dialog).getByText('新增')).toBeInTheDocument();
+    await user.click(
+      within(dialog).getByRole('button', { name: '确认发布首个计划' }),
+    );
 
     expect(await screen.findByText('可领取')).toBeInTheDocument();
-    expect(planApi.publishPlan).toHaveBeenCalledWith(projectPath, draftPlan.id);
+    expect(planApi.publishPlan).toHaveBeenCalledWith(
+      projectPath,
+      draftPlan.id,
+      true,
+    );
+  });
+
+  it('blocks replacement publishing while an active lease remains', async () => {
+    const publishedPlan = makePlanRevision({
+      status: 'published',
+      publishedAt: '2026-10-30T10:00:00Z',
+    });
+    const draftPlan = makePlanRevision({
+      id: 'abababab-abab-4bab-8bab-abababababab',
+      revisionNumber: 2,
+    });
+    const user = await openProject(
+      makeWorkspace({
+        plan: makePlanWorkspace({
+          draft: draftPlan,
+          published: publishedPlan,
+          workItems: [
+            makeAgentWorkItem({
+              status: 'in_progress',
+            }),
+          ],
+        }),
+      }),
+    );
+    vi.mocked(planApi.previewPlanPublish).mockResolvedValue(
+      makePublishPreview({
+        baseRevisionId: publishedPlan.id,
+        baseRevisionNumber: 1,
+        candidateRevisionId: draftPlan.id,
+        candidateRevisionNumber: 2,
+        added: [],
+        unchanged: [
+          {
+            taskKey: agentTask.taskKey,
+            title: agentTask.title,
+            previousStatus: 'done',
+            nextStatus: 'done',
+            contractChanged: false,
+          },
+        ],
+        carriedCompleted: 1,
+        activeLeaseCount: 1,
+        publishable: false,
+        blockers: ['仍有 1 个活动租约，必须完成、释放或等待过期后才能替换活动计划'],
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: '计划看板' }));
+    await user.click(screen.getByRole('button', { name: '发布计划' }));
+
+    const dialog = await screen.findByRole('dialog', {
+      name: '确认替换计划 v2',
+    });
+    expect(
+      within(dialog).getByText(
+        '仍有 1 个活动租约，必须完成、释放或等待过期后才能替换活动计划',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole('button', { name: '确认替换活动计划' }),
+    ).toBeDisabled();
+    expect(planApi.publishPlan).not.toHaveBeenCalled();
   });
 
   it('completes a human plan task from inbox and unlocks the plan', async () => {
