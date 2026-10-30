@@ -6,8 +6,9 @@ dist/
 out/
 build/
 coverage/
-.electron-builder/
 .vite/
+target/
+*.rs.bk
 
 # Local application state
 .coldstart/

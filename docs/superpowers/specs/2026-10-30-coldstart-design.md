@@ -50,7 +50,7 @@ ColdStart 不生成业务代码，不自动启动 Agent，不替代 App 商店�
 ## 3. 已确认的关键决策
 
 - 产品名使用 ColdStart，中文名“冷启动”。
-- 使用 Electron、React、TypeScript 和 better-sqlite3。
+- 使用 Tauri 2、Rust、React、TypeScript 和 SQLite；Rust 负责全部领域与本地能力，前端只负责交互界面。
 - Codex 通过 MCP stdio 主动领取任务。
 - 每个任务只返回按需编译的上下文，不返回完整项目资料。
 - MVP 验收策略默认是 `agent_report`，接受 Agent 的结构化自报结果。
@@ -80,11 +80,11 @@ ColdStart 不生成业务代码，不自动启动 Agent，不替代 App 商店�
 Codex / MCP Client
         │ stdio
         ▼
-  MCP Bridge Process ─────┐
+  Rust MCP Bridge ────────┐
                           │
-Electron Desktop UI ──────┼──> packages/core
+Tauri Desktop + WebView ──┼──> Rust Core Crates
                           │      ├─ Blueprint Compiler
-Local CLI Runner ─────────┘      ├─ Plan Compiler
+Rust CLI Runner ──────────┘      ├─ Plan Compiler
                                   ├─ Work Scheduler
                                   ├─ Context Compiler
                                   ├─ Policy / Gate Engine
@@ -101,17 +101,32 @@ Infrastructure Adapters
   └─ OpenAI-compatible Model Adapter
 ```
 
-系统是一个本地模块化单体。UI、MCP Bridge 和 CLI 复用同一领域核心；它们不是三套独立实现。
+系统是一个本地模块化单体。Tauri UI、MCP Bridge 和 CLI 复用同一套 Rust 领域核心；它们不是三套独立实现。前端不直接访问数据库、文件系统、Git 或系统凭据。
 
 ## 6. 本地运行形态
 
-- Electron 主进程承载 UI 与本地核心调用。
-- Codex 启动一个按需运行的 MCP stdio 进程；进程退出后任务租约和状态仍保存在 SQLite。
-- 本地 CLI 为凭据注入和受控命令执行提供入口。
+- Tauri 2 负责桌面窗口、WebView 与原生命令边界；React/TypeScript 只负责界面和交互状态。
+- Rust core crate 负责领域模型、用例、状态机、计划、策略和审计，不依赖 Tauri 类型。
+- Codex 启动一个按需运行的 Rust MCP stdio 进程；进程退出后任务租约和状态仍保存在 SQLite。
+- Rust CLI 为凭据注入和受控命令执行提供入口。
 - 不使用常驻后台服务。桌面 UI 关闭时，MCP 仍可完成领取、心跳、阻塞和报告；UI 下次打开后展示状态。
 - SQLite 使用 WAL，任务领取使用 `BEGIN IMMEDIATE` 保证原子性。
 - 数据库迁移由独占文件锁保护；普通读写不阻塞其他进程。
 - UI 通过文件监听、焦点刷新和短轮询观察 MCP 进程写入的状态。
+
+Rust workspace 计划分为：
+
+```text
+crates/core       领域模型、用例、状态机和计划引擎
+crates/storage    SQLite、迁移、事件存储和投影
+crates/adapters   Git、GitHub、文档解析、模型与系统凭据
+crates/mcp        MCP stdio 服务
+crates/cli        本地能力运行器
+apps/desktop      Tauri 2 应用
+web               React + TypeScript 前端
+```
+
+SQLite 通过 `rusqlite` 访问，启用 WAL、`busy_timeout` 和显式事务；阻塞式数据库工作放在专用线程或 `spawn_blocking` 中。Git 操作调用系统 `git`，以兼容已有凭据助手、SSH 配置和 hooks。凭据使用系统 Keychain/Windows Credential Manager 适配器；HTTP 调用使用 Rust 异步客户端。前端与 Rust 之间通过 Tauri 命令和事件传递 DTO，不传递明文密钥。
 
 ## 7. 事实源
 
@@ -392,6 +407,7 @@ UI 不提供绕过 MCP 或状态机直接修改任务状态的入口。所有调
 ## 22. 安全与隐私
 
 - 所有 MCP 调用限定到单一项目和授权工作项。
+- Tauri 只暴露显式注册的命令；前端不能任意执行 Shell、读取项目数据库或获取 Secret。
 - 路径校验防止上下文和证据读取越界。
 - 外部文档和代码内容始终视为不可信数据，不当作系统指令。
 - 生成的 `AGENTS.md` 明确要求通过 MCP 领取任务、一次执行一个任务、不得读取密钥、不得绕过门禁。
@@ -401,10 +417,10 @@ UI 不提供绕过 MCP 或状态机直接修改任务状态的入口。所有调
 
 ## 23. 测试策略
 
-- **单元测试**：状态机、DAG 校验、信息阻塞范围、策略引擎、上下文预算和脱敏。
-- **集成测试**：SQLite 事务与并发领取、租约超时、事件投影、文件快照和 Git 同步。
+- **Rust 单元测试**：状态机、DAG 校验、信息阻塞范围、策略引擎、上下文预算和脱敏。
+- **Rust 集成测试**：SQLite 事务与并发领取、租约超时、事件投影、文件快照和 Git 同步。
 - **MCP 契约测试**：工具 schema、幂等、错误码、权限边界和无 Secret 响应。
-- **端到端测试**：创建项目、导入需求、生成蓝图、生成计划、模拟 Agent 领取与提交。
+- **前端测试**：组件和关键交互流程；端到端测试覆盖创建项目、导入需求、生成蓝图、生成计划和模拟 Agent 领取与提交。
 - **Git 测试**：使用本地裸仓库验证克隆、拉取、任务分支推送、保护和冲突处理。
 - **安全测试**：路径越界、日志脱敏、Prompt 注入、过期租约和越权能力访问。
 
@@ -435,11 +451,11 @@ MVP 验收场景：
 
 ## 25. 实施顺序
 
-1. **基础设施**：workspace、SQLite、迁移、事件日志、凭据引用和模板加载。
+1. **基础设施**：Rust workspace、Tauri 壳、SQLite、迁移、事件日志、凭据引用和模板加载。
 2. **蓝图能力**：文档导入、模型适配、结构化需求、蓝图层、来源追踪和信息请求。
 3. **计划与 MCP**：计划编译、DAG、状态机、租约、上下文编译和完成报告。
 4. **仓库与能力**：Git 状态、GitHub OAuth、远程推送、三方能力状态和审批策略。
-5. **闭环与加固**：桌面 UI 完整流程、变更重规划、测试、安全校验和打包。
+5. **闭环与加固**：React 桌面 UI 完整流程、变更重规划、Rust 与前端测试、安全校验和 Tauri 打包。
 
 ## 26. 后续版本范围
 

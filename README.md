@@ -57,7 +57,7 @@ ColdStart 不生成业务代码，也不替代 Agent。它负责项目的认知�
 
 ## 技术形态
 
-MVP 采用 TypeScript、Electron、React、better-sqlite3 和 MCP TypeScript SDK。桌面 UI、MCP stdio 入口与 CLI 共享同一套领域核心；不使用后台守护进程。
+MVP 采用 Tauri 2、Rust、React、TypeScript 和 SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、凭据、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。
 
 ## 文档
 
