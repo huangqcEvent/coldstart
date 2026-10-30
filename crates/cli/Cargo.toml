@@ -10,12 +10,13 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
-coldstart-core = { path = "../core" }
-coldstart-storage = { path = "../storage" }
+coldstart-app = { path = "../app" }
 serde_json.workspace = true
-tempfile.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true
+coldstart-core = { path = "../core" }
+coldstart-storage = { path = "../storage" }
 rusqlite.workspace = true
+tempfile.workspace = true

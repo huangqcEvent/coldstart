@@ -1,0 +1,17 @@
+[package]
+name = "coldstart-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+chrono.workspace = true
+coldstart-core = { path = "../core" }
+coldstart-storage = { path = "../storage" }
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
