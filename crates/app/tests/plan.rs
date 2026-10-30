@@ -5,12 +5,15 @@ use coldstart_adapters::{GitAdapter, MemorySecretStore};
 use coldstart_app::{ClaimRequest, IntegrationService, PlanService, ProjectService};
 use coldstart_core::{
     AcceptanceResult, ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration,
-    ClaimResult, GenerationSource, InfoRequestCategory, InfoRequestDraft, ModuleDefinition,
-    PlanContent, PlatformDefinition, PlatformKind, ProjectId, ReportOutcome, SourceReference,
-    TraceableText, WorkItemStatus, WorkReportInput,
+    ClaimFailure, ClaimResult, GenerationSource, InfoRequestCategory, InfoRequestDraft,
+    ModuleDefinition, PlanContent, PlatformDefinition, PlatformKind, ProjectId, ReportOutcome,
+    SourceReference, TraceableText, VerificationStatus, WorkItemStatus, WorkReportInput,
 };
 use coldstart_storage::Database;
 use tempfile::TempDir;
+
+#[path = "support/mod.rs"]
+mod support;
 
 struct Fixture {
     _directory: TempDir,
@@ -44,11 +47,19 @@ impl Fixture {
         database
             .publish_blueprint_revision(&status.project_id, &revision.id)
             .expect("blueprint must publish");
+        support::configure_repository(&home, status.project_id, "web", true);
         Self {
             _directory: directory,
             home,
             project_id: status.project_id,
         }
+    }
+
+    fn service(&self) -> PlanService {
+        support::service(
+            Arc::new(support::FakePlanGit::passing()),
+            Arc::new(support::ScriptedExecutor::default()),
+        )
     }
 }
 
@@ -117,10 +128,54 @@ fn report_for(task: &coldstart_core::TaskSpec, idempotency_key: &str) -> WorkRep
     }
 }
 
+fn publish_and_claim(
+    service: &PlanService,
+    fixture: &Fixture,
+    request_id: &str,
+) -> coldstart_core::ClaimedWork {
+    let draft = service
+        .generate_draft(fixture.home.clone())
+        .expect("plan draft must generate")
+        .draft
+        .expect("draft must exist");
+    service
+        .publish(fixture.home.clone(), draft.id)
+        .expect("plan must publish");
+    match service
+        .claim_next(
+            fixture.home.clone(),
+            ClaimRequest {
+                agent_profile: "codex".to_owned(),
+                repository: Some("web".to_owned()),
+                request_id: request_id.to_owned(),
+            },
+        )
+        .expect("claim must call")
+    {
+        ClaimResult::Claimed(claimed) => claimed,
+        other => panic!("work must be claimed, got {other:?}"),
+    }
+}
+
+fn task_for(
+    service: &PlanService,
+    home: &std::path::Path,
+    task_key: &str,
+) -> coldstart_core::TaskSpec {
+    service
+        .load_workspace(home.to_path_buf())
+        .expect("workspace must load")
+        .work_items
+        .into_iter()
+        .find(|view| view.task.task_key == task_key)
+        .expect("task must exist")
+        .task
+}
+
 #[test]
 fn publishes_a_plan_claims_context_and_completes_the_first_task() {
     let fixture = Fixture::new();
-    let service = PlanService::new();
+    let service = fixture.service();
     let workspace = service
         .generate_draft(fixture.home.clone())
         .expect("plan draft must generate");
@@ -180,7 +235,7 @@ fn publishes_a_plan_claims_context_and_completes_the_first_task() {
 #[test]
 fn context_respects_a_small_budget_and_lists_omissions() {
     let fixture = Fixture::new();
-    let service = PlanService::new();
+    let service = fixture.service();
     let draft = service
         .generate_draft(fixture.home.clone())
         .expect("plan draft must generate")
@@ -219,7 +274,7 @@ fn context_respects_a_small_budget_and_lists_omissions() {
 #[test]
 fn refuses_a_reference_not_whitelisted_by_the_task() {
     let fixture = Fixture::new();
-    let service = PlanService::new();
+    let service = fixture.service();
     let draft = service
         .generate_draft(fixture.home.clone())
         .expect("plan draft must generate")
@@ -295,7 +350,7 @@ fn authorization_facts_never_enter_the_agent_context() {
         .expect("authorization request must resolve");
     drop(database);
 
-    let service = PlanService::new();
+    let service = fixture.service();
     let draft = service
         .generate_draft(fixture.home.clone())
         .expect("plan draft must generate")
@@ -328,7 +383,7 @@ fn authorization_facts_never_enter_the_agent_context() {
 #[test]
 fn replanning_requires_a_preview_and_explicit_confirmation() {
     let fixture = Fixture::new();
-    let service = PlanService::new();
+    let service = fixture.service();
     let first = service
         .generate_draft(fixture.home.clone())
         .expect("first plan draft must generate")
@@ -369,7 +424,11 @@ fn replanning_requires_a_preview_and_explicit_confirmation() {
 fn replan_workspace_projects_only_the_active_plan() {
     let fixture = Fixture::new();
     let secrets = Arc::new(MemorySecretStore::default());
-    let service = PlanService::with_dependencies(secrets.clone(), GitAdapter::new());
+    let service = support::service_with_secrets(
+        secrets.clone(),
+        Arc::new(support::FakePlanGit::passing()),
+        Arc::new(support::ScriptedExecutor::default()),
+    );
     let first = service
         .generate_draft(fixture.home.clone())
         .expect("first plan draft must generate")
@@ -472,7 +531,7 @@ fn replan_workspace_projects_only_the_active_plan() {
 #[test]
 fn task_context_and_references_use_only_the_active_plan() {
     let fixture = Fixture::new();
-    let service = PlanService::new();
+    let service = fixture.service();
     let first = service
         .generate_draft(fixture.home.clone())
         .expect("first plan draft must generate")
@@ -590,4 +649,279 @@ fn task_context_and_references_use_only_the_active_plan() {
     assert!(reference.content.contains("状态：Done"));
     assert!(reference.content.contains(&second_id.to_string()));
     assert!(!reference.content.contains(&first.id.to_string()));
+}
+
+#[test]
+fn failed_verification_keeps_the_lease_uses_the_frozen_snapshot_and_retry_completes() {
+    let fixture = Fixture::new();
+    let git = Arc::new(support::FakePlanGit::passing());
+    let executor = Arc::new(support::ScriptedExecutor::new(vec![
+        support::ScriptedExecutor::failure(
+            9,
+            "TOKEN=ghp_fakeSecretValue1234567890\nassertion failed",
+        ),
+    ]));
+    let service = support::service(git.clone(), executor.clone());
+    let claimed = publish_and_claim(&service, &fixture, "verification-retry-claim");
+    let task = task_for(&service, &fixture.home, &claimed.work_item.task_key);
+
+    let mut database = Database::open(&fixture.home.join(".coldstart").join("state.db"))
+        .expect("database must open");
+    database
+        .replace_repository_verification_commands(
+            &fixture.project_id,
+            "web",
+            vec![support::verification_command("changed-after-claim")],
+        )
+        .expect("desktop command update must save");
+    drop(database);
+
+    let context = service
+        .get_context(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token.clone(),
+        )
+        .expect("context must compile");
+    let snapshot = context
+        .verification
+        .as_ref()
+        .expect("snapshot must be present");
+    assert_eq!(snapshot.commands[0].name, "verify");
+    assert_eq!(
+        snapshot.content_hash(),
+        claimed.run.verification_snapshot_hash.clone().unwrap()
+    );
+    assert!(context.markdown.contains("verify"));
+
+    let error = service
+        .submit_report(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token.clone(),
+            report_for(&task, "verification-failed-report"),
+        )
+        .expect_err("failing command must reject the report");
+    assert_eq!(error.code(), "verification_failed");
+    let details = error
+        .verification_details()
+        .expect("failure details must exist");
+    assert_eq!(details["command"], "verify");
+    assert_eq!(details["exitCode"], 9);
+    assert_eq!(details["failureKind"], "non_zero_exit");
+    assert_eq!(details["durationMs"], 12);
+    assert!(
+        details["outputSummary"]
+            .as_str()
+            .unwrap()
+            .contains("assertion failed")
+    );
+    assert!(
+        !details
+            .to_string()
+            .contains("ghp_fakeSecretValue1234567890")
+    );
+    assert_eq!(executor.calls(), vec!["verify"]);
+    assert_eq!(git.push_calls(), 0);
+
+    let workspace = service
+        .load_workspace(fixture.home.clone())
+        .expect("workspace must load");
+    let view = workspace
+        .work_items
+        .iter()
+        .find(|view| view.work_item.id == claimed.work_item.id)
+        .expect("work item must exist");
+    assert_eq!(view.work_item.status, WorkItemStatus::InProgress);
+    assert!(
+        workspace
+            .leases
+            .iter()
+            .any(|lease| lease.status == coldstart_core::LeaseStatus::Active)
+    );
+    let report = view
+        .latest_report
+        .as_ref()
+        .expect("failed report must exist");
+    assert!(!report.accepted);
+    assert_eq!(report.verification_status, VerificationStatus::Failed);
+
+    let success = service
+        .submit_report(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token,
+            report_for(&task, "verification-retry-success"),
+        )
+        .expect("retry after fixing the command must complete");
+    assert!(success.accepted);
+    assert_eq!(success.verification_status, VerificationStatus::Passed);
+    assert_eq!(git.push_calls(), 1);
+    assert_eq!(git.verify_calls(), 2);
+    let workspace = service
+        .load_workspace(fixture.home)
+        .expect("final workspace must load");
+    assert_eq!(
+        workspace
+            .work_items
+            .iter()
+            .find(|view| view.work_item.id == claimed.work_item.id)
+            .expect("work item must exist")
+            .work_item
+            .status,
+        WorkItemStatus::Done
+    );
+}
+
+#[test]
+fn timeout_and_launch_failures_map_to_stable_errors_without_pushing() {
+    for (execution, expected_code, expected_kind) in [
+        (
+            support::ScriptedExecutor::timeout(),
+            "verification_timeout",
+            "timeout",
+        ),
+        (
+            support::ScriptedExecutor::launch_failure(),
+            "verification_failed",
+            "launch_failed",
+        ),
+    ] {
+        let fixture = Fixture::new();
+        let git = Arc::new(support::FakePlanGit::passing());
+        let executor = Arc::new(support::ScriptedExecutor::new(vec![execution]));
+        let service = support::service(git.clone(), executor);
+        let claimed = publish_and_claim(&service, &fixture, "verification-error-claim");
+        let task = task_for(&service, &fixture.home, &claimed.work_item.task_key);
+        let error = service
+            .submit_report(
+                fixture.home.clone(),
+                claimed.work_item.id,
+                claimed.lease_token,
+                report_for(&task, "verification-error-report"),
+            )
+            .expect_err("verification infrastructure failure must reject the report");
+        assert_eq!(error.code(), expected_code);
+        let details = error
+            .verification_details()
+            .expect("failure details must exist");
+        assert_eq!(details["failureKind"], expected_kind);
+        assert_eq!(git.push_calls(), 0);
+    }
+}
+
+#[test]
+fn git_invariant_damage_fails_verification_without_running_reported_commands() {
+    let fixture = Fixture::new();
+    let git = Arc::new(support::FakePlanGit::passing());
+    git.fail_checkout(vec!["src/main.rs".to_owned()]);
+    let executor = Arc::new(support::ScriptedExecutor::default());
+    let service = support::service(git.clone(), executor.clone());
+    let claimed = publish_and_claim(&service, &fixture, "git-invariant-claim");
+    let task = task_for(&service, &fixture.home, &claimed.work_item.task_key);
+
+    let error = service
+        .submit_report(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token,
+            report_for(&task, "git-invariant-report"),
+        )
+        .expect_err("Git invariant damage must reject the report");
+    assert_eq!(error.code(), "verification_failed");
+    let details = error
+        .verification_details()
+        .expect("failure details must exist");
+    assert_eq!(details["failureKind"], "git_invariant");
+    assert!(executor.calls().is_empty());
+    assert_eq!(git.push_calls(), 0);
+}
+
+#[test]
+fn a_claim_without_verification_commands_creates_no_lease_or_run() {
+    let fixture = Fixture::new();
+    let mut database = Database::open(&fixture.home.join(".coldstart").join("state.db"))
+        .expect("database must open");
+    database
+        .replace_repository_verification_commands(&fixture.project_id, "web", vec![])
+        .expect("empty verification set must be stored");
+    drop(database);
+
+    let service = fixture.service();
+    let draft = service
+        .generate_draft(fixture.home.clone())
+        .expect("draft must generate")
+        .draft
+        .expect("draft must exist");
+    service
+        .publish(fixture.home.clone(), draft.id)
+        .expect("plan must publish");
+    let result = service
+        .claim_next(
+            fixture.home.clone(),
+            ClaimRequest {
+                agent_profile: "codex".to_owned(),
+                repository: Some("web".to_owned()),
+                request_id: "missing-verification-claim".to_owned(),
+            },
+        )
+        .expect("claim must return a structured empty result");
+    assert!(matches!(
+        result,
+        ClaimResult::Empty(ClaimFailure::VerificationNotConfigured)
+    ));
+    let workspace = service
+        .load_workspace(fixture.home)
+        .expect("workspace must load");
+    assert!(workspace.leases.is_empty());
+    assert!(workspace.runs.is_empty());
+}
+
+#[test]
+fn push_failure_is_recorded_after_verification_without_reopening_the_task() {
+    let fixture = Fixture::new();
+    let git = Arc::new(support::FakePlanGit::passing());
+    git.fail_push("remote rejected the branch");
+    let executor = Arc::new(support::ScriptedExecutor::default());
+    let service = support::service(git.clone(), executor);
+    let claimed = publish_and_claim(&service, &fixture, "push-after-verification-claim");
+    let task = task_for(&service, &fixture.home, &claimed.work_item.task_key);
+    let report = service
+        .submit_report(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token,
+            report_for(&task, "push-after-verification-report"),
+        )
+        .expect("push failure must not undo a verified task");
+    assert!(report.accepted);
+    assert_eq!(git.push_calls(), 1);
+
+    let workspace = service
+        .load_workspace(fixture.home.clone())
+        .expect("workspace must load");
+    assert_eq!(
+        workspace
+            .work_items
+            .iter()
+            .find(|view| view.work_item.id == claimed.work_item.id)
+            .expect("work item must exist")
+            .work_item
+            .status,
+        WorkItemStatus::Done
+    );
+    let integrations = IntegrationService::with_dependencies(
+        Arc::new(MemorySecretStore::default()),
+        GitAdapter::new(),
+        None,
+    )
+    .load_workspace(fixture.home)
+    .expect("integration workspace must load");
+    assert!(integrations.git_syncs.iter().any(|sync| {
+        sync.status == coldstart_core::GitSyncStatus::Failed
+            && sync
+                .error_message
+                .as_deref()
+                .is_some_and(|message| message.contains("remote rejected the branch"))
+    }));
 }

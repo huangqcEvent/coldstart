@@ -9,7 +9,8 @@ use coldstart_app::{
 };
 use coldstart_core::{
     BlueprintContent, BlueprintEntityId, BlueprintRevisionId, CapabilityStatus, CredentialId,
-    InfoRequestId, PlanContent, PlanPublishPreview, PlanRevisionId, WorkItemId,
+    InfoRequestId, PlanContent, PlanPublishPreview, PlanRevisionId, RepositoryVerificationCommand,
+    WorkItemId,
 };
 use tauri::State;
 
@@ -341,6 +342,56 @@ pub async fn save_repository(
     let service = Arc::clone(&service);
     tauri::async_runtime::spawn_blocking(move || {
         save_repository_sync(service.as_ref(), path, draft)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn read_repository_verification_commands_sync(
+    service: &IntegrationService,
+    path: String,
+    repository_key: String,
+) -> Result<Vec<RepositoryVerificationCommand>, CommandError> {
+    service
+        .load_verification_commands(PathBuf::from(path), &repository_key)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn read_repository_verification_commands(
+    service: State<'_, Arc<IntegrationService>>,
+    path: String,
+    repository_key: String,
+) -> Result<Vec<RepositoryVerificationCommand>, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        read_repository_verification_commands_sync(service.as_ref(), path, repository_key)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn save_repository_verification_commands_sync(
+    service: &IntegrationService,
+    path: String,
+    repository_key: String,
+    commands: Vec<RepositoryVerificationCommand>,
+) -> Result<Vec<RepositoryVerificationCommand>, CommandError> {
+    service
+        .save_verification_commands(PathBuf::from(path), &repository_key, commands)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn save_repository_verification_commands(
+    service: State<'_, Arc<IntegrationService>>,
+    path: String,
+    repository_key: String,
+    commands: Vec<RepositoryVerificationCommand>,
+) -> Result<Vec<RepositoryVerificationCommand>, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        save_repository_verification_commands_sync(service.as_ref(), path, repository_key, commands)
     })
     .await
     .map_err(join_error)?

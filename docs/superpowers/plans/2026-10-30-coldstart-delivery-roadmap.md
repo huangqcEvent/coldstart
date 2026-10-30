@@ -10,6 +10,7 @@
 4. **Plan Engine and MCP（已完成）**：计划编译、DAG、状态机、租约、上下文编译、MCP stdio 和完成报告。阶段计划与执行记录：[2026-10-30-coldstart-04-plan-engine-mcp.md](2026-10-30-coldstart-04-plan-engine-mcp.md)。
 5. **Git, GitHub, Capabilities and Release Gates（已完成）**：仓库远程、GitHub OAuth、任务分支推送、凭据引用、三方能力、发布清单与审批。阶段计划与执行记录：[2026-10-30-coldstart-05-git-capabilities-release.md](2026-10-30-coldstart-05-git-capabilities-release.md)。
 6. **Integration and Hardening（已完成）**：跨子系统端到端测试、安全测试、变更重规划、打包和 MVP 验收。阶段计划与执行记录：[2026-10-30-coldstart-06-integration-hardening.md](2026-10-30-coldstart-06-integration-hardening.md)。
+7. **Local Command Verification（已完成）**：仓库级 `.exe` 验证命令、领取快照、受控进程执行、失败回退、MCP 验证错误契约、桌面编辑器与安装验收。阶段计划：[2026-10-30-coldstart-07-command-verification.md](2026-10-30-coldstart-07-command-verification.md)；执行记录：[.superpowers/sdd/2026-10-30-coldstart-07-command-verification/progress.md](../../../.superpowers/sdd/2026-10-30-coldstart-07-command-verification/progress.md)。
 
 ## 阶段门禁
 

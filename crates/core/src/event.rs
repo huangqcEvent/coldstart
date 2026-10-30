@@ -110,6 +110,26 @@ pub enum DomainEventKind {
         work_item_id: WorkItemId,
         task_key: String,
     },
+    VerificationStarted {
+        work_item_id: WorkItemId,
+        report_id: WorkReportId,
+        snapshot_hash: String,
+    },
+    VerificationPassed {
+        work_item_id: WorkItemId,
+        report_id: WorkReportId,
+        snapshot_hash: String,
+    },
+    VerificationFailed {
+        work_item_id: WorkItemId,
+        report_id: WorkReportId,
+        command_name: Option<String>,
+        failure_kind: String,
+    },
+    VerificationInterrupted {
+        work_item_id: WorkItemId,
+        report_id: WorkReportId,
+    },
     WorkReleased {
         work_item_id: WorkItemId,
         lease_id: LeaseId,
@@ -127,6 +147,11 @@ pub enum DomainEventKind {
         repository_id: RepositoryId,
         repository_key: String,
         remote_url: String,
+    },
+    RepositoryVerificationCommandsUpdated {
+        repository_id: RepositoryId,
+        repository_key: String,
+        command_count: usize,
     },
     CredentialSaved {
         credential_id: CredentialId,
@@ -170,10 +195,17 @@ impl DomainEventKind {
             Self::WorkBlocked { .. } => "work_blocked",
             Self::WorkReportSubmitted { .. } => "work_report_submitted",
             Self::WorkCompleted { .. } => "work_completed",
+            Self::VerificationStarted { .. } => "verification_started",
+            Self::VerificationPassed { .. } => "verification_passed",
+            Self::VerificationFailed { .. } => "verification_failed",
+            Self::VerificationInterrupted { .. } => "verification_interrupted",
             Self::WorkReleased { .. } => "work_released",
             Self::LeaseExpired { .. } => "lease_expired",
             Self::HumanWorkCompleted { .. } => "human_work_completed",
             Self::RepositorySaved { .. } => "repository_saved",
+            Self::RepositoryVerificationCommandsUpdated { .. } => {
+                "repository_verification_commands_updated"
+            }
             Self::CredentialSaved { .. } => "credential_saved",
             Self::CredentialDeleted { .. } => "credential_deleted",
             Self::CapabilityUpdated { .. } => "capability_updated",

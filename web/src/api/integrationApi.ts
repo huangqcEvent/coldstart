@@ -9,6 +9,7 @@ import type {
   GitHubSession,
   IntegrationWorkspace,
   RepositoryDraft,
+  RepositoryVerificationCommand,
   RepositoryValidation,
   SaveCredentialInput,
 } from './types';
@@ -23,6 +24,27 @@ export async function validateRepository(path: string, draft: RepositoryDraft) {
 
 export async function saveRepository(path: string, draft: RepositoryDraft) {
   return invoke<IntegrationWorkspace>('save_repository', { path, draft });
+}
+
+export async function readRepositoryVerificationCommands(
+  path: string,
+  repositoryKey: string,
+) {
+  return invoke<RepositoryVerificationCommand[]>(
+    'read_repository_verification_commands',
+    { path, repositoryKey },
+  );
+}
+
+export async function saveRepositoryVerificationCommands(
+  path: string,
+  repositoryKey: string,
+  commands: RepositoryVerificationCommand[],
+) {
+  return invoke<RepositoryVerificationCommand[]>(
+    'save_repository_verification_commands',
+    { path, repositoryKey, commands },
+  );
 }
 
 export async function saveCredential(path: string, input: SaveCredentialInput) {

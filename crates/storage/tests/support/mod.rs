@@ -5,7 +5,8 @@ use coldstart_core::{
     AcceptanceCriterion, AcceptancePolicy, AcceptanceResult, ArtifactFormat, ArtifactId,
     ArtifactMetadata, BlueprintContent, BlueprintEntityId, BlueprintGeneration, DependencyKind,
     DocumentAnchor, GenerationSource, ModuleDefinition, PlanContent, PlanRevisionId,
-    PlatformDefinition, PlatformKind, Project, ProjectId, ReportOutcome, SourceReference,
+    PlatformDefinition, PlatformKind, Project, ProjectId, ReportOutcome, Repository,
+    RepositoryAuthMode, RepositorySyncPolicy, RepositoryVerificationCommand, SourceReference,
     TaskDependency, TaskKind, TaskSpec, TraceableText, WorkReportInput,
 };
 use coldstart_storage::Database;
@@ -74,6 +75,36 @@ impl PlanFixture {
                 .expect("plan must publish");
         }
 
+        let repository = Repository::new(
+            project.id,
+            "server".to_owned(),
+            "服务端".to_owned(),
+            directory.path().join("server"),
+            "https://example.invalid/server.git".to_owned(),
+            "main".to_owned(),
+            vec!["main".to_owned()],
+            RepositoryAuthMode::None,
+            None,
+            RepositorySyncPolicy::Manual,
+        )
+        .expect("repository must validate");
+        database
+            .save_repository(&repository)
+            .expect("repository must save");
+        database
+            .replace_repository_verification_commands(
+                &project.id,
+                "server",
+                vec![RepositoryVerificationCommand {
+                    name: "test".to_owned(),
+                    executable: std::env::current_exe().expect("test executable must exist"),
+                    args: vec![],
+                    timeout_seconds: 600,
+                    position: 0,
+                }],
+            )
+            .expect("verification command must save");
+
         Self {
             _directory: directory,
             database_path,
@@ -101,6 +132,15 @@ impl PlanFixture {
                 Utc::now(),
             )
             .expect("plan candidate must create")
+    }
+
+    pub fn without_verification(tasks: Vec<TaskSpec>) -> Self {
+        let mut fixture = Self::new(tasks);
+        fixture
+            .database
+            .replace_repository_verification_commands(&fixture.project_id, "server", vec![])
+            .expect("verification commands must clear");
+        fixture
     }
 
     pub fn task(&self, task_key: &str) -> TaskSpec {

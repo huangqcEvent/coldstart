@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use crate::{
     BlueprintEntityId, BlueprintRevisionId, LeaseId, PlanRevisionId, ProjectId, TaskSpecId,
-    WorkItemId, WorkReportId, WorkRunId,
+    VerificationSnapshot, WorkItemId, WorkReportId, WorkRunId,
 };
 
 pub const PLAN_SCHEMA_VERSION: u32 = 1;
@@ -302,6 +302,10 @@ pub struct WorkRun {
     pub agent_profile: String,
     pub claim_request_id: String,
     pub status: WorkRunStatus,
+    #[serde(default)]
+    pub verification_snapshot: Option<VerificationSnapshot>,
+    #[serde(default)]
+    pub verification_snapshot_hash: Option<String>,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
 }
@@ -351,6 +355,10 @@ pub struct WorkReportRecord {
     pub report_hash: String,
     pub accepted: bool,
     pub rejection_reasons: Vec<String>,
+    #[serde(default)]
+    pub verification_status: crate::VerificationStatus,
+    #[serde(default)]
+    pub verification: Option<crate::VerificationResult>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -381,6 +389,7 @@ pub enum ClaimFailure {
     WaitingDependencies,
     WaitingHuman,
     NoMatchingRepository,
+    VerificationNotConfigured,
 }
 
 impl ClaimFailure {
@@ -391,6 +400,7 @@ impl ClaimFailure {
             Self::WaitingDependencies => "waiting_dependencies",
             Self::WaitingHuman => "waiting_human",
             Self::NoMatchingRepository => "no_matching_repository",
+            Self::VerificationNotConfigured => "verification_not_configured",
         }
     }
 }

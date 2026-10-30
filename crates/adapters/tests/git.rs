@@ -306,3 +306,56 @@ fn git_failures_never_expose_the_authentication_token() {
         "git error leaked token: {message}"
     );
 }
+
+#[test]
+fn verification_checkout_requires_the_expected_branch_head_and_tracked_cleanliness() {
+    let fixture = Fixture::new();
+    let adapter = GitAdapter::new();
+    adapter
+        .create_work_branch(
+            &fixture.work,
+            "main",
+            "codex/verify-me",
+            &["main".to_owned()],
+            &GitAuth::None,
+        )
+        .expect("branch must create");
+    let commit = fixture.write_and_commit("src/main.rs", "fn main() {}\n", "verification task");
+    adapter
+        .ensure_verification_checkout(&fixture.work, "codex/verify-me", &commit)
+        .expect("clean expected checkout must pass");
+
+    fs::write(fixture.work.join("untracked.log"), "build output\n")
+        .expect("untracked file must write");
+    adapter
+        .ensure_verification_checkout(&fixture.work, "codex/verify-me", &commit)
+        .expect("untracked build output must not fail");
+    fs::remove_file(fixture.work.join("untracked.log")).expect("untracked file must remove");
+
+    fs::write(
+        fixture.work.join("src/main.rs"),
+        "fn main() { changed(); }\n",
+    )
+    .expect("tracked file must modify");
+    let error = adapter
+        .ensure_verification_checkout(&fixture.work, "codex/verify-me", &commit)
+        .expect_err("tracked modification must fail");
+    assert!(matches!(error, GitError::VerificationTrackedChanges(_)));
+    git(&fixture.work, &["restore", "src/main.rs"]);
+
+    let replacement =
+        fixture.write_and_commit("src/main.rs", "fn main() { newer(); }\n", "rewrite HEAD");
+    let error = adapter
+        .ensure_verification_checkout(&fixture.work, "codex/verify-me", &commit)
+        .expect_err("HEAD rewrite must fail");
+    assert!(matches!(error, GitError::VerificationHeadMismatch { .. }));
+    adapter
+        .ensure_verification_checkout(&fixture.work, "codex/verify-me", &replacement)
+        .expect("new HEAD must pass");
+
+    git(&fixture.work, &["switch", "main"]);
+    let error = adapter
+        .ensure_verification_checkout(&fixture.work, "codex/verify-me", &replacement)
+        .expect_err("branch switch must fail");
+    assert!(matches!(error, GitError::VerificationBranchMismatch { .. }));
+}

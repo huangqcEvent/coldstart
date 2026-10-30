@@ -15,8 +15,8 @@ use coldstart_core::{
     AcceptanceResult, ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration,
     CapabilityObligation, CapabilityStatus, ClaimResult, CredentialEnvironment, CredentialKind,
     GenerationSource, ModuleDefinition, PlatformDefinition, PlatformKind, ReleasePrerequisite,
-    ReportOutcome, RepositoryAuthMode, RepositorySyncPolicy, SourceReference, TraceableText,
-    WorkItemStatus, WorkReportInput,
+    ReportOutcome, RepositoryAuthMode, RepositorySyncPolicy, RepositoryVerificationCommand,
+    SourceReference, TraceableText, WorkItemStatus, WorkReportInput,
 };
 use coldstart_storage::Database;
 use tempfile::TempDir;
@@ -114,6 +114,20 @@ impl Fixture {
             credential_id,
             sync_policy: RepositorySyncPolicy::FetchBeforeClaim,
         }
+    }
+
+    fn save_repository(
+        &self,
+        service: &IntegrationService,
+        credential_id: Option<coldstart_core::CredentialId>,
+    ) -> coldstart_app::IntegrationWorkspace {
+        let workspace = service
+            .save_repository(self.home.clone(), self.repository_draft(credential_id))
+            .expect("repository must save");
+        service
+            .save_verification_commands(self.home.clone(), "web", vec![verification_command()])
+            .expect("verification command must save");
+        workspace
     }
 
     fn publish_plan(&self, service: &PlanService, allowed_paths: Vec<String>) -> String {
@@ -273,6 +287,39 @@ fn report_for(
         contract_hash: task.contract_hash(),
         idempotency_key: idempotency_key.to_owned(),
     }
+}
+
+fn verification_command() -> RepositoryVerificationCommand {
+    let system_root = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    RepositoryVerificationCommand {
+        name: "where-cmd".to_owned(),
+        executable: system_root.join("System32").join("where.exe"),
+        args: vec!["cmd.exe".to_owned()],
+        timeout_seconds: 10,
+        position: 0,
+    }
+}
+
+fn executable_on_path(name: &str) -> PathBuf {
+    let output = Command::new("where.exe")
+        .arg(name)
+        .output()
+        .expect("where.exe must run");
+    assert!(
+        output.status.success(),
+        "could not locate {name}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let path = String::from_utf8(output.stdout)
+        .expect("where.exe output must be UTF-8")
+        .lines()
+        .next()
+        .expect("where.exe must return a path")
+        .trim()
+        .to_owned();
+    fs::canonicalize(&path).expect("verification executable must canonicalize")
 }
 
 fn task_for(service: &PlanService, home: &Path, task_key: &str) -> coldstart_core::TaskSpec {
@@ -470,9 +517,7 @@ fn claims_create_a_git_branch_and_dirty_worktrees_release_the_lease() {
     let secrets = Arc::new(MemorySecretStore::default());
     let integrations =
         IntegrationService::with_dependencies(secrets.clone(), GitAdapter::new(), None);
-    integrations
-        .save_repository(fixture.home.clone(), fixture.repository_draft(None))
-        .expect("repository must save");
+    fixture.save_repository(&integrations, None);
     let plan = PlanService::with_dependencies(secrets, GitAdapter::new());
     let task_key = fixture.publish_plan(&plan, vec!["src".to_owned()]);
 
@@ -540,12 +585,7 @@ fn context_includes_repository_and_capability_metadata_but_never_the_secret() {
         )
         .expect("credential must save");
     let credential = workspace.credentials[0].clone();
-    integrations
-        .save_repository(
-            fixture.home.clone(),
-            fixture.repository_draft(Some(credential.id)),
-        )
-        .expect("repository must save");
+    fixture.save_repository(&integrations, Some(credential.id));
     let capability_id = BlueprintEntityId::derive(&fixture.project_id, "capability", "阿里云 OSS");
     integrations
         .update_capability(
@@ -587,9 +627,9 @@ fn context_includes_repository_and_capability_metadata_but_never_the_secret() {
 fn verifies_reports_before_acceptance_and_pushes_the_task_branch() {
     let fixture = Fixture::new();
     let secrets = Arc::new(MemorySecretStore::default());
-    IntegrationService::with_dependencies(secrets.clone(), GitAdapter::new(), None)
-        .save_repository(fixture.home.clone(), fixture.repository_draft(None))
-        .expect("repository must save");
+    let integrations =
+        IntegrationService::with_dependencies(secrets.clone(), GitAdapter::new(), None);
+    fixture.save_repository(&integrations, None);
     let plan = PlanService::with_dependencies(secrets, GitAdapter::new());
     let task_key = fixture.publish_plan(&plan, vec!["src".to_owned()]);
     let ClaimResult::Claimed(claimed) = fixture.claim(&plan, "report-claim") else {
@@ -637,12 +677,120 @@ fn verifies_reports_before_acceptance_and_pushes_the_task_branch() {
 }
 
 #[test]
+fn repairs_failed_verification_and_retries_until_done_and_pushed() {
+    let fixture = Fixture::new();
+    let secrets = Arc::new(MemorySecretStore::default());
+    let integrations =
+        IntegrationService::with_dependencies(secrets.clone(), GitAdapter::new(), None);
+    fixture.save_repository(&integrations, None);
+    integrations
+        .save_verification_commands(
+            fixture.home.clone(),
+            "web",
+            vec![RepositoryVerificationCommand {
+                name: "repo-grep".to_owned(),
+                executable: executable_on_path("git.exe"),
+                args: vec![
+                    "grep".to_owned(),
+                    "--quiet".to_owned(),
+                    "FIXED".to_owned(),
+                    "--".to_owned(),
+                    "src".to_owned(),
+                ],
+                timeout_seconds: 10,
+                position: 0,
+            }],
+        )
+        .expect("verification command must save");
+    let plan = PlanService::with_dependencies(secrets, GitAdapter::new());
+    let task_key = fixture.publish_plan(&plan, vec!["src".to_owned()]);
+    let ClaimResult::Claimed(claimed) = fixture.claim(&plan, "repair-verification-claim") else {
+        panic!("work must claim");
+    };
+    let task = task_for(&plan, &fixture.home, &task_key);
+    let first_commit = fixture.commit("src/main.rs", "pub fn main() {}\n");
+    let failed = plan
+        .submit_report(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token.clone(),
+            report_for(
+                &task,
+                first_commit,
+                vec!["src/main.rs".to_owned()],
+                "repair-verification-first",
+            ),
+        )
+        .expect_err("missing marker must fail repository verification");
+    assert_eq!(failed.code(), "verification_failed");
+    let details = failed
+        .verification_details()
+        .expect("verification failure details must exist");
+    assert_eq!(details["failureKind"], "non_zero_exit");
+    assert_eq!(details["command"], "repo-grep");
+    assert_eq!(details["exitCode"], 1);
+
+    let workspace = plan
+        .load_workspace(fixture.home.clone())
+        .expect("workspace must load");
+    let view = workspace
+        .work_items
+        .iter()
+        .find(|view| view.work_item.id == claimed.work_item.id)
+        .expect("claimed task must exist");
+    assert_eq!(view.work_item.status, WorkItemStatus::InProgress);
+    assert!(view.active_lease.is_some());
+
+    let fixed_commit = fixture.commit("src/main.rs", "// FIXED\npub fn main() {}\n");
+    let completed = plan
+        .submit_report(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token,
+            report_for(
+                &task,
+                fixed_commit.clone(),
+                vec!["src/main.rs".to_owned()],
+                "repair-verification-second",
+            ),
+        )
+        .expect("repaired repository must pass verification");
+    assert!(completed.accepted);
+    assert_eq!(
+        completed.verification_status,
+        coldstart_core::VerificationStatus::Passed
+    );
+    assert_eq!(
+        plan.load_workspace(fixture.home.clone())
+            .expect("workspace must reload")
+            .work_items
+            .into_iter()
+            .find(|view| view.work_item.id == claimed.work_item.id)
+            .expect("completed task must exist")
+            .work_item
+            .status,
+        WorkItemStatus::Done
+    );
+    let work_branch = task
+        .work_branch
+        .as_deref()
+        .expect("agent task must have a work branch");
+    assert_eq!(
+        git_output(
+            &fixture.remote,
+            &["rev-parse", &format!("refs/heads/{work_branch}")]
+        ),
+        fixed_commit
+    );
+}
+
+#[test]
 fn push_failures_keep_the_task_done_and_record_the_risk() {
     let fixture = Fixture::new();
     let secrets = Arc::new(MemorySecretStore::default());
-    IntegrationService::with_dependencies(secrets.clone(), GitAdapter::new(), None)
-        .save_repository(fixture.home.clone(), fixture.repository_draft(None))
-        .expect("repository must save");
+    let integrations =
+        IntegrationService::with_dependencies(secrets.clone(), GitAdapter::new(), None);
+    fixture.save_repository(&integrations, None);
     let plan = PlanService::with_dependencies(secrets, GitAdapter::new());
     let task_key = fixture.publish_plan(&plan, vec!["src".to_owned()]);
     let ClaimResult::Claimed(claimed) = fixture.claim(&plan, "push-failure-claim") else {
@@ -699,9 +847,9 @@ fn push_failures_keep_the_task_done_and_record_the_risk() {
 fn rejects_a_commit_that_changes_paths_outside_the_task() {
     let fixture = Fixture::new();
     let secrets = Arc::new(MemorySecretStore::default());
-    IntegrationService::with_dependencies(secrets.clone(), GitAdapter::new(), None)
-        .save_repository(fixture.home.clone(), fixture.repository_draft(None))
-        .expect("repository must save");
+    let integrations =
+        IntegrationService::with_dependencies(secrets.clone(), GitAdapter::new(), None);
+    fixture.save_repository(&integrations, None);
     let plan = PlanService::with_dependencies(secrets, GitAdapter::new());
     let task_key = fixture.publish_plan(&plan, vec!["src".to_owned()]);
     let ClaimResult::Claimed(claimed) = fixture.claim(&plan, "outside-claim") else {

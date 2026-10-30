@@ -1,6 +1,7 @@
 mod context;
 mod context_compiler;
 mod error;
+mod git_gateway;
 mod integration;
 mod plan;
 mod plan_workspace;
@@ -11,10 +12,11 @@ mod status;
 mod workspace;
 
 pub use error::AppError;
+pub use git_gateway::PlanGitGateway;
 pub use integration::{
     CapabilityStatusView, CreatePrivateRepositoryInput, DeviceFlowView, GitHubDevicePollView,
     GitHubSessionView, IntegrationService, IntegrationWorkspace, ReleaseCenterView,
-    RepositoryDraft, RepositoryValidationView, SaveCredentialInput,
+    RepositoryDraft, RepositoryValidationView, RepositoryVerificationView, SaveCredentialInput,
 };
 pub use plan::{ClaimRequest, PlanService};
 pub use plan_workspace::{McpConnectionInfo, PlanWorkspace, WorkItemView};

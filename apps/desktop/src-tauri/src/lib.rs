@@ -23,6 +23,8 @@ pub fn run() {
             commands::read_integration_workspace,
             commands::validate_repository,
             commands::save_repository,
+            commands::read_repository_verification_commands,
+            commands::save_repository_verification_commands,
             commands::save_credential,
             commands::delete_credential,
             commands::update_capability,

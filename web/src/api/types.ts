@@ -377,7 +377,44 @@ export interface WorkReportRecord {
   reportHash: string;
   accepted: boolean;
   rejectionReasons: string[];
+  verificationStatus: VerificationStatus;
+  verification: VerificationResult | null;
   createdAt: string;
+}
+
+export type VerificationStatus =
+  | 'not_required'
+  | 'running'
+  | 'passed'
+  | 'failed'
+  | 'interrupted';
+
+export type VerificationFailureKind =
+  | 'non_zero_exit'
+  | 'launch_failed'
+  | 'timeout'
+  | 'git_invariant'
+  | 'infrastructure'
+  | 'interrupted';
+
+export interface VerificationCommandResult {
+  name: string;
+  exitCode: number | null;
+  durationMs: number;
+  outputSummary: string;
+  truncated: boolean;
+  failureKind: VerificationFailureKind | null;
+}
+
+export interface VerificationResult {
+  snapshotHash: string;
+  status: VerificationStatus;
+  startedAt: string;
+  finishedAt: string | null;
+  totalDurationMs: number | null;
+  failureKind: VerificationFailureKind | null;
+  failureCommand: string | null;
+  commands: VerificationCommandResult[];
 }
 
 export interface WorkBlockerRecord {
@@ -493,6 +530,19 @@ export interface RepositoryValidation {
   status: GitRepositoryStatus;
 }
 
+export interface RepositoryVerificationCommand {
+  name: string;
+  executable: string;
+  args: string[];
+  timeoutSeconds: number;
+  position: number;
+}
+
+export interface RepositoryVerificationView {
+  repositoryKey: string;
+  commands: RepositoryVerificationCommand[];
+}
+
 export interface CredentialMetadata {
   id: string;
   projectId: string;
@@ -548,6 +598,7 @@ export interface ReleaseCenter {
 export interface IntegrationWorkspace {
   projectId: string;
   repositories: Repository[];
+  verificationCommands: RepositoryVerificationView[];
   credentials: CredentialMetadata[];
   capabilities: CapabilityStatusView[];
   gitSyncs: GitSyncRecord[];

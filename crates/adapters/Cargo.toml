@@ -11,12 +11,14 @@ encoding_rs.workspace = true
 keyring = { version = "3.6.3", features = ["windows-native"] }
 pdf-extract.workspace = true
 quick-xml.workspace = true
+regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 ureq.workspace = true
+windows-sys.workspace = true
 zip.workspace = true
 
 [dev-dependencies]

@@ -16,10 +16,12 @@ import type {
   RepositoryAuthMode,
   RepositoryDraft,
   RepositorySyncPolicy,
+  RepositoryVerificationCommand,
   RepositoryValidation,
   SaveCredentialInput,
 } from '../api/types';
 import { ErrorBanner } from './ErrorBanner';
+import { RepositoryVerificationEditor } from './RepositoryVerificationEditor';
 
 interface IntegrationViewProps {
   path: string;
@@ -251,6 +253,24 @@ export function IntegrationView({ path }: IntegrationViewProps) {
       adoptWorkspace(result);
       setValidation(null);
     }
+  }
+
+  async function handleSaveVerificationCommands(
+    repositoryKey: string,
+    commands: RepositoryVerificationCommand[],
+  ) {
+    const saved = await perform('正在保存仓库验证命令', () =>
+      integrationApi.saveRepositoryVerificationCommands(
+        path,
+        repositoryKey,
+        commands,
+      ),
+    );
+    if (!saved) {
+      return false;
+    }
+    await perform('正在刷新集成信息', refreshWorkspace);
+    return true;
   }
 
   async function handleSaveCredential() {
@@ -655,6 +675,13 @@ export function IntegrationView({ path }: IntegrationViewProps) {
                   </div>
                 ) : null}
               </form>
+
+              <RepositoryVerificationEditor
+                repositories={workspace.repositories}
+                configurations={workspace.verificationCommands}
+                busy={busy}
+                onSave={handleSaveVerificationCommands}
+              />
 
               <div className="integration-subsection">
                 <div>

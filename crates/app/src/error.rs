@@ -122,6 +122,18 @@ pub enum AppError {
     DeviceFlowNotFound(String),
     #[error("integration operation failed: {0}")]
     Integration(String),
+    #[error("work item {0} has no verification commands configured")]
+    VerificationNotConfigured(WorkItemId),
+    #[error("work item {0} is already running verification")]
+    VerificationInProgress(WorkItemId),
+    #[error("repository verification failed")]
+    VerificationFailed { details: serde_json::Value },
+    #[error("repository verification timed out")]
+    VerificationTimeout { details: serde_json::Value },
+    #[error("repository verification was interrupted")]
+    VerificationInterrupted { details: serde_json::Value },
+    #[error("invalid verification command: {0}")]
+    VerificationCommandInvalid(String),
 }
 
 impl AppError {
@@ -190,6 +202,12 @@ impl AppError {
             Self::Storage(StorageError::EmptyWorkReason) => "empty_work_reason",
             Self::Storage(StorageError::EmptyHumanWorkNote) => "empty_human_work_note",
             Self::Storage(StorageError::InvalidPlan(_)) => "invalid_plan",
+            Self::Storage(StorageError::VerificationNotConfigured(_))
+            | Self::VerificationNotConfigured(_) => "verification_not_configured",
+            Self::Storage(StorageError::VerificationInProgress(_))
+            | Self::VerificationInProgress(_) => "verification_in_progress",
+            Self::Storage(StorageError::VerificationCommandInvalid(_))
+            | Self::VerificationCommandInvalid(_) => "verification_command_invalid",
             Self::Storage(_) => "storage",
             Self::Io(_) => "io",
             Self::RollbackFailed { .. } => "rollback_failed",
@@ -205,6 +223,18 @@ impl AppError {
             Self::GitHubNotConfigured => "github_not_configured",
             Self::DeviceFlowNotFound(_) => "device_flow_not_found",
             Self::Integration(_) => "integration_failed",
+            Self::VerificationFailed { .. } => "verification_failed",
+            Self::VerificationTimeout { .. } => "verification_timeout",
+            Self::VerificationInterrupted { .. } => "verification_interrupted",
+        }
+    }
+
+    pub fn verification_details(&self) -> Option<serde_json::Value> {
+        match self {
+            Self::VerificationFailed { details }
+            | Self::VerificationTimeout { details }
+            | Self::VerificationInterrupted { details } => Some(details.clone()),
+            _ => None,
         }
     }
 }

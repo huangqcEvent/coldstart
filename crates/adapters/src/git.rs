@@ -155,6 +155,59 @@ impl GitAdapter {
         }
     }
 
+    pub fn ensure_verification_checkout(
+        &self,
+        repository: &Path,
+        branch: &str,
+        commit_sha: &str,
+    ) -> Result<(), GitError> {
+        validate_branch_name(branch).map_err(|_| GitError::InvalidBranchName(branch.to_owned()))?;
+        validate_commit_sha(commit_sha)?;
+
+        let actual_branch = self
+            .run_allow_failure(
+                repository,
+                &["symbolic-ref", "--quiet", "--short", "HEAD"],
+                "inspect verification branch",
+            )?
+            .filter(|output| output.status.success())
+            .map(|output| output_text(&output))
+            .filter(|value| !value.is_empty());
+        if actual_branch.as_deref() != Some(branch) {
+            return Err(GitError::VerificationBranchMismatch {
+                expected: branch.to_owned(),
+                actual: actual_branch,
+            });
+        }
+
+        let actual_head = self
+            .run_allow_failure(
+                repository,
+                &["rev-parse", "--verify", "HEAD"],
+                "inspect verification HEAD",
+            )?
+            .filter(|output| output.status.success())
+            .map(|output| output_text(&output))
+            .filter(|value| !value.is_empty());
+        if actual_head.as_deref() != Some(commit_sha) {
+            return Err(GitError::VerificationHeadMismatch {
+                expected: commit_sha.to_owned(),
+                actual: actual_head,
+            });
+        }
+
+        let status = self.run(
+            repository,
+            &["status", "--porcelain=v1", "--untracked-files=no"],
+            "inspect verification status",
+        )?;
+        let changed_paths = parse_status_paths(&output_text(&status));
+        if !changed_paths.is_empty() {
+            return Err(GitError::VerificationTrackedChanges(changed_paths));
+        }
+        Ok(())
+    }
+
     pub fn create_work_branch(
         &self,
         repository: &Path,
@@ -508,6 +561,18 @@ pub enum GitError {
     },
     #[error("changes are outside the task's allowed paths: {0:?}")]
     ChangesOutsideAllowedPaths(Vec<String>),
+    #[error("verification checkout is on branch {actual:?}; expected {expected}")]
+    VerificationBranchMismatch {
+        expected: String,
+        actual: Option<String>,
+    },
+    #[error("verification checkout HEAD is {actual:?}; expected {expected}")]
+    VerificationHeadMismatch {
+        expected: String,
+        actual: Option<String>,
+    },
+    #[error("verification commands modified tracked files: {0:?}")]
+    VerificationTrackedChanges(Vec<String>),
     #[error("git {operation} failed: {stderr}")]
     CommandFailed {
         operation: &'static str,
@@ -531,6 +596,9 @@ impl GitError {
             Self::CommitNotFound(_) => "git_commit_not_found",
             Self::CommitNotBranchHead { .. } => "git_commit_not_branch_head",
             Self::ChangesOutsideAllowedPaths(_) => "git_changes_outside_allowed_paths",
+            Self::VerificationBranchMismatch { .. } => "git_verification_branch_mismatch",
+            Self::VerificationHeadMismatch { .. } => "git_verification_head_mismatch",
+            Self::VerificationTrackedChanges(_) => "git_verification_tracked_changes",
         }
     }
 }
