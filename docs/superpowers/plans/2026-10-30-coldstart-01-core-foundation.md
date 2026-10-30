@@ -1,32 +1,32 @@
-# ColdStart Core Foundation and CLI Implementation Plan
+# ColdStart 核心基础与 CLI 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **供智能体执行者使用：** 必须使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans`，按任务逐步执行本计划。使用复选框（`- [ ]`）跟踪步骤。
 
-**Goal:** Build a runnable Rust CLI that creates a ColdStart Project Home, persists project and event state in SQLite, and reports project status.
+**目标：** 构建一个可运行的 Rust CLI，用于创建 ColdStart 项目主目录、在 SQLite 中持久化项目与事件状态，并查询项目状态。
 
-**Architecture:** A Cargo workspace separates the pure domain model (`coldstart-core`), SQLite persistence (`coldstart-storage`), and CLI orchestration (`coldstart-cli`). This slice has no Tauri UI, MCP server, GitHub integration, or secret storage; later plans reuse these crates.
+**架构：** Cargo 工作区将纯领域模型（`coldstart-core`）、SQLite 持久化（`coldstart-storage`）和 CLI 编排（`coldstart-cli`）分开。本阶段不包含 Tauri UI、MCP 服务、GitHub 集成或凭据存储；后续计划会复用这些 crate。
 
-**Tech Stack:** Rust stable with edition 2024, `rusqlite` 0.41.1 with bundled SQLite, `clap` 4.6.7, `serde` 1.0.229, `serde_json` 1.0.154, `uuid` 1.29.0, `chrono` 0.4.45, `thiserror` 2.0.21, `tempfile` 3.27.0, and `assert_cmd` 2.2.2.
+**技术栈：** Rust stable、2024 edition、内置 SQLite 的 `rusqlite` 0.41.1、`clap` 4.6.7、`serde` 1.0.229、`serde_json` 1.0.154、`uuid` 1.29.0、`chrono` 0.4.45、`thiserror` 2.0.21、`tempfile` 3.27.0 和 `assert_cmd` 2.2.2。
 
-**Spec:** `docs/superpowers/specs/2026-10-30-coldstart-design.md`
+**规格：** `docs/superpowers/specs/2026-10-30-coldstart-design.md`
 
-## Global Constraints
+## 全局约束
 
-- Work from `D:\coldstart` on branch `main`.
-- Target Windows first, but keep domain and path code portable.
-- Use Rust stable with `x86_64-pc-windows-msvc`; minimum Rust version is 1.85.
-- Use edition 2024 and workspace resolver 3.
-- Persist timestamps as UTC RFC 3339 strings.
-- Use SQLite WAL mode, `foreign_keys=ON`, and a 5000 ms busy timeout.
-- CLI JSON keys use camelCase; Rust field names use snake_case.
-- `coldstart init` refuses to overwrite an existing `coldstart.project.json`.
-- The database lives at `<project-home>/.coldstart/state.db`.
-- Do not add Tauri, React, MCP, GitHub OAuth, secret storage, or Git automation in this plan.
-- Store only portable metadata in `coldstart.project.json`; never write an absolute project root into it.
-- After every task, run `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` before committing.
-- Use one conventional commit per completed task.
+- 在 `D:\coldstart` 的 `main` 分支上工作。
+- 优先支持 Windows，但领域模型和路径代码必须保持可移植。
+- 使用 Rust stable 和 `x86_64-pc-windows-msvc` 目标；最低 Rust 版本为 1.85。
+- 使用 2024 edition 和 workspace resolver 3。
+- 时间戳统一以 UTC RFC 3339 字符串持久化。
+- SQLite 启用 WAL 模式、`foreign_keys=ON` 和 5000 毫秒忙碌超时。
+- CLI JSON 键使用 camelCase；Rust 字段名使用 snake_case。
+- `coldstart init` 不得覆盖已存在的 `coldstart.project.json`。
+- 数据库位于 `<project-home>/.coldstart/state.db`。
+- 本计划不得加入 Tauri、React、MCP、GitHub OAuth、凭据存储或 Git 自动化。
+- `coldstart.project.json` 只保存可迁移元数据，绝不写入项目绝对根路径。
+- 每个任务完成前必须运行 `cargo fmt --all`、`cargo clippy --workspace --all-targets -- -D warnings` 和 `cargo test --workspace`。
+- 每个已完成任务使用一次约定式提交。
 
-## Planned File Structure
+## 计划文件结构
 
 ```text
 Cargo.toml
@@ -53,35 +53,35 @@ crates/cli/tests/cli.rs
 README.md
 ```
 
-- `crates/core` owns validated domain values and serializable contracts. It has no SQLite dependency.
-- `crates/storage` owns migrations, project persistence, and the append-only event log.
-- `crates/cli` owns argument parsing, Project Home file layout, and JSON output.
-- Later Tauri and MCP consumers must extract shared application functions instead of duplicating CLI file or SQL logic. That extraction is intentionally deferred until the second consumer exists.
+- `crates/core` 负责经过校验的领域值和可序列化契约，不依赖 SQLite。
+- `crates/storage` 负责迁移、项目持久化和追加式事件日志。
+- `crates/cli` 负责参数解析、项目主目录文件布局和 JSON 输出。
+- 后续 Tauri 和 MCP 消费者必须抽取共享应用函数，不能复制 CLI 的文件或 SQL 逻辑。等到第二个消费者出现时再执行抽取。
 
-This plan produces only the first roadmap slice. Tauri, blueprints, plan execution, MCP, Git, GitHub, and credentials remain out of scope until their corresponding plans.
+本计划只交付路线图中的第一个阶段。Tauri、蓝图、计划执行、MCP、Git、GitHub 和凭据管理均留到各自的后续计划中实施。
 
 ---
 
-### Task 1: Bootstrap the Rust Workspace and Project Domain Model
+### 任务 1：初始化 Rust 工作区与项目领域模型
 
-**Files:**
-- Create: `Cargo.toml`
-- Create: `rust-toolchain.toml`
-- Create: `crates/core/Cargo.toml`
-- Create: `crates/core/src/lib.rs`
-- Create: `crates/core/src/error.rs`
-- Create: `crates/core/src/project.rs`
-- Test: `crates/core/tests/project_model.rs`
+**文件：**
+- 创建：`Cargo.toml`
+- 创建：`rust-toolchain.toml`
+- 创建：`crates/core/Cargo.toml`
+- 创建：`crates/core/src/lib.rs`
+- 创建：`crates/core/src/error.rs`
+- 创建：`crates/core/src/project.rs`
+- 测试：`crates/core/tests/project_model.rs`
 
-**Interfaces:**
-- Consumes: Rust standard library.
-- Produces: `coldstart_core::{Project, ProjectId, ProjectError}`.
-- Produces: `Project::new(name: impl Into<String>, root_path: PathBuf) -> Result<Project, ProjectError>`.
-- Produces: `ProjectId: Clone + Copy + Display + FromStr + Serialize + Deserialize`.
+**接口：**
+- 使用：Rust 标准库。
+- 产出：`coldstart_core::{Project, ProjectId, ProjectError}`。
+- 产出：`Project::new(name: impl Into<String>, root_path: PathBuf) -> Result<Project, ProjectError>`。
+- 产出：`ProjectId: Clone + Copy + Display + FromStr + Serialize + Deserialize`。
 
-- [ ] **Step 1: Verify and install the Windows Rust prerequisites**
+- [ ] **步骤 1：检查并安装 Windows Rust 前置依赖**
 
-Run:
+运行：
 
 ```powershell
 Get-Command rustc, cargo -ErrorAction SilentlyContinue
@@ -89,16 +89,16 @@ $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer
 if (Test-Path -LiteralPath $vswhere) { & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath }
 ```
 
-Expected: `rustc` and `cargo` resolve, and `vswhere` prints a Visual Studio installation path. Both checks currently fail on this machine.
+预期：`rustc` 和 `cargo` 可解析，且 `vswhere` 输出 Visual Studio 安装路径。当前机器上两项检查均失败。
 
-If either check is missing, install from an elevated PowerShell:
+如果任一检查缺失，请在管理员 PowerShell 中安装：
 
 ```powershell
 winget install --id Microsoft.VisualStudio.2022.BuildTools -e --accept-package-agreements --accept-source-agreements --override "--wait --quiet --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 winget install --id Rustlang.Rustup -e --accept-package-agreements --accept-source-agreements
 ```
 
-Open a new PowerShell window and run:
+打开新的 PowerShell 窗口并运行：
 
 ```powershell
 rustup default stable-x86_64-pc-windows-msvc
@@ -106,11 +106,11 @@ rustc --version
 cargo --version
 ```
 
-Expected: Rust is 1.85.0 or newer and the active target is `x86_64-pc-windows-msvc`.
+预期：Rust 为 1.85.0 或更高版本，当前目标为 `x86_64-pc-windows-msvc`。
 
-- [ ] **Step 2: Create the workspace and a compiling core-crate skeleton**
+- [ ] **步骤 2：创建工作区和可编译的 core crate 骨架**
 
-Create `Cargo.toml`:
+创建 `Cargo.toml`：
 
 ```toml
 [workspace]
@@ -134,7 +134,7 @@ tempfile = "3.27.0"
 assert_cmd = "2.2.2"
 ```
 
-Create `rust-toolchain.toml`:
+创建 `rust-toolchain.toml`：
 
 ```toml
 [toolchain]
@@ -143,7 +143,7 @@ components = ["rustfmt", "clippy"]
 profile = "minimal"
 ```
 
-Create `crates/core/Cargo.toml`:
+创建 `crates/core/Cargo.toml`：
 
 ```toml
 [package]
@@ -159,23 +159,23 @@ thiserror.workspace = true
 uuid.workspace = true
 ```
 
-Create `crates/core/src/lib.rs`:
+创建 `crates/core/src/lib.rs`：
 
 ```rust
-// Domain types are added by the failing test in Step 3.
+// 领域类型将在步骤 3 中通过失败测试引入。
 ```
 
-Run:
+运行：
 
 ```powershell
 cargo check --workspace
 ```
 
-Expected: PASS.
+预期：通过。
 
-- [ ] **Step 3: Write the failing project-domain test**
+- [ ] **步骤 3：编写失败的领域测试**
 
-Create `crates/core/tests/project_model.rs`:
+创建 `crates/core/tests/project_model.rs`：
 
 ```rust
 use std::path::PathBuf;
@@ -232,19 +232,19 @@ fn accepts_a_project_name_of_exactly_80_characters() {
 }
 ```
 
-- [ ] **Step 4: Run the test and confirm the missing-API failure**
+- [ ] **步骤 4：运行测试并确认缺少 API 的失败**
 
-Run:
+运行：
 
 ```powershell
 cargo test -p coldstart-core --test project_model
 ```
 
-Expected: FAIL with `unresolved import coldstart_core::Project`.
+预期：失败，错误为 `unresolved import coldstart_core::Project`。
 
-- [ ] **Step 5: Implement the minimal project model**
+- [ ] **步骤 5：实现最小项目模型**
 
-Create `crates/core/src/error.rs`:
+创建 `crates/core/src/error.rs`：
 
 ```rust
 use thiserror::Error;
@@ -258,7 +258,7 @@ pub enum ProjectError {
 }
 ```
 
-Create `crates/core/src/project.rs`:
+创建 `crates/core/src/project.rs`：
 
 ```rust
 use std::{fmt, path::PathBuf, str::FromStr};
@@ -330,7 +330,7 @@ impl Project {
 }
 ```
 
-Replace `crates/core/src/lib.rs` with:
+将 `crates/core/src/lib.rs` 替换为：
 
 ```rust
 mod error;
@@ -340,9 +340,9 @@ pub use error::ProjectError;
 pub use project::{Project, ProjectId};
 ```
 
-- [ ] **Step 6: Run the domain tests and quality checks**
+- [ ] **步骤 6：运行领域测试和质量检查**
 
-Run:
+运行：
 
 ```powershell
 cargo test -p coldstart-core --test project_model
@@ -351,45 +351,45 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Expected: all tests PASS and Clippy reports no warnings.
+预期：所有测试通过，Clippy 无警告。
 
-- [ ] **Step 7: Commit the domain foundation**
+- [ ] **步骤 7：提交领域基础**
 
 ```powershell
 git add Cargo.toml Cargo.lock rust-toolchain.toml crates/core
-git commit -m "feat: add the ColdStart project domain model"
+git commit -m "feat: 添加 ColdStart 项目领域模型"
 ```
 
 ---
 
-### Task 2: Define Event and Portable Manifest Contracts
+### 任务 2：定义事件与可迁移清单契约
 
-**Files:**
-- Modify: `crates/core/Cargo.toml`
-- Create: `crates/core/src/event.rs`
-- Create: `crates/core/src/manifest.rs`
-- Modify: `crates/core/src/lib.rs`
-- Test: `crates/core/tests/contracts.rs`
+**文件：**
+- 修改：`crates/core/Cargo.toml`
+- 创建：`crates/core/src/event.rs`
+- 创建：`crates/core/src/manifest.rs`
+- 修改：`crates/core/src/lib.rs`
+- 测试：`crates/core/tests/contracts.rs`
 
-**Interfaces:**
-- Consumes: `coldstart_core::{Project, ProjectId}` from Task 1.
-- Produces: `DomainEvent`, `DomainEventKind`, and `DomainEvent::project_initialized(project: &Project)`.
-- Produces: `ProjectManifest`, `ManifestError`, and `PROJECT_MANIFEST_SCHEMA_VERSION`.
-- Produces: `ProjectManifest::from_project(project: &Project) -> ProjectManifest`.
-- Produces: `ProjectManifest::validate(&self) -> Result<(), ManifestError>`.
-- Produces: `ProjectManifest::to_project(&self, root_path: PathBuf) -> Result<Project, ManifestError>`.
+**接口：**
+- 使用：任务 1 的 `coldstart_core::{Project, ProjectId}`。
+- 产出：`DomainEvent`、`DomainEventKind` 和 `DomainEvent::project_initialized(project: &Project)`。
+- 产出：`ProjectManifest`、`ManifestError` 和 `PROJECT_MANIFEST_SCHEMA_VERSION`。
+- 产出：`ProjectManifest::from_project(project: &Project) -> ProjectManifest`。
+- 产出：`ProjectManifest::validate(&self) -> Result<(), ManifestError>`。
+- 产出：`ProjectManifest::to_project(&self, root_path: PathBuf) -> Result<Project, ManifestError>`。
 
-The manifest is an identity document, not a machine-local state file. It deliberately omits `Project::root_path`; callers derive that path from the directory containing `coldstart.project.json`. Platform targets, repository mappings, and the template version will be added with a later manifest schema revision when those domain types exist.
+清单是项目身份文档，不是机器相关的状态文件。它有意省略 `Project::root_path`，调用方根据 `coldstart.project.json` 所在目录推导项目根路径。等平台目标、仓库映射和模板版本这些领域类型实现后，再通过后续清单 schema 修订加入。
 
-- [ ] **Step 1: Add the serialization dependency and failing contract tests**
+- [ ] **步骤 1：添加序列化依赖并编写失败的契约测试**
 
-Add `serde_json` under `[dependencies]` in `crates/core/Cargo.toml`:
+在 `crates/core/Cargo.toml` 的 `[dependencies]` 下添加 `serde_json`：
 
 ```toml
 serde_json.workspace = true
 ```
 
-Create `crates/core/tests/contracts.rs`:
+创建 `crates/core/tests/contracts.rs`：
 
 ```rust
 use std::path::PathBuf;
@@ -498,19 +498,19 @@ fn event_identity_and_time_are_generated_per_event() {
 }
 ```
 
-- [ ] **Step 2: Run the contract tests and confirm the missing-API failure**
+- [ ] **步骤 2：运行契约测试并确认缺少 API 的失败**
 
-Run:
+运行：
 
 ```powershell
 cargo test -p coldstart-core --test contracts
 ```
 
-Expected: FAIL because `coldstart_core::DomainEvent` and the manifest exports do not exist yet.
+预期：失败，因为 `coldstart_core::DomainEvent` 和清单相关导出尚不存在。
 
-- [ ] **Step 3: Implement the event and manifest contracts**
+- [ ] **步骤 3：实现事件和清单契约**
 
-Create `crates/core/src/event.rs`:
+创建 `crates/core/src/event.rs`：
 
 ```rust
 use chrono::{DateTime, Utc};
@@ -556,7 +556,7 @@ impl DomainEventKind {
 }
 ```
 
-Create `crates/core/src/manifest.rs`:
+创建 `crates/core/src/manifest.rs`：
 
 ```rust
 use std::path::PathBuf;
@@ -629,7 +629,7 @@ pub enum ManifestError {
 }
 ```
 
-Replace `crates/core/src/lib.rs` with:
+将 `crates/core/src/lib.rs` 替换为：
 
 ```rust
 mod error;
@@ -643,9 +643,9 @@ pub use manifest::{ManifestError, ProjectManifest, PROJECT_MANIFEST_SCHEMA_VERSI
 pub use project::{Project, ProjectId};
 ```
 
-- [ ] **Step 4: Run the contract tests and all quality gates**
+- [ ] **步骤 4：运行契约测试和全部质量门禁**
 
-Run:
+运行：
 
 ```powershell
 cargo test -p coldstart-core --test contracts
@@ -654,39 +654,39 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Expected: PASS.
+预期：通过。
 
-- [ ] **Step 5: Commit the portable contracts**
+- [ ] **步骤 5：提交可迁移契约**
 
 ```powershell
 git add crates/core
-git commit -m "feat: add portable project manifests and domain events"
+git commit -m "feat: 添加可迁移项目清单与领域事件"
 ```
 
 ---
 
-### Task 3: Persist Projects and Event Logs in SQLite
+### 任务 3：使用 SQLite 持久化项目和事件日志
 
-**Files:**
-- Modify: `Cargo.toml`
-- Create: `crates/storage/Cargo.toml`
-- Create: `crates/storage/src/lib.rs`
-- Create: `crates/storage/src/database.rs`
-- Create: `crates/storage/src/migrations.rs`
-- Test: `crates/storage/tests/database.rs`
+**文件：**
+- 修改：`Cargo.toml`
+- 创建：`crates/storage/Cargo.toml`
+- 创建：`crates/storage/src/lib.rs`
+- 创建：`crates/storage/src/database.rs`
+- 创建：`crates/storage/src/migrations.rs`
+- 测试：`crates/storage/tests/database.rs`
 
-**Interfaces:**
-- Consumes: `coldstart_core::{DomainEvent, Project, ProjectId}`.
-- Produces: `coldstart_storage::{Database, StorageError}`.
-- Produces: `Database::open(path: &Path) -> Result<Database, StorageError>`.
-- Produces: `Database::initialize_project(&mut self, project: &Project) -> Result<(), StorageError>`.
-- Produces: `Database::load_project(&self, id: &ProjectId) -> Result<Option<Project>, StorageError>`.
-- Produces: `Database::append_event(&mut self, event: &DomainEvent) -> Result<(), StorageError>`.
-- Produces: `Database::event_count(&self, project_id: &ProjectId) -> Result<u64, StorageError>`.
+**接口：**
+- 使用：`coldstart_core::{DomainEvent, Project, ProjectId}`。
+- 产出：`coldstart_storage::{Database, StorageError}`。
+- 产出：`Database::open(path: &Path) -> Result<Database, StorageError>`。
+- 产出：`Database::initialize_project(&mut self, project: &Project) -> Result<(), StorageError>`。
+- 产出：`Database::load_project(&self, id: &ProjectId) -> Result<Option<Project>, StorageError>`。
+- 产出：`Database::append_event(&mut self, event: &DomainEvent) -> Result<(), StorageError>`。
+- 产出：`Database::event_count(&self, project_id: &ProjectId) -> Result<u64, StorageError>`。
 
-- [ ] **Step 1: Add a compiling storage crate and the failing integration tests**
+- [ ] **步骤 1：添加可编译的 storage crate 和失败的集成测试**
 
-Change the workspace members in the root `Cargo.toml` to:
+将根目录 `Cargo.toml` 的 workspace 成员改为：
 
 ```toml
 [workspace]
@@ -694,7 +694,7 @@ members = ["crates/core", "crates/storage"]
 resolver = "3"
 ```
 
-Create `crates/storage/Cargo.toml`:
+创建 `crates/storage/Cargo.toml`：
 
 ```toml
 [package]
@@ -715,7 +715,7 @@ uuid.workspace = true
 tempfile.workspace = true
 ```
 
-Create `crates/storage/src/lib.rs` with only the modules that will be implemented in Step 3:
+创建 `crates/storage/src/lib.rs`，暂时只声明步骤 3 将要实现的模块：
 
 ```rust
 mod database;
@@ -724,19 +724,19 @@ mod migrations;
 pub use database::{Database, StorageError};
 ```
 
-Create `crates/storage/src/database.rs` as a temporary compile stub; it will be replaced in Step 3:
+创建临时编译占位文件 `crates/storage/src/database.rs`，步骤 3 会替换它：
 
 ```rust
-// The failing tests define the public API before implementation.
+// 先用失败的测试确定公开 API，再实现。
 ```
 
-Create `crates/storage/src/migrations.rs` as a temporary compile stub:
+创建临时编译占位文件 `crates/storage/src/migrations.rs`：
 
 ```rust
-// The schema migration is added after the failing tests.
+// schema 迁移将在失败测试之后添加。
 ```
 
-Create `crates/storage/tests/database.rs`:
+创建 `crates/storage/tests/database.rs`：
 
 ```rust
 use coldstart_core::{DomainEvent, Project, ProjectId};
@@ -852,19 +852,19 @@ fn creates_missing_database_parent_directories() {
 }
 ```
 
-- [ ] **Step 2: Run the storage tests and confirm the missing-API failure**
+- [ ] **步骤 2：运行存储测试并确认缺少 API 的失败**
 
-Run:
+运行：
 
 ```powershell
 cargo test -p coldstart-storage --test database
 ```
 
-Expected: FAIL because `Database` and `StorageError` have no implementation.
+预期：失败，因为 `Database` 和 `StorageError` 尚未实现。
 
-- [ ] **Step 3: Implement migrations and transactional persistence**
+- [ ] **步骤 3：实现迁移和事务持久化**
 
-Replace `crates/storage/src/database.rs` with:
+将 `crates/storage/src/database.rs` 替换为：
 
 ```rust
 use std::{fs, path::Path, time::Duration};
@@ -1045,7 +1045,7 @@ fn insert_event(transaction: &Transaction<'_>, event: &DomainEvent) -> Result<()
 }
 ```
 
-Create `crates/storage/src/migrations.rs`:
+创建 `crates/storage/src/migrations.rs`：
 
 ```rust
 use rusqlite::Connection;
@@ -1097,9 +1097,9 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
 }
 ```
 
-- [ ] **Step 4: Run the storage tests and all quality gates**
+- [ ] **步骤 4：运行存储测试和全部质量门禁**
 
-Run:
+运行：
 
 ```powershell
 cargo test -p coldstart-storage --test database
@@ -1108,37 +1108,37 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Expected: PASS. The parent-directory test also proves `Database::open` creates `<project-home>/.coldstart/` when missing.
+预期：通过。父目录测试同时证明 `Database::open` 会在目录缺失时创建 `<project-home>/.coldstart/`。
 
-- [ ] **Step 5: Commit SQLite persistence**
+- [ ] **步骤 5：提交 SQLite 持久化**
 
 ```powershell
 git add Cargo.toml Cargo.lock crates/storage
-git commit -m "feat: persist projects and events in SQLite"
+git commit -m "feat: 使用 SQLite 持久化项目与事件"
 ```
 
 ---
 
-### Task 4: Create the Project Home with `coldstart init`
+### 任务 4：使用 `coldstart init` 创建项目主目录
 
-**Files:**
-- Modify: `Cargo.toml`
-- Create: `crates/cli/Cargo.toml`
-- Create: `crates/cli/src/main.rs`
-- Create: `crates/cli/src/error.rs`
-- Create: `crates/cli/src/project_home.rs`
-- Test: `crates/cli/tests/cli.rs`
+**文件：**
+- 修改：`Cargo.toml`
+- 创建：`crates/cli/Cargo.toml`
+- 创建：`crates/cli/src/main.rs`
+- 创建：`crates/cli/src/error.rs`
+- 创建：`crates/cli/src/project_home.rs`
+- 测试：`crates/cli/tests/cli.rs`
 
-**Interfaces:**
-- Consumes: `coldstart_core::{Project, ProjectManifest, ProjectError}`.
-- Consumes: `coldstart_storage::{Database, StorageError}`.
-- Produces: `coldstart init --name <NAME> [--path <PROJECT_HOME>]`.
-- Produces: `ProjectHome::initialize(&self, name: &str) -> Result<Project, CliError>`.
-- Produces: Project Home layout `coldstart.project.json`, `docs/{requirements,architecture,decisions,release}/`, and `.coldstart/{state.db,artifacts,snapshots}/`.
+**接口：**
+- 使用：`coldstart_core::{Project, ProjectManifest, ProjectError}`。
+- 使用：`coldstart_storage::{Database, StorageError}`。
+- 产出：`coldstart init --name <NAME> [--path <PROJECT_HOME>]`。
+- 产出：`ProjectHome::initialize(&self, name: &str) -> Result<Project, CliError>`。
+- 产出：项目主目录布局 `coldstart.project.json`、`docs/{requirements,architecture,decisions,release}/` 和 `.coldstart/{state.db,artifacts,snapshots}/`。
 
-- [ ] **Step 1: Add the CLI crate and failing initialization tests**
+- [ ] **步骤 1：添加 CLI crate 和失败的初始化测试**
 
-Change the workspace members in the root `Cargo.toml` to:
+将根目录 `Cargo.toml` 的 workspace 成员改为：
 
 ```toml
 [workspace]
@@ -1146,7 +1146,7 @@ members = ["crates/core", "crates/storage", "crates/cli"]
 resolver = "3"
 ```
 
-Create `crates/cli/Cargo.toml`:
+创建 `crates/cli/Cargo.toml`：
 
 ```toml
 [package]
@@ -1171,7 +1171,7 @@ assert_cmd.workspace = true
 tempfile.workspace = true
 ```
 
-Create `crates/cli/src/main.rs` as a temporary stub:
+创建临时占位文件 `crates/cli/src/main.rs`：
 
 ```rust
 fn main() {
@@ -1180,7 +1180,7 @@ fn main() {
 }
 ```
 
-Create `crates/cli/tests/cli.rs`:
+创建 `crates/cli/tests/cli.rs`：
 
 ```rust
 use std::fs;
@@ -1252,19 +1252,19 @@ fn init_refuses_to_overwrite_an_existing_project_manifest() {
 }
 ```
 
-- [ ] **Step 2: Run the CLI tests and confirm the init failure**
+- [ ] **步骤 2：运行 CLI 测试并确认初始化失败**
 
-Run:
+运行：
 
 ```powershell
 cargo test -p coldstart-cli --test cli
 ```
 
-Expected: FAIL because the stub exits with status 1 and does not create a Project Home.
+预期：失败，因为占位程序以状态码 1 退出，且不会创建项目主目录。
 
-- [ ] **Step 3: Implement Project Home creation and the init command**
+- [ ] **步骤 3：实现项目主目录创建和 init 命令**
 
-Create `crates/cli/src/error.rs`:
+创建 `crates/cli/src/error.rs`：
 
 ```rust
 use std::{io, path::PathBuf};
@@ -1292,7 +1292,7 @@ pub enum CliError {
 }
 ```
 
-Create `crates/cli/src/project_home.rs`:
+创建 `crates/cli/src/project_home.rs`：
 
 ```rust
 use std::{
@@ -1394,7 +1394,7 @@ fn remove_database_files(database_path: &Path) {
 }
 ```
 
-Replace `crates/cli/src/main.rs` with:
+将 `crates/cli/src/main.rs` 替换为：
 
 ```rust
 mod error;
@@ -1448,9 +1448,9 @@ fn run(cli: Cli) -> Result<(), CliError> {
 }
 ```
 
-- [ ] **Step 4: Run CLI tests and all quality gates**
+- [ ] **步骤 4：运行 CLI 测试和全部质量门禁**
 
-Run:
+运行：
 
 ```powershell
 cargo test -p coldstart-cli --test cli
@@ -1459,41 +1459,41 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Expected: PASS. If the database cannot initialize after the manifest is written, the implementation removes the manifest and any database/WAL/SHM files it just created.
+预期：通过。如果写入清单后数据库初始化失败，实现会删除清单以及本次刚创建的数据库、WAL 和 SHM 文件。
 
-- [ ] **Step 5: Commit Project Home initialization**
+- [ ] **步骤 5：提交项目主目录初始化**
 
 ```powershell
 git add Cargo.toml Cargo.lock crates/cli
-git commit -m "feat: initialize ColdStart project homes"
+git commit -m "feat: 初始化 ColdStart 项目主目录"
 ```
 
 ---
 
-### Task 5: Report Project Status and Lock the CLI Flow End to End
+### 任务 5：输出项目状态并完成 CLI 端到端闭环
 
-**Files:**
-- Modify: `crates/cli/src/error.rs`
-- Modify: `crates/cli/src/project_home.rs`
-- Modify: `crates/cli/src/main.rs`
-- Modify: `crates/cli/tests/cli.rs`
-- Modify: `README.md`
+**文件：**
+- 修改：`crates/cli/src/error.rs`
+- 修改：`crates/cli/src/project_home.rs`
+- 修改：`crates/cli/src/main.rs`
+- 修改：`crates/cli/tests/cli.rs`
+- 修改：`README.md`
 
-**Interfaces:**
-- Consumes: `ProjectHome::initialize` and `ProjectManifest` from Task 4.
-- Consumes: `Database::{open, load_project, event_count}` from Task 3.
-- Produces: `coldstart status [--path <PROJECT_HOME>] [--json]`.
-- Produces JSON keys `projectId`, `name`, `rootPath`, `createdAt`, and `eventCount`.
+**接口：**
+- 使用：任务 4 的 `ProjectHome::initialize` 和 `ProjectManifest`。
+- 使用：任务 3 的 `Database::{open, load_project, event_count}`。
+- 产出：`coldstart status [--path <PROJECT_HOME>] [--json]`。
+- 产出 JSON 键 `projectId`、`name`、`rootPath`、`createdAt` 和 `eventCount`。
 
-- [ ] **Step 1: Add failing status and end-to-end tests**
+- [ ] **步骤 1：添加失败的状态查询与端到端测试**
 
-Add these imports to `crates/cli/tests/cli.rs`:
+在 `crates/cli/tests/cli.rs` 中添加以下导入：
 
 ```rust
 use std::path::PathBuf;
 ```
 
-Append these helpers and tests to `crates/cli/tests/cli.rs`:
+在 `crates/cli/tests/cli.rs` 末尾追加以下辅助函数和测试：
 
 ```rust
 fn run_status(home: &Path) -> Output {
@@ -1582,19 +1582,19 @@ fn status_does_not_recreate_a_missing_database() {
 }
 ```
 
-- [ ] **Step 2: Run the status tests and confirm the missing-subcommand failure**
+- [ ] **步骤 2：运行状态测试并确认缺少子命令的失败**
 
-Run:
+运行：
 
 ```powershell
 cargo test -p coldstart-cli --test cli
 ```
 
-Expected: FAIL because Clap reports an unrecognized `status` subcommand.
+预期：失败，因为 Clap 报告无法识别 `status` 子命令。
 
-- [ ] **Step 3: Implement manifest loading and status output**
+- [ ] **步骤 3：实现清单加载和状态输出**
 
-Replace `crates/cli/src/error.rs` with:
+将 `crates/cli/src/error.rs` 替换为：
 
 ```rust
 use std::{io, path::PathBuf};
@@ -1634,7 +1634,7 @@ pub enum CliError {
 }
 ```
 
-Add these methods inside `impl ProjectHome`:
+在 `impl ProjectHome` 中添加以下方法：
 
 ```rust
     pub fn absolute_root(&self) -> Result<PathBuf, CliError> {
@@ -1660,9 +1660,9 @@ Add these methods inside `impl ProjectHome`:
     }
 ```
 
-Remove the now-duplicated private `database_path` method from the previous task. Keep `manifest_path` private.
+删除上一任务中现已重复的私有 `database_path` 方法。`manifest_path` 继续保持私有。
 
-Replace `crates/cli/src/main.rs` with:
+将 `crates/cli/src/main.rs` 替换为：
 
 ```rust
 mod error;
@@ -1772,14 +1772,14 @@ fn print_status(home: ProjectHome, as_json: bool) -> Result<(), CliError> {
 }
 ```
 
-- [ ] **Step 4: Document the working CLI**
+- [ ] **步骤 4：记录可用的 CLI 用法**
 
-Replace the `## 当前状态` section in `README.md` with:
+将 `README.md` 中的 `## 当前状态` 小节替换为：
 
 ````markdown
 ## 当前状态
 
-第一阶段 Rust 核心与 CLI 已实现：可以创建可迁移的 Project Home，在本地 SQLite 中保存项目和追加式事件，并查询项目状态。Tauri 桌面界面、蓝图、计划引擎、MCP、Git 与凭据管理仍在后续阶段。
+第一阶段 Rust 核心与 CLI 已实现：可以创建可迁移的项目主目录，在本地 SQLite 中保存项目和追加式事件，并查询项目状态。Tauri 桌面界面、蓝图、计划引擎、MCP、Git 与凭据管理仍在后续阶段。
 
 ```powershell
 cargo run -p coldstart-cli -- init --name "Demo Project" --path D:\work\demo
@@ -1789,9 +1789,9 @@ cargo run -p coldstart-cli -- status --path D:\work\demo --json
 `coldstart.project.json` 不保存机器绝对路径；移动到其他目录后，项目根路径由该文件所在目录重新推导。
 ````
 
-- [ ] **Step 5: Run the full end-to-end quality gate**
+- [ ] **步骤 5：运行完整的端到端质量门禁**
 
-Run:
+运行：
 
 ```powershell
 cargo fmt --all --check
@@ -1799,25 +1799,25 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Expected: all CLI tests PASS, including init, overwrite refusal, JSON status, missing-manifest failure, and missing-database safety.
+预期：所有 CLI 测试通过，包括初始化、拒绝覆盖、JSON 状态、清单缺失失败和数据库缺失安全处理。
 
-- [ ] **Step 6: Commit status reporting and documentation**
+- [ ] **步骤 6：提交状态查询与文档**
 
 ```powershell
 git add crates/cli README.md
-git commit -m "feat: report ColdStart project status"
+git commit -m "feat: 输出 ColdStart 项目状态"
 ```
 
-## Phase Acceptance Trace
+## 阶段验收追踪
 
-| Phase requirement | Covered by |
+| 阶段要求 | 覆盖任务 |
 | --- | --- |
-| Rust workspace with pure domain, storage, and CLI boundaries | Tasks 1-4 |
-| Portable project identity and append-only event contracts | Task 2 |
-| SQLite WAL, foreign keys, busy timeout, migration, and event persistence | Task 3 |
-| Project Home layout and refusal to overwrite | Task 4 |
-| Machine-independent `coldstart.project.json` | Tasks 2, 4, and 5 |
-| `coldstart init` and `coldstart status --json` | Tasks 4-5 |
-| End-to-end validation of the first roadmap slice | Task 5 |
+| 具有纯领域、存储和 CLI 边界的 Rust 工作区 | 任务 1-4 |
+| 可迁移的项目身份与追加式事件契约 | 任务 2 |
+| SQLite WAL、外键、忙碌超时、迁移和事件持久化 | 任务 3 |
+| 项目主目录布局与拒绝覆盖 | 任务 4 |
+| 不依赖机器的 `coldstart.project.json` | 任务 2、4、5 |
+| `coldstart init` 和 `coldstart status --json` | 任务 4-5 |
+| 第一阶段路线图的端到端验证 | 任务 5 |
 
-Deferred to later plans by design: Tauri shell, React UI, document import, blueprint generation, plan DAG, MCP, leases, Git/GitHub, credentials, and release gates.
+后续计划再实现：Tauri 桌面壳、React UI、文档导入、蓝图生成、计划 DAG、MCP、租约、Git/GitHub、凭据和发布门禁。

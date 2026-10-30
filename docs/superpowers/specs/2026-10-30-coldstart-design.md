@@ -77,28 +77,28 @@ ColdStart 不生成业务代码，不自动启动 Agent，不替代 App 商店�
 ## 5. 系统架构
 
 ```text
-Codex / MCP Client
+Codex / MCP 客户端
         │ stdio
         ▼
-  Rust MCP Bridge ────────┐
+  Rust MCP 桥接 ──────────┐
                           │
-Tauri Desktop + WebView ──┼──> Rust Core Crates
-                          │      ├─ Blueprint Compiler
-Rust CLI Runner ──────────┘      ├─ Plan Compiler
-                                  ├─ Work Scheduler
-                                  ├─ Context Compiler
-                                  ├─ Policy / Gate Engine
-                                  ├─ Evidence Verifier
-                                  └─ Event Store
+Tauri 桌面端 + WebView ───┼──> Rust 核心 crate
+                          │      ├─ 蓝图编译器
+Rust CLI 运行器 ──────────┘      ├─ 计划编译器
+                                  ├─ 工作调度器
+                                  ├─ 上下文编译器
+                                  ├─ 策略 / 门禁引擎
+                                  ├─ 证据校验器
+                                  └─ 事件存储
 
-Infrastructure Adapters
-  ├─ SQLite (WAL)
-  ├─ Project Home / Artifact Store
-  ├─ Git and GitHub Provider
-  ├─ OS Credential Vault
-  ├─ Local Command Runner
-  ├─ Document Importers
-  └─ OpenAI-compatible Model Adapter
+基础设施适配器
+  ├─ SQLite（WAL）
+  ├─ 项目主目录 / 制品存储
+  ├─ Git 与 GitHub 提供器
+  ├─ 系统凭据库
+  ├─ 本地命令运行器
+  ├─ 文档导入器
+  └─ OpenAI 兼容模型适配器
 ```
 
 系统是一个本地模块化单体。Tauri UI、MCP Bridge 和 CLI 复用同一套 Rust 领域核心；它们不是三套独立实现。前端不直接访问数据库、文件系统、Git 或系统凭据。
@@ -130,7 +130,7 @@ SQLite 通过 `rusqlite` 访问，启用 WAL、`busy_timeout` 和显式事务；
 
 ## 7. 事实源
 
-- **项目知识**：Project Home 中的 Markdown/YAML 是编辑入口；发布蓝图时生成不可变快照，任务引用内容哈希与快照版本。
+- **项目知识**：项目主目录中的 Markdown/YAML 是编辑入口；发布蓝图时生成不可变快照，任务引用内容哈希与快照版本。
 - **计划结构**：不可变的 `PlanRevision` 是计划定义的事实源；Git 中的计划文件仅为只读快照。
 - **运行状态**：追加式事件日志是事实源；任务状态表、看板和统计是投影。
 - **代码**：各代码仓库的 Git 历史是事实源。
@@ -139,9 +139,9 @@ SQLite 通过 `rusqlite` 访问，启用 WAL、`busy_timeout` 和显式事务；
 
 禁止让 UI、MCP 或 Agent 直接编辑同一份实时状态。所有变更经核心用例写入并产生事件。
 
-## 8. Project Home 与代码仓库
+## 8. 项目主目录与代码仓库
 
-Project Home 是项目知识和本地运行数据的根目录：
+项目主目录（Project Home）是项目知识和本地运行数据的根目录：
 
 ```text
 project-home/
@@ -160,7 +160,7 @@ project-home/
 - `coldstart.project.json` 保存项目 ID、平台目标、仓库映射和模板版本。
 - `docs/` 可纳入 Git 并配置独立远程。
 - `.coldstart/state.db` 和运行快照默认不进入 Git。
-- 代码仓库可以在 Project Home 内，也可以关联外部绝对路径。
+- 代码仓库可以在项目主目录内，也可以关联外部绝对路径。
 - 每个 `Repository` 可配置多个远程，`origin` 为主远程；每个 `PlatformTarget` 指向仓库与子目录。
 
 ## 9. 领域模型
