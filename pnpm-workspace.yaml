@@ -1,3 +1,5 @@
 packages:
   - web
   - apps/desktop
+
+storeDir: .pnpm-store
