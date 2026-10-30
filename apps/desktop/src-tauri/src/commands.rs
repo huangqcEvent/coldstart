@@ -1,12 +1,17 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use coldstart_adapters::{ModelConfig, OpenAiCompatibleModel};
 use coldstart_app::{
-    PlanService, ProjectService, ProjectStatus, ProjectWorkspace, RequirementsService,
+    CreatePrivateRepositoryInput, DeviceFlowView, GitHubDevicePollView, GitHubSessionView,
+    IntegrationService, IntegrationWorkspace, PlanService, ProjectService, ProjectStatus,
+    ProjectWorkspace, RepositoryDraft, RepositoryValidationView, RequirementsService,
+    SaveCredentialInput,
 };
 use coldstart_core::{
-    BlueprintContent, BlueprintRevisionId, InfoRequestId, PlanContent, PlanRevisionId, WorkItemId,
+    BlueprintContent, BlueprintEntityId, BlueprintRevisionId, CapabilityStatus, CredentialId,
+    InfoRequestId, PlanContent, PlanRevisionId, WorkItemId,
 };
+use tauri::State;
 
 use crate::error::CommandError;
 
@@ -249,6 +254,270 @@ pub async fn complete_human_work(
     .map_err(join_error)?
 }
 
+pub fn read_integration_workspace_sync(
+    service: &IntegrationService,
+    path: String,
+) -> Result<IntegrationWorkspace, CommandError> {
+    service
+        .load_workspace(PathBuf::from(path))
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn read_integration_workspace(
+    service: State<'_, Arc<IntegrationService>>,
+    path: String,
+) -> Result<IntegrationWorkspace, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        read_integration_workspace_sync(service.as_ref(), path)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn validate_repository_sync(
+    service: &IntegrationService,
+    path: String,
+    draft: RepositoryDraft,
+) -> Result<RepositoryValidationView, CommandError> {
+    service
+        .validate_repository(PathBuf::from(path), &draft)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn validate_repository(
+    service: State<'_, Arc<IntegrationService>>,
+    path: String,
+    draft: RepositoryDraft,
+) -> Result<RepositoryValidationView, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        validate_repository_sync(service.as_ref(), path, draft)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn save_repository_sync(
+    service: &IntegrationService,
+    path: String,
+    draft: RepositoryDraft,
+) -> Result<IntegrationWorkspace, CommandError> {
+    service
+        .save_repository(PathBuf::from(path), draft)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn save_repository(
+    service: State<'_, Arc<IntegrationService>>,
+    path: String,
+    draft: RepositoryDraft,
+) -> Result<IntegrationWorkspace, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        save_repository_sync(service.as_ref(), path, draft)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn save_credential_sync(
+    service: &IntegrationService,
+    path: String,
+    input: SaveCredentialInput,
+) -> Result<IntegrationWorkspace, CommandError> {
+    service
+        .save_credential(PathBuf::from(path), input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn save_credential(
+    service: State<'_, Arc<IntegrationService>>,
+    path: String,
+    input: SaveCredentialInput,
+) -> Result<IntegrationWorkspace, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        save_credential_sync(service.as_ref(), path, input)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn delete_credential_sync(
+    service: &IntegrationService,
+    path: String,
+    credential_id: String,
+) -> Result<IntegrationWorkspace, CommandError> {
+    let credential_id = parse_credential_id(&credential_id)?;
+    service
+        .delete_credential(PathBuf::from(path), credential_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn delete_credential(
+    service: State<'_, Arc<IntegrationService>>,
+    path: String,
+    credential_id: String,
+) -> Result<IntegrationWorkspace, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_credential_sync(service.as_ref(), path, credential_id)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn update_capability_sync(
+    service: &IntegrationService,
+    path: String,
+    capability_id: String,
+    environment: String,
+    status: CapabilityStatus,
+    credential_id: Option<String>,
+    note: Option<String>,
+) -> Result<IntegrationWorkspace, CommandError> {
+    let capability_id = parse_capability_id(&capability_id)?;
+    let credential_id = credential_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map(parse_credential_id)
+        .transpose()?;
+    service
+        .update_capability(
+            PathBuf::from(path),
+            capability_id,
+            environment,
+            status,
+            credential_id,
+            note,
+        )
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn update_capability(
+    service: State<'_, Arc<IntegrationService>>,
+    path: String,
+    capability_id: String,
+    environment: String,
+    status: CapabilityStatus,
+    credential_id: Option<String>,
+    note: Option<String>,
+) -> Result<IntegrationWorkspace, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        update_capability_sync(
+            service.as_ref(),
+            path,
+            capability_id,
+            environment,
+            status,
+            credential_id,
+            note,
+        )
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn import_github_session_sync(
+    service: &IntegrationService,
+    path: String,
+) -> Result<GitHubSessionView, CommandError> {
+    service
+        .import_github_session(PathBuf::from(path))
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn import_github_session(
+    service: State<'_, Arc<IntegrationService>>,
+    path: String,
+) -> Result<GitHubSessionView, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || import_github_session_sync(service.as_ref(), path))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn start_github_device_flow_sync(
+    service: &IntegrationService,
+    client_id: String,
+) -> Result<DeviceFlowView, CommandError> {
+    service
+        .start_github_device_flow(&client_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn start_github_device_flow(
+    service: State<'_, Arc<IntegrationService>>,
+    client_id: String,
+) -> Result<DeviceFlowView, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        start_github_device_flow_sync(service.as_ref(), client_id)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn poll_github_device_flow_sync(
+    service: &IntegrationService,
+    path: String,
+    session_id: String,
+) -> Result<GitHubDevicePollView, CommandError> {
+    service
+        .poll_github_device_flow(PathBuf::from(path), &session_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn poll_github_device_flow(
+    service: State<'_, Arc<IntegrationService>>,
+    path: String,
+    session_id: String,
+) -> Result<GitHubDevicePollView, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        poll_github_device_flow_sync(service.as_ref(), path, session_id)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn create_github_private_repository_sync(
+    service: &IntegrationService,
+    path: String,
+    input: CreatePrivateRepositoryInput,
+) -> Result<coldstart_adapters::GitHubRepository, CommandError> {
+    service
+        .create_github_private_repository(PathBuf::from(path), input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn create_github_private_repository(
+    service: State<'_, Arc<IntegrationService>>,
+    path: String,
+    input: CreatePrivateRepositoryInput,
+) -> Result<coldstart_adapters::GitHubRepository, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        create_github_private_repository_sync(service.as_ref(), path, input)
+    })
+    .await
+    .map_err(join_error)?
+}
+
 fn parse_revision_id(value: &str) -> Result<BlueprintRevisionId, CommandError> {
     value.parse().map_err(|_| CommandError {
         code: "invalid_id".to_owned(),
@@ -274,6 +543,20 @@ fn parse_work_item_id(value: &str) -> Result<WorkItemId, CommandError> {
     value.parse().map_err(|_| CommandError {
         code: "invalid_id".to_owned(),
         message: "工作项 ID 无效".to_owned(),
+    })
+}
+
+fn parse_credential_id(value: &str) -> Result<CredentialId, CommandError> {
+    value.parse().map_err(|_| CommandError {
+        code: "invalid_id".to_owned(),
+        message: "凭据 ID 无效".to_owned(),
+    })
+}
+
+fn parse_capability_id(value: &str) -> Result<BlueprintEntityId, CommandError> {
+    value.parse().map_err(|_| CommandError {
+        code: "invalid_id".to_owned(),
+        message: "能力 ID 无效".to_owned(),
     })
 }
 

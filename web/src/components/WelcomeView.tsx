@@ -29,7 +29,7 @@ export function WelcomeView({ onCreate, onOpen }: WelcomeViewProps) {
 
       <div className="welcome__panel" aria-label="当前阶段">
         <div className="welcome__panel-head">
-          <span>PHASE 04</span>
+          <span>PHASE 05</span>
           <span className="status-dot">READY</span>
         </div>
         <div className="welcome__orbit" aria-hidden="true">

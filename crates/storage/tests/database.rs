@@ -56,7 +56,7 @@ fn load_project_returns_current_root_after_project_home_moves() {
 }
 
 #[test]
-fn creates_schema_v4_without_a_root_path_column() {
+fn creates_schema_v5_without_a_root_path_column() {
     let dir = TempDir::new().expect("temp directory must exist");
     let database = open_database(&dir);
     drop(database);
@@ -75,7 +75,7 @@ fn creates_schema_v4_without_a_root_path_column() {
         .collect::<Result<_, _>>()
         .expect("project columns must be valid");
 
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     assert_eq!(columns, ["id", "name", "created_at"]);
 }
 
@@ -117,7 +117,7 @@ fn migrates_v1_projects_and_events_without_data_loss() {
         .collect::<Result<_, _>>()
         .expect("event ids must be valid");
 
-    assert_eq!(version, 4);
+    assert_eq!(version, 5);
     assert_eq!(root_path_columns, 0);
     assert_eq!(event_ids, ["event-one", "event-two"]);
 }
@@ -335,7 +335,7 @@ fn concurrent_first_open_succeeds_and_database_remains_usable() {
 
 #[test]
 fn rejects_negative_and_future_schema_versions() {
-    for version in [-1, 5] {
+    for version in [-1, 6] {
         let dir = TempDir::new().expect("temp directory must exist");
         let database_path = dir.path().join("state.db");
         let connection = Connection::open(&database_path).expect("database must open");
@@ -348,7 +348,7 @@ fn rejects_negative_and_future_schema_versions() {
         assert!(matches!(
             error,
             StorageError::UnsupportedSchema { found, supported }
-                if found == version && supported == 4
+                if found == version && supported == 5
         ));
     }
 }

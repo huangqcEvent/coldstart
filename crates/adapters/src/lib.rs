@@ -1,11 +1,20 @@
 mod document;
+mod git;
+mod github;
 mod model;
+mod secret;
 
 pub use document::{
     DocumentError, ExtractedDocument, MAX_DOCUMENT_BYTES, MAX_EXTRACTED_CHARACTERS,
     extract_document,
 };
+pub use git::{GitAdapter, GitAuth, GitCommitVerification, GitError, GitRepositoryStatus};
+pub use github::{
+    CreatePrivateRepositoryRequest, DeviceFlowPoll, DeviceFlowStart, GitHubClient,
+    GitHubConnection, GitHubError, GitHubRepository, GitHubToken, import_gh_token,
+};
 pub use model::{
     BlueprintModel, ModelAnchor, ModelConfig, ModelError, ModelExtractionRequest, ModelSource,
     OpenAiCompatibleModel,
 };
+pub use secret::{MemorySecretStore, SecretStore, SecretStoreError, WindowsSecretStore};

@@ -3,7 +3,9 @@ export type WorkspaceView =
   | 'requirements'
   | 'blueprint'
   | 'plan'
-  | 'inbox';
+  | 'inbox'
+  | 'integration'
+  | 'release';
 
 interface AppSidebarProps {
   view: WorkspaceView;
@@ -21,11 +23,8 @@ const workspaceItems: Array<{
   { view: 'blueprint', label: '蓝图编排', index: '03' },
   { view: 'inbox', label: '人工 Inbox', index: '04' },
   { view: 'plan', label: '计划看板', index: '05' },
-];
-
-const futureItems = [
-  { label: '仓库与能力', index: '06' },
-  { label: '发布中心', index: '07' },
+  { view: 'integration', label: '仓库与能力', index: '06' },
+  { view: 'release', label: '发布中心', index: '07' },
 ];
 
 export function AppSidebar({ view, hasProject, onNavigate }: AppSidebarProps) {
@@ -57,19 +56,6 @@ export function AppSidebar({ view, hasProject, onNavigate }: AppSidebarProps) {
           );
         })}
 
-        {futureItems.map((item) => (
-          <button
-            className="nav-item"
-            type="button"
-            aria-label={item.label}
-            disabled
-            key={item.label}
-          >
-            <span className="nav-item__index">{item.index}</span>
-            <span>{item.label}</span>
-            <span className="nav-item__future">后续</span>
-          </button>
-        ))}
       </nav>
 
       <div className="sidebar__footer">

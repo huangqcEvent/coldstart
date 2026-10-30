@@ -5,7 +5,11 @@ use coldstart_core::{
     WorkItem, estimate_tokens, sha256_hex,
 };
 
-use crate::{AppError, context::OpenProject};
+use crate::{
+    AppError,
+    context::OpenProject,
+    integration::{CapabilityStatusView, load_capabilities_for_context},
+};
 
 #[derive(Debug)]
 struct Section {
@@ -26,6 +30,8 @@ pub(crate) fn compile_task_context(
         .database
         .load_blueprint(&plan.blueprint_revision_id)?
         .ok_or(AppError::BlueprintNotFound(plan.blueprint_revision_id))?;
+    let repository = repository_context(project, task)?;
+    let capabilities = load_capabilities_for_context(project)?;
     let facts = project.database.list_project_facts(&project.project.id)?;
     let info_requests = project.database.list_info_requests(&project.project.id)?;
     let mut header = render_header(task);
@@ -40,7 +46,15 @@ pub(crate) fn compile_task_context(
     }];
     let mut omitted = Vec::new();
 
-    for section in build_sections(&blueprint.content, task, work_items, &facts, &info_requests) {
+    for section in build_sections(
+        &blueprint.content,
+        task,
+        work_items,
+        repository,
+        &capabilities,
+        &facts,
+        &info_requests,
+    ) {
         let rendered = format!(
             "\n\n## {}\n\n{}\n",
             section.title,
@@ -179,10 +193,40 @@ fn build_sections(
     blueprint: &BlueprintContent,
     task: &TaskSpec,
     work_items: &[WorkItem],
+    repository: Option<Section>,
+    capabilities: &[CapabilityStatusView],
     facts: &[ProjectFact],
     info_requests: &[coldstart_core::InfoRequest],
 ) -> Vec<Section> {
     let mut sections = Vec::new();
+    if let Some(repository) = repository {
+        sections.push(repository);
+    }
+    if !capabilities.is_empty() {
+        let lines = capabilities
+            .iter()
+            .map(|capability| {
+                format!(
+                    "- {} / {} [{}]：{}；credentialRef={}",
+                    capability.name,
+                    capability.provider,
+                    capability.environment,
+                    capability.status.as_str(),
+                    capability.credential_ref.as_deref().unwrap_or("未配置")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        sections.push(Section {
+            priority: 90,
+            id: "capability-status".to_owned(),
+            kind: ContextReferenceKind::ProjectFact,
+            title: "三方能力状态".to_owned(),
+            content: format!(
+                "{lines}\n\ncredentialRef 仅表示系统凭据库中的引用。禁止读取、打印凭据或把 Secret 写入代码、配置和报告；缺少生产能力时必须报告阻塞。"
+            ),
+        });
+    }
     let mut blueprint_lines = Vec::new();
     for id in &task.context_refs {
         if let Some((title, content)) = render_blueprint_entity(blueprint, id) {
@@ -302,6 +346,51 @@ fn build_sections(
     }
     sections.sort_by_key(|section| std::cmp::Reverse(section.priority));
     sections
+}
+
+fn repository_context(project: &OpenProject, task: &TaskSpec) -> Result<Option<Section>, AppError> {
+    let Some(repository_key) = task.repository_key.as_deref() else {
+        return Ok(None);
+    };
+    let Some(repository) = project
+        .database
+        .repository_by_key(&project.project.id, repository_key)?
+    else {
+        return Ok(None);
+    };
+    let credential_ref = match repository.credential_id {
+        Some(credential_id) => project
+            .database
+            .credential(&project.project.id, &credential_id)?
+            .map(|credential| credential.secret_ref),
+        None => None,
+    };
+    let protected = if repository.protected_branches.is_empty() {
+        "-".to_owned()
+    } else {
+        repository.protected_branches.join(", ")
+    };
+    Ok(Some(Section {
+        priority: 98,
+        id: "repository-context".to_owned(),
+        kind: ContextReferenceKind::Instruction,
+        title: "仓库与分支约束".to_owned(),
+        content: format!(
+            "- 逻辑键：{}\n- 本地路径：{}\n- 远程：{}\n- 默认分支：{}\n- 基线：{}\n- 任务分支：{}\n- 保护分支：{}\n- 认证模式：{}\n- 凭据引用：{}\n- 同步策略：{}\n\n只在本地路径内工作；不要切换、合并或删除保护分支。推送由 ColdStart 在报告通过后执行，不要读取或注入远程 Token，也不要强制推送。",
+            repository.key,
+            repository.local_path.to_string_lossy(),
+            repository.remote_url,
+            repository.default_branch,
+            task.base_ref
+                .as_deref()
+                .unwrap_or(&repository.default_branch),
+            task.work_branch.as_deref().unwrap_or("-"),
+            protected,
+            repository.auth_mode.as_str(),
+            credential_ref.as_deref().unwrap_or("未配置"),
+            repository.sync_policy.as_str(),
+        ),
+    }))
 }
 
 fn render_blueprint_entity(

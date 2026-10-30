@@ -1,9 +1,11 @@
-use std::path::PathBuf;
+use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
 use chrono::{Duration, Utc};
+use coldstart_adapters::{GitAdapter, SecretStore, WindowsSecretStore};
 use coldstart_core::{
-    ClaimResult, DEFAULT_LEASE_MINUTES, LeaseSummary, PlanContent, PlanRevision, PlanRevisionId,
-    TaskContext, TaskReferenceContent, WorkBlockerRecord, WorkItem, WorkItemId, WorkReportInput,
+    ClaimResult, DEFAULT_LEASE_MINUTES, GitSyncRecord, GitSyncStatus, LeaseSummary, PlanContent,
+    PlanRevision, PlanRevisionId, Repository, RepositorySyncPolicy, TaskContext, TaskKind,
+    TaskReferenceContent, WorkBlockerRecord, WorkItem, WorkItemId, WorkReportInput,
     WorkReportRecord, compile_plan,
 };
 use coldstart_storage::NewWorkBlocker;
@@ -13,6 +15,7 @@ use crate::{
     AppError, PlanWorkspace,
     context::OpenProject,
     context_compiler::{compile_reference, compile_task_context},
+    integration::git_auth_for_repository,
     plan_workspace::build_plan_workspace,
 };
 
@@ -24,12 +27,19 @@ pub struct ClaimRequest {
     pub request_id: String,
 }
 
-#[derive(Debug, Default)]
-pub struct PlanService;
+#[derive(Clone)]
+pub struct PlanService {
+    secrets: Arc<dyn SecretStore>,
+    git: GitAdapter,
+}
 
 impl PlanService {
     pub fn new() -> Self {
-        Self
+        Self::with_dependencies(Arc::new(WindowsSecretStore::new()), GitAdapter::new())
+    }
+
+    pub fn with_dependencies(secrets: Arc<dyn SecretStore>, git: GitAdapter) -> Self {
+        Self { secrets, git }
     }
 
     pub fn load_workspace(&self, project_home: PathBuf) -> Result<PlanWorkspace, AppError> {
@@ -116,14 +126,41 @@ impl PlanService {
         request: ClaimRequest,
     ) -> Result<ClaimResult, AppError> {
         let mut project = OpenProject::open(project_home)?;
-        Ok(project.database.claim_work(
+        let claimed = project.database.claim_work(
             &project.project.id,
             &request.agent_profile,
             request.repository.as_deref(),
             &request.request_id,
             Utc::now(),
             default_lease_duration(),
-        )?)
+        )?;
+        let ClaimResult::Claimed(claimed) = claimed else {
+            return Ok(claimed);
+        };
+        let task = project
+            .database
+            .task_spec_for_work_item(&claimed.work_item.id)?
+            .ok_or(AppError::WorkItemNotFound(claimed.work_item.id))?;
+        let Some(repository) = repository_for_task(&project, &task)? else {
+            return Ok(ClaimResult::Claimed(claimed));
+        };
+        if let Err(error) = self.prepare_claim(&project, &task, &repository) {
+            let reason = format!("Git preparation failed: {}", error.code());
+            return match project.database.release_work(
+                &claimed.work_item.id,
+                &claimed.lease_token,
+                &reason,
+                Utc::now(),
+                default_lease_duration(),
+            ) {
+                Ok(_) => Err(error),
+                Err(release_error) => Err(AppError::GitPreparationFailed {
+                    source: Box::new(error),
+                    release_error: release_error.to_string(),
+                }),
+            };
+        }
+        Ok(ClaimResult::Claimed(claimed))
     }
 
     pub fn get_context(
@@ -216,13 +253,82 @@ impl PlanService {
         report: WorkReportInput,
     ) -> Result<WorkReportRecord, AppError> {
         let mut project = OpenProject::open(project_home)?;
-        Ok(project.database.submit_work_report(
+        let task = project
+            .database
+            .task_spec_for_work_item(&work_item_id)?
+            .ok_or(AppError::WorkItemNotFound(work_item_id))?;
+        let repository = repository_for_task(&project, &task)?;
+        let verification = if let Some(repository) = repository.as_ref() {
+            let branch = report
+                .branch
+                .as_deref()
+                .ok_or_else(|| AppError::ReportRejected("work branch is required".to_owned()))?;
+            let commit_sha = report
+                .commit_sha
+                .as_deref()
+                .ok_or_else(|| AppError::ReportRejected("commit SHA is required".to_owned()))?;
+            let base_ref = task
+                .base_ref
+                .as_deref()
+                .unwrap_or(&repository.default_branch);
+            let verification = self.git.verify_report_commit(
+                &repository.local_path,
+                branch,
+                base_ref,
+                commit_sha,
+                &task.allowed_paths,
+                &repository.protected_branches,
+            )?;
+            ensure_reported_files_match(&report, &verification.changed_files)?;
+            Some(verification)
+        } else {
+            None
+        };
+        let record = project.database.submit_work_report(
             &work_item_id,
             &lease_token,
             report,
             Utc::now(),
             default_lease_duration(),
-        )?)
+        )?;
+        if record.accepted
+            && let (Some(repository), Some(verification)) = (repository.as_ref(), verification)
+        {
+            let auth = git_auth_for_repository(&project, repository, self.secrets.as_ref())?;
+            let push = self
+                .git
+                .validate_remote(&repository.local_path, "origin", &repository.remote_url)
+                .and_then(|()| {
+                    self.git.push_branch(
+                        &repository.local_path,
+                        &verification.branch,
+                        &repository.protected_branches,
+                        &auth,
+                    )
+                });
+            let sync = match push {
+                Ok(()) => GitSyncRecord::new(
+                    project.project.id,
+                    work_item_id,
+                    repository.id,
+                    verification.branch,
+                    verification.commit_sha,
+                    GitSyncStatus::Pushed,
+                    None,
+                ),
+                Err(error) => GitSyncRecord::new(
+                    project.project.id,
+                    work_item_id,
+                    repository.id,
+                    verification.branch,
+                    verification.commit_sha,
+                    GitSyncStatus::Failed,
+                    Some(error.to_string()),
+                ),
+            };
+            project.database.record_git_sync(&sync)?;
+        }
+        Ok(record)
     }
 
     pub fn release(
@@ -241,6 +347,44 @@ impl PlanService {
             default_lease_duration(),
         )?)
     }
+
+    fn prepare_claim(
+        &self,
+        project: &OpenProject,
+        task: &coldstart_core::TaskSpec,
+        repository: &Repository,
+    ) -> Result<(), AppError> {
+        if task.kind != TaskKind::AgentCoding {
+            return Ok(());
+        }
+        let Some(branch) = task.work_branch.as_deref() else {
+            return Ok(());
+        };
+        let auth = git_auth_for_repository(project, repository, self.secrets.as_ref())?;
+        self.git
+            .validate_remote(&repository.local_path, "origin", &repository.remote_url)?;
+        if repository.sync_policy == RepositorySyncPolicy::FetchBeforeClaim {
+            self.git.fetch(&repository.local_path, &auth)?;
+        }
+        let base_ref = task
+            .base_ref
+            .as_deref()
+            .unwrap_or(&repository.default_branch);
+        self.git.create_work_branch(
+            &repository.local_path,
+            base_ref,
+            branch,
+            &repository.protected_branches,
+            &auth,
+        )?;
+        Ok(())
+    }
+}
+
+impl Default for PlanService {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 fn default_lease_duration() -> Duration {
@@ -257,4 +401,38 @@ fn published_plan_for(
         .filter(|plan| plan.project_id == project.project.id)
         .ok_or(AppError::PlanNotFound(work_item.plan_revision_id))?;
     Ok(plan)
+}
+
+fn repository_for_task(
+    project: &OpenProject,
+    task: &coldstart_core::TaskSpec,
+) -> Result<Option<Repository>, AppError> {
+    let Some(repository_key) = task.repository_key.as_deref() else {
+        return Ok(None);
+    };
+    Ok(project
+        .database
+        .repository_by_key(&project.project.id, repository_key)?)
+}
+
+fn ensure_reported_files_match(
+    report: &WorkReportInput,
+    actual_files: &[String],
+) -> Result<(), AppError> {
+    let reported = report
+        .changed_files
+        .iter()
+        .map(|path| path.replace('\\', "/"))
+        .collect::<BTreeSet<_>>();
+    let actual = actual_files
+        .iter()
+        .map(|path| path.replace('\\', "/"))
+        .collect::<BTreeSet<_>>();
+    if reported == actual {
+        Ok(())
+    } else {
+        Err(AppError::ReportRejected(format!(
+            "reported changed files do not match the commit; reported {reported:?}, actual {actual:?}"
+        )))
+    }
 }

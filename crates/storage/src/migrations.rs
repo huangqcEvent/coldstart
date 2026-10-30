@@ -2,7 +2,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::StorageError;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let current = read_schema_version(connection)?;
@@ -29,17 +29,24 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v2(&transaction)?;
             create_schema_v3(&transaction)?;
             create_schema_v4(&transaction)?;
+            create_schema_v5(&transaction)?;
         }
         1 => {
             migrate_v1_to_v2(&transaction)?;
             create_schema_v3(&transaction)?;
             create_schema_v4(&transaction)?;
+            create_schema_v5(&transaction)?;
         }
         2 => {
             create_schema_v3(&transaction)?;
             create_schema_v4(&transaction)?;
+            create_schema_v5(&transaction)?;
         }
-        3 => create_schema_v4(&transaction)?,
+        3 => {
+            create_schema_v4(&transaction)?;
+            create_schema_v5(&transaction)?;
+        }
+        4 => create_schema_v5(&transaction)?,
         _ => return Err(unsupported_schema(current)),
     }
 
@@ -298,6 +305,94 @@ fn create_schema_v4(transaction: &Transaction<'_>) -> Result<(), StorageError> {
 
             CREATE INDEX work_blockers_by_work_item
                 ON work_blockers(work_item_id, created_at DESC);
+            ",
+    )?;
+    Ok(())
+}
+
+fn create_schema_v5(transaction: &Transaction<'_>) -> Result<(), StorageError> {
+    transaction.execute_batch(
+        "
+            CREATE TABLE credentials (
+                id TEXT PRIMARY KEY NOT NULL,
+                project_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                secret_ref TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX credentials_by_project ON credentials(project_id, provider, environment);
+
+            CREATE TABLE repositories (
+                id TEXT PRIMARY KEY NOT NULL,
+                project_id TEXT NOT NULL,
+                repository_key TEXT NOT NULL,
+                name TEXT NOT NULL,
+                local_path TEXT NOT NULL,
+                remote_url TEXT NOT NULL,
+                default_branch TEXT NOT NULL,
+                protected_branches_json TEXT NOT NULL,
+                auth_mode TEXT NOT NULL,
+                credential_id TEXT,
+                sync_policy TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(project_id, repository_key),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (credential_id) REFERENCES credentials(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX repositories_by_project ON repositories(project_id, repository_key);
+
+            CREATE TABLE capability_states (
+                project_id TEXT NOT NULL,
+                capability_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                status TEXT NOT NULL,
+                credential_id TEXT,
+                note TEXT,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (project_id, capability_id, environment),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (credential_id) REFERENCES credentials(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX capability_states_by_project
+                ON capability_states(project_id, environment, capability_id);
+
+            CREATE TABLE git_syncs (
+                id TEXT PRIMARY KEY NOT NULL,
+                project_id TEXT NOT NULL,
+                work_item_id TEXT NOT NULL,
+                repository_id TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                commit_sha TEXT NOT NULL,
+                status TEXT NOT NULL,
+                error_message TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (work_item_id) REFERENCES work_items(id) ON DELETE CASCADE,
+                FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX git_syncs_by_work_item ON git_syncs(work_item_id, created_at DESC);
+            CREATE INDEX git_syncs_by_project ON git_syncs(project_id, created_at DESC);
+
+            CREATE TABLE project_settings (
+                project_id TEXT NOT NULL,
+                setting_key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (project_id, setting_key),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
             ",
     )?;
     Ok(())
