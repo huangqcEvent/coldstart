@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="ColdStart">
+  <defs>
+    <linearGradient id="background" x1="128" y1="96" x2="896" y2="928" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0b2740" />
+      <stop offset="1" stop-color="#04101d" />
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(512 512) rotate(90) scale(360)">
+      <stop offset="0" stop-color="#1d6680" stop-opacity=".42" />
+      <stop offset="1" stop-color="#071a2f" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="ice" x1="284" y1="258" x2="748" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d8fbff" />
+      <stop offset=".45" stop-color="#67e8f9" />
+      <stop offset="1" stop-color="#38bdf8" />
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="224" fill="url(#background)" />
+  <circle cx="512" cy="512" r="360" fill="url(#glow)" />
+  <circle cx="512" cy="512" r="338" fill="none" stroke="#2a5b78" stroke-width="4" stroke-dasharray="3 18" stroke-linecap="round" opacity=".75" />
+  <path d="M660 307A272 272 0 1 0 660 717" fill="none" stroke="url(#ice)" stroke-width="54" stroke-linecap="round" />
+  <path d="M512 316V510" fill="none" stroke="url(#ice)" stroke-width="54" stroke-linecap="round" />
+  <path d="M512 610l-42 76h84l-42-76z" fill="#9af3ff" />
+  <circle cx="512" cy="512" r="18" fill="#e8fdff" />
+  <path d="M210 512h86M728 512h86M512 210v42M512 772v42" stroke="#67e8f9" stroke-width="12" stroke-linecap="round" opacity=".58" />
+</svg>
