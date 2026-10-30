@@ -131,7 +131,10 @@ fn manifest_project_id_matches_database_project_and_initial_event() {
     let database_path = home.join(".coldstart").join("state.db");
     let database = Database::open(&database_path).expect("database must open");
     let stored_project = database
-        .load_project(&project_id)
+        .load_project(
+            &project_id,
+            std::path::absolute(&home).expect("project home must become absolute"),
+        )
         .expect("project must be readable")
         .expect("project must exist");
     assert_eq!(stored_project.id, project_id);

@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
 };
@@ -38,8 +38,6 @@ pub enum StorageError {
     EventAlreadyExists(Uuid),
     #[error("database schema version {found} is newer than supported version {supported}")]
     UnsupportedSchema { found: i64, supported: i64 },
-    #[error("project root path is not valid UTF-8")]
-    NonUtf8ProjectRoot,
     #[error("SQLite did not enable WAL mode; active journal mode is {0}")]
     WalUnavailable(String),
 }
@@ -67,10 +65,6 @@ impl Database {
     }
 
     pub fn initialize_project(&mut self, project: &Project) -> Result<(), StorageError> {
-        let root_path = project
-            .root_path
-            .to_str()
-            .ok_or(StorageError::NonUtf8ProjectRoot)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -80,11 +74,10 @@ impl Database {
         }
 
         transaction.execute(
-            "INSERT INTO projects (id, name, root_path, created_at) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO projects (id, name, created_at) VALUES (?1, ?2, ?3)",
             params![
                 project.id.to_string(),
                 project.name,
-                root_path,
                 project.created_at.to_rfc3339(),
             ],
         )?;
@@ -93,24 +86,27 @@ impl Database {
         Ok(())
     }
 
-    pub fn load_project(&self, id: &ProjectId) -> Result<Option<Project>, StorageError> {
+    pub fn load_project(
+        &self,
+        id: &ProjectId,
+        root_path: PathBuf,
+    ) -> Result<Option<Project>, StorageError> {
         let row = self
             .connection
             .query_row(
-                "SELECT id, name, root_path, created_at FROM projects WHERE id = ?1",
+                "SELECT id, name, created_at FROM projects WHERE id = ?1",
                 [id.to_string()],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
-                        row.get::<_, String>(3)?,
                     ))
                 },
             )
             .optional()?;
 
-        let Some((stored_id, name, root_path, created_at)) = row else {
+        let Some((stored_id, name, created_at)) = row else {
             return Ok(None);
         };
         let created_at: DateTime<Utc> =
@@ -119,7 +115,7 @@ impl Database {
         Ok(Some(Project {
             id: stored_id.parse()?,
             name,
-            root_path: root_path.into(),
+            root_path,
             created_at,
         }))
     }
@@ -203,4 +199,53 @@ fn insert_event(transaction: &Transaction<'_>, event: &DomainEvent) -> Result<()
         ],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn configures_wal_foreign_keys_and_busy_timeout() {
+        let dir = TempDir::new().expect("temp directory must exist");
+        let database = Database::open(&dir.path().join("state.db")).expect("database must open");
+        let journal_mode: String = database
+            .connection
+            .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+            .expect("journal mode must be readable");
+        let foreign_keys: i64 = database
+            .connection
+            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
+            .expect("foreign key mode must be readable");
+        let busy_timeout: i64 = database
+            .connection
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .expect("busy timeout must be readable");
+
+        assert_eq!(journal_mode.to_ascii_lowercase(), "wal");
+        assert_eq!(foreign_keys, 1);
+        assert_eq!(busy_timeout, 5_000);
+    }
+
+    #[test]
+    fn opening_the_current_schema_does_not_acquire_a_migration_write_lock() {
+        let dir = TempDir::new().expect("temp directory must exist");
+        let database_path = dir.path().join("state.db");
+        drop(Database::open(&database_path).expect("database must initialize"));
+
+        let blocker = Connection::open(&database_path).expect("blocker must open");
+        blocker
+            .execute_batch("BEGIN IMMEDIATE")
+            .expect("blocker must acquire the write lock");
+        let reopen_error = Database::open(&database_path)
+            .err()
+            .map(|error| error.to_string());
+        blocker
+            .execute_batch("ROLLBACK")
+            .expect("blocker must release the write lock");
+
+        assert_eq!(reopen_error, None);
+    }
 }

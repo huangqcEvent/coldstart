@@ -39,7 +39,11 @@ impl ProjectHome {
             return Err(CliError::NotADirectory(self.root.clone()));
         }
 
-        let project = Project::new(name, std::path::absolute(&self.root)?)?;
+        let root = std::path::absolute(&self.root)?;
+        if root.to_str().is_none() {
+            return Err(CliError::NonUtf8Path(root));
+        }
+        let project = Project::new(name, root)?;
         let manifest_path = self.manifest_path();
         if manifest_path.exists() {
             return Err(CliError::AlreadyInitialized(self.root.clone()));
@@ -203,6 +207,34 @@ fn sidecar_path(database_path: &Path, suffix: &str) -> PathBuf {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[cfg(windows)]
+    #[test]
+    fn initialize_rejects_a_non_utf8_root_before_writing_anything() {
+        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+        let temp = TempDir::new().expect("temp directory must exist");
+        let mut invalid_root: Vec<u16> = temp.path().as_os_str().encode_wide().collect();
+        invalid_root.push('\\' as u16);
+        invalid_root.push(0xd800);
+        let home = ProjectHome::at(PathBuf::from(OsString::from_wide(&invalid_root)));
+
+        let error = home
+            .initialize("Demo Project")
+            .expect_err("non-UTF-8 root must be rejected");
+
+        assert!(
+            matches!(error, CliError::NonUtf8Path(_)),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            fs::read_dir(temp.path())
+                .expect("temp directory must be readable")
+                .count(),
+            0,
+            "non-UTF-8 root must be rejected before writing"
+        );
+    }
 
     #[test]
     fn manifest_publication_does_not_overwrite_a_competing_writer() {

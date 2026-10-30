@@ -17,6 +17,8 @@ cargo run -p coldstart-cli -- status --path D:\work\demo --json
 
 `coldstart.project.json` 不保存机器绝对路径；移动到其他目录后，项目根路径由该文件所在目录重新推导。
 
+当前 CLI 的 `status --json` 要求项目根路径为 UTF-8；`init` 会在写入清单前以明确错误拒绝非 UTF-8 根路径。
+
 ## 解决的问题
 
 - 需求、技术栈、账号、密钥、提审材料和发布条件散落在不同文档与对话中。
