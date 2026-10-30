@@ -79,12 +79,30 @@ impl ProjectHome {
         }
     }
 
-    fn manifest_path(&self) -> PathBuf {
-        self.root.join(MANIFEST_FILE)
+    pub fn absolute_root(&self) -> Result<PathBuf, CliError> {
+        Ok(std::path::absolute(&self.root)?)
     }
 
-    fn database_path(&self) -> PathBuf {
+    pub fn database_path(&self) -> PathBuf {
         self.root.join(STATE_DIRECTORY).join(DATABASE_FILE)
+    }
+
+    pub fn load_manifest(&self) -> Result<ProjectManifest, CliError> {
+        let path = self.manifest_path();
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return Err(CliError::ManifestMissing(path));
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let manifest: ProjectManifest = serde_json::from_slice(&bytes)?;
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
+    fn manifest_path(&self) -> PathBuf {
+        self.root.join(MANIFEST_FILE)
     }
 }
 

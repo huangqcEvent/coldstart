@@ -8,7 +8,14 @@ ColdStart 不生成业务代码，也不替代 Agent。它负责项目的认知�
 
 ## 当前状态
 
-架构设计已完成，等待规格审阅。应用代码尚未开始开发。
+第一阶段 Rust 核心与 CLI 已实现：可以创建可迁移的项目主目录，在本地 SQLite 中保存项目和追加式事件，并查询项目状态。Tauri 桌面界面、蓝图、计划引擎、MCP、Git 与凭据管理仍在后续阶段。
+
+```powershell
+cargo run -p coldstart-cli -- init --name "Demo Project" --path D:\work\demo
+cargo run -p coldstart-cli -- status --path D:\work\demo --json
+```
+
+`coldstart.project.json` 不保存机器绝对路径；移动到其他目录后，项目根路径由该文件所在目录重新推导。
 
 ## 解决的问题
 
