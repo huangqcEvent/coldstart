@@ -14,7 +14,7 @@
 
 - 在 `D:\coldstart` 的 `main` 分支上工作。
 - 优先支持 Windows，但领域模型和路径代码必须保持可移植。
-- 使用 Rust stable 和 `x86_64-pc-windows-msvc` 目标；最低 Rust 版本为 1.85。
+- 使用 Rust stable 和 `x86_64-pc-windows-msvc` 目标；最低 Rust 版本为 1.89。
 - 使用 2024 edition 和 workspace resolver 3。
 - 时间戳统一以 UTC RFC 3339 字符串持久化。
 - SQLite 启用 WAL 模式、`foreign_keys=ON` 和 5000 毫秒忙碌超时。
@@ -106,7 +106,7 @@ rustc --version
 cargo --version
 ```
 
-预期：Rust 为 1.85.0 或更高版本，当前目标为 `x86_64-pc-windows-msvc`。
+预期：Rust 为 1.89.0 或更高版本，当前目标为 `x86_64-pc-windows-msvc`。
 
 - [ ] **步骤 2：创建工作区和可编译的 core crate 骨架**
 
@@ -120,7 +120,7 @@ resolver = "3"
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
 
 [workspace.dependencies]
 chrono = { version = "0.4.45", features = ["serde"] }
