@@ -315,7 +315,7 @@ export default function App() {
       <main className="workspace">
         <div className="workspace__topline" aria-hidden="true">
           <span>LOCAL-FIRST PROJECT SYSTEM</span>
-          <span>PHASE 06 / INTEGRATION + HARDENING</span>
+          <span>PHASE 07 / COMMAND VERIFICATION</span>
         </div>
 
         {error ? <ErrorBanner error={error} onDismiss={() => setError(null)} /> : null}

@@ -14,8 +14,9 @@ use coldstart_adapters::{
 use coldstart_core::{
     CAPABILITY_ENVIRONMENTS, CapabilityState, CapabilityStatus, CredentialEnvironment,
     CredentialId, CredentialKind, CredentialMetadata, GitSyncRecord, ProjectId, Repository,
-    RepositoryAuthMode, RepositorySyncPolicy, TaskKind,
+    RepositoryAuthMode, RepositorySyncPolicy, RepositoryVerificationCommand, TaskKind,
 };
+use coldstart_storage::StorageError;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -118,10 +119,18 @@ pub struct ReleaseCenterView {
 pub struct IntegrationWorkspace {
     pub project_id: ProjectId,
     pub repositories: Vec<Repository>,
+    pub verification_commands: Vec<RepositoryVerificationView>,
     pub credentials: Vec<CredentialMetadata>,
     pub capabilities: Vec<CapabilityStatusView>,
     pub git_syncs: Vec<GitSyncRecord>,
     pub release: ReleaseCenterView,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepositoryVerificationView {
+    pub repository_key: String,
+    pub commands: Vec<RepositoryVerificationCommand>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,6 +238,31 @@ impl IntegrationService {
         self.validate_git_repository(&repository)?;
         project.database.save_repository(&repository)?;
         self.load_workspace(project_home)
+    }
+
+    pub fn load_verification_commands(
+        &self,
+        project_home: PathBuf,
+        repository_key: &str,
+    ) -> Result<Vec<RepositoryVerificationCommand>, AppError> {
+        let project = OpenProject::open(project_home)?;
+        project
+            .database
+            .list_repository_verification_commands(&project.project.id, repository_key)
+            .map_err(verification_storage_error)
+    }
+
+    pub fn save_verification_commands(
+        &self,
+        project_home: PathBuf,
+        repository_key: &str,
+        commands: Vec<RepositoryVerificationCommand>,
+    ) -> Result<Vec<RepositoryVerificationCommand>, AppError> {
+        let mut project = OpenProject::open(project_home)?;
+        project
+            .database
+            .replace_repository_verification_commands(&project.project.id, repository_key, commands)
+            .map_err(verification_storage_error)
     }
 
     pub fn save_credential(
@@ -540,6 +574,17 @@ impl Default for IntegrationService {
 
 fn build_integration_workspace(project: &OpenProject) -> Result<IntegrationWorkspace, AppError> {
     let repositories = project.database.list_repositories(&project.project.id)?;
+    let verification_commands = repositories
+        .iter()
+        .map(|repository| {
+            Ok(RepositoryVerificationView {
+                repository_key: repository.key.clone(),
+                commands: project
+                    .database
+                    .list_repository_verification_commands(&project.project.id, &repository.key)?,
+            })
+        })
+        .collect::<Result<Vec<_>, AppError>>()?;
     let credentials = project.database.list_credentials(&project.project.id)?;
     let capabilities = load_capability_views(project)?;
     let git_syncs = project.database.list_git_syncs(&project.project.id)?;
@@ -576,11 +621,27 @@ fn build_integration_workspace(project: &OpenProject) -> Result<IntegrationWorks
     Ok(IntegrationWorkspace {
         project_id: project.project.id,
         repositories,
+        verification_commands,
         credentials,
         capabilities,
         git_syncs,
         release,
     })
+}
+
+fn verification_storage_error(error: StorageError) -> AppError {
+    match error {
+        StorageError::VerificationCommandInvalid(message) => {
+            AppError::VerificationCommandInvalid(message)
+        }
+        StorageError::VerificationNotConfigured(work_item_id) => {
+            AppError::VerificationNotConfigured(work_item_id)
+        }
+        StorageError::VerificationInProgress(work_item_id) => {
+            AppError::VerificationInProgress(work_item_id)
+        }
+        other => other.into(),
+    }
 }
 
 fn sync_capabilities_from_blueprint(project: &mut OpenProject) -> Result<(), AppError> {

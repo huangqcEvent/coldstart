@@ -1,18 +1,29 @@
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Instant,
+};
 
 use chrono::{Duration, Utc};
-use coldstart_adapters::{GitAdapter, SecretStore, WindowsSecretStore};
+use coldstart_adapters::{
+    GitAdapter, GitCommitVerification, SecretStore, VerificationCommandExecution,
+    VerificationCommandExecutor, WindowsSecretStore, WindowsVerificationExecutor,
+    sanitize_verification_output,
+};
 use coldstart_core::{
     ClaimResult, DEFAULT_LEASE_MINUTES, GitSyncRecord, GitSyncStatus, LeaseSummary, PlanContent,
     PlanPublishPreview, PlanRevision, PlanRevisionId, Repository, RepositorySyncPolicy,
-    TaskContext, TaskKind, TaskReferenceContent, WorkBlockerRecord, WorkItem, WorkItemId,
-    WorkReportInput, WorkReportRecord, compile_plan,
+    TaskContext, TaskKind, TaskReferenceContent, VerificationCommandResult,
+    VerificationFailureKind, VerificationResult, VerificationSnapshot, VerificationStatus,
+    WorkBlockerRecord, WorkItem, WorkItemId, WorkReportInput, WorkReportRecord, compile_plan,
 };
-use coldstart_storage::NewWorkBlocker;
+use coldstart_storage::{BeginVerification, NewWorkBlocker};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::{
-    AppError, PlanWorkspace,
+    AppError, PlanGitGateway, PlanWorkspace,
     context::OpenProject,
     context_compiler::{compile_reference, compile_task_context},
     integration::git_auth_for_repository,
@@ -30,16 +41,37 @@ pub struct ClaimRequest {
 #[derive(Clone)]
 pub struct PlanService {
     secrets: Arc<dyn SecretStore>,
-    git: GitAdapter,
+    git: Arc<dyn PlanGitGateway>,
+    verification: Arc<dyn VerificationCommandExecutor>,
 }
 
 impl PlanService {
     pub fn new() -> Self {
-        Self::with_dependencies(Arc::new(WindowsSecretStore::new()), GitAdapter::new())
+        Self::with_gateways(
+            Arc::new(WindowsSecretStore::new()),
+            Arc::new(GitAdapter::new()),
+            Arc::new(WindowsVerificationExecutor),
+        )
     }
 
     pub fn with_dependencies(secrets: Arc<dyn SecretStore>, git: GitAdapter) -> Self {
-        Self { secrets, git }
+        Self::with_gateways(
+            secrets,
+            Arc::new(git),
+            Arc::new(WindowsVerificationExecutor),
+        )
+    }
+
+    pub fn with_gateways(
+        secrets: Arc<dyn SecretStore>,
+        git: Arc<dyn PlanGitGateway>,
+        verification: Arc<dyn VerificationCommandExecutor>,
+    ) -> Self {
+        Self {
+            secrets,
+            git,
+            verification,
+        }
     }
 
     pub fn load_workspace(&self, project_home: PathBuf) -> Result<PlanWorkspace, AppError> {
@@ -208,7 +240,13 @@ impl PlanService {
         let work_items = project
             .database
             .list_work_items_for_plan(&project.project.id, &plan.id)?;
-        compile_task_context(&project, &plan, &authorization.task_spec, &work_items)
+        compile_task_context(
+            &project,
+            &plan,
+            &authorization.task_spec,
+            &work_items,
+            authorization.run.verification_snapshot.clone(),
+        )
     }
 
     pub fn read_reference(
@@ -290,7 +328,7 @@ impl PlanService {
             .task_spec_for_work_item(&work_item_id)?
             .ok_or(AppError::WorkItemNotFound(work_item_id))?;
         let repository = repository_for_task(&project, &task)?;
-        let verification = if let Some(repository) = repository.as_ref() {
+        let git_verification = if let Some(repository) = repository.as_ref() {
             let branch = report
                 .branch
                 .as_deref()
@@ -316,35 +354,81 @@ impl PlanService {
         } else {
             None
         };
-        let record = project.database.submit_work_report(
+        let pending = match project.database.begin_work_verification(
             &work_item_id,
             &lease_token,
             report,
             Utc::now(),
             default_lease_duration(),
-        )?;
-        if record.accepted
-            && let (Some(repository), Some(verification)) = (repository.as_ref(), verification)
-        {
-            let auth = git_auth_for_repository(&project, repository, self.secrets.as_ref())?;
-            let push = self
-                .git
-                .validate_remote(&repository.local_path, "origin", &repository.remote_url)
-                .and_then(|()| {
-                    self.git.push_branch(
-                        &repository.local_path,
-                        &verification.branch,
-                        &repository.protected_branches,
-                        &auth,
-                    )
+        )? {
+            BeginVerification::AlreadyResolved(record) => {
+                return resolved_verification_report(record);
+            }
+            BeginVerification::Started(pending) => pending,
+        };
+
+        let repository = repository.ok_or(AppError::VerificationNotConfigured(work_item_id))?;
+        let git_verification =
+            git_verification.ok_or(AppError::VerificationNotConfigured(work_item_id))?;
+        let started_at = pending
+            .report
+            .verification
+            .as_ref()
+            .map(|verification| verification.started_at)
+            .unwrap_or_else(Utc::now);
+        let result = self.run_repository_verification(
+            &repository.local_path,
+            &pending.snapshot,
+            &git_verification,
+            started_at,
+        );
+        let passed = result.status == VerificationStatus::Passed;
+        let record = if passed {
+            project.database.finish_work_verification_success(
+                &project.project.id,
+                &work_item_id,
+                &pending.report.id,
+                result.clone(),
+                Utc::now(),
+            )?
+        } else {
+            project.database.finish_work_verification_failure(
+                &project.project.id,
+                &work_item_id,
+                &pending.report.id,
+                result.clone(),
+                Utc::now(),
+                default_lease_duration(),
+            )?
+        };
+
+        if !passed {
+            return Err(verification_outcome_error(&result));
+        }
+
+        if record.accepted {
+            let push = git_auth_for_repository(&project, &repository, self.secrets.as_ref())
+                .map_err(|error| error.to_string())
+                .and_then(|auth| {
+                    self.git
+                        .validate_remote(&repository.local_path, "origin", &repository.remote_url)
+                        .map_err(|error| error.to_string())?;
+                    self.git
+                        .push_branch(
+                            &repository.local_path,
+                            &git_verification.branch,
+                            &repository.protected_branches,
+                            &auth,
+                        )
+                        .map_err(|error| error.to_string())
                 });
             let sync = match push {
                 Ok(()) => GitSyncRecord::new(
                     project.project.id,
                     work_item_id,
                     repository.id,
-                    verification.branch,
-                    verification.commit_sha,
+                    git_verification.branch,
+                    git_verification.commit_sha,
                     GitSyncStatus::Pushed,
                     None,
                 ),
@@ -352,15 +436,110 @@ impl PlanService {
                     project.project.id,
                     work_item_id,
                     repository.id,
-                    verification.branch,
-                    verification.commit_sha,
+                    git_verification.branch,
+                    git_verification.commit_sha,
                     GitSyncStatus::Failed,
-                    Some(error.to_string()),
+                    Some(error),
                 ),
             };
             project.database.record_git_sync(&sync)?;
         }
         Ok(record)
+    }
+
+    fn run_repository_verification(
+        &self,
+        repository: &Path,
+        snapshot: &VerificationSnapshot,
+        checkout: &GitCommitVerification,
+        started_at: chrono::DateTime<Utc>,
+    ) -> VerificationResult {
+        let wall_started = Instant::now();
+        let mut command_results = Vec::with_capacity(snapshot.commands.len());
+        let mut failure_kind = None;
+        let mut failure_command = None;
+
+        for command in &snapshot.commands {
+            if let Err(error) = self.git.ensure_verification_checkout(
+                repository,
+                &checkout.branch,
+                &checkout.commit_sha,
+            ) {
+                command_results.push(VerificationCommandResult {
+                    name: command.name.clone(),
+                    exit_code: None,
+                    duration_ms: 0,
+                    output_summary: bounded_command_detail(
+                        "",
+                        &format!("Git invariant check failed before command: {error}"),
+                    ),
+                    truncated: false,
+                    failure_kind: Some(VerificationFailureKind::GitInvariant),
+                });
+                failure_kind = Some(VerificationFailureKind::GitInvariant);
+                failure_command = Some(command.name.clone());
+                break;
+            }
+
+            let execution = self.verification.execute(command, repository);
+            let after_check = self.git.ensure_verification_checkout(
+                repository,
+                &checkout.branch,
+                &checkout.commit_sha,
+            );
+            let primary_failure = classify_command_execution(&execution);
+            let command_failure = if after_check.is_err() {
+                Some(VerificationFailureKind::GitInvariant)
+            } else {
+                primary_failure
+            };
+            let mut output_summary = bounded_command_detail("", execution.output_summary.as_str());
+            let mut truncated = execution.truncated;
+            if let Some(message) = execution
+                .infrastructure_error
+                .as_deref()
+                .or(execution.launch_error.as_deref())
+            {
+                truncated |= append_bounded_command_detail(&mut output_summary, message);
+            }
+            if let Err(error) = &after_check {
+                truncated |= append_bounded_command_detail(
+                    &mut output_summary,
+                    &format!("Git invariant check failed after command: {error}"),
+                );
+            }
+            command_results.push(VerificationCommandResult {
+                name: command.name.clone(),
+                exit_code: execution.exit_code,
+                duration_ms: execution.duration_ms,
+                output_summary,
+                truncated,
+                failure_kind: command_failure,
+            });
+            if command_failure.is_some() {
+                failure_kind = command_failure;
+                failure_command = Some(command.name.clone());
+                break;
+            }
+        }
+
+        let status = if failure_kind.is_some() {
+            VerificationStatus::Failed
+        } else {
+            VerificationStatus::Passed
+        };
+        VerificationResult {
+            snapshot_hash: snapshot.content_hash(),
+            status,
+            started_at,
+            finished_at: Some(Utc::now()),
+            total_duration_ms: Some(
+                u64::try_from(wall_started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            ),
+            failure_kind,
+            failure_command,
+            commands: command_results,
+        }
     }
 
     pub fn release(
@@ -417,6 +596,94 @@ impl Default for PlanService {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn classify_command_execution(
+    execution: &VerificationCommandExecution,
+) -> Option<VerificationFailureKind> {
+    if execution.infrastructure_error.is_some() {
+        Some(VerificationFailureKind::Infrastructure)
+    } else if execution.launch_error.is_some() {
+        Some(VerificationFailureKind::LaunchFailed)
+    } else if execution.timed_out {
+        Some(VerificationFailureKind::Timeout)
+    } else if execution.exit_code != Some(0) {
+        Some(VerificationFailureKind::NonZeroExit)
+    } else {
+        None
+    }
+}
+
+fn append_bounded_command_detail(summary: &mut String, detail: &str) -> bool {
+    let cleaned = sanitize_verification_output(detail);
+    if cleaned.trim().is_empty() {
+        return false;
+    }
+    if !summary.is_empty() && !summary.ends_with('\n') {
+        summary.push('\n');
+    }
+    summary.push_str(&cleaned);
+    if summary.len() <= 64 * 1024 {
+        return false;
+    }
+    let mut start = summary.len() - 64 * 1024;
+    while !summary.is_char_boundary(start) {
+        start += 1;
+    }
+    *summary = summary[start..].to_owned();
+    true
+}
+
+fn bounded_command_detail(existing: &str, detail: &str) -> String {
+    let mut summary = existing.to_owned();
+    append_bounded_command_detail(&mut summary, detail);
+    summary
+}
+
+fn resolved_verification_report(record: WorkReportRecord) -> Result<WorkReportRecord, AppError> {
+    match record.verification_status {
+        VerificationStatus::Passed | VerificationStatus::NotRequired => Ok(record),
+        VerificationStatus::Running => Err(AppError::VerificationInProgress(record.work_item_id)),
+        VerificationStatus::Failed => Err(match record.verification.as_ref() {
+            Some(result) => verification_outcome_error(result),
+            None => AppError::VerificationFailed {
+                details: json!({ "failureKind": "unknown" }),
+            },
+        }),
+        VerificationStatus::Interrupted => Err(AppError::VerificationInterrupted {
+            details: record
+                .verification
+                .as_ref()
+                .map(verification_details)
+                .unwrap_or_else(|| json!({ "failureKind": "interrupted" })),
+        }),
+    }
+}
+
+fn verification_outcome_error(result: &VerificationResult) -> AppError {
+    let details = verification_details(result);
+    match result.failure_kind {
+        Some(VerificationFailureKind::Timeout) => AppError::VerificationTimeout { details },
+        Some(VerificationFailureKind::Interrupted) => AppError::VerificationInterrupted { details },
+        _ => AppError::VerificationFailed { details },
+    }
+}
+
+fn verification_details(result: &VerificationResult) -> serde_json::Value {
+    let failed_command = result
+        .failure_command
+        .as_ref()
+        .and_then(|name| result.commands.iter().find(|command| &command.name == name));
+    json!({
+        "snapshotHash": result.snapshot_hash,
+        "failureKind": result.failure_kind,
+        "command": result.failure_command,
+        "exitCode": failed_command.and_then(|command| command.exit_code),
+        "durationMs": failed_command.map(|command| command.duration_ms),
+        "outputSummary": failed_command
+            .map(|command| command.output_summary.as_str())
+            .unwrap_or_default(),
+    })
 }
 
 fn default_lease_duration() -> Duration {

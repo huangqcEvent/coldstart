@@ -11,6 +11,7 @@ mod plan;
 mod plan_compiler;
 mod project;
 mod source_reference;
+mod verification;
 
 pub use artifact::{ArtifactFormat, ArtifactFormatError, ArtifactMetadata, DocumentAnchor};
 pub use blueprint::*;
@@ -29,3 +30,4 @@ pub use plan::*;
 pub use plan_compiler::*;
 pub use project::{Project, ProjectId};
 pub use source_reference::SourceReference;
+pub use verification::*;

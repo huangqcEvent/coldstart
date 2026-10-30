@@ -23,8 +23,10 @@ import type {
   ProjectStatus,
   ProjectWorkspace,
   Repository,
+  RepositoryVerificationCommand,
   TaskSpec,
   WorkItemView,
+  WorkReportRecord,
 } from './api/types';
 
 vi.mock('./api/projectApi', () => ({
@@ -56,6 +58,8 @@ vi.mock('./api/integrationApi', () => ({
   readIntegrationWorkspace: vi.fn(),
   validateRepository: vi.fn(),
   saveRepository: vi.fn(),
+  readRepositoryVerificationCommands: vi.fn(),
+  saveRepositoryVerificationCommands: vi.fn(),
   saveCredential: vi.fn(),
   deleteCredential: vi.fn(),
   updateCapability: vi.fn(),
@@ -414,12 +418,23 @@ const gitSync: GitSyncRecord = {
   createdAt: '2026-10-30T12:03:00Z',
 };
 
+const verificationCommand: RepositoryVerificationCommand = {
+  name: 'web-test',
+  executable: String.raw`D:\tools\web-test.exe`,
+  args: ['--run'],
+  timeoutSeconds: 300,
+  position: 0,
+};
+
 function makeIntegrationWorkspace(
   overrides: Partial<IntegrationWorkspace> = {},
 ): IntegrationWorkspace {
   return {
     projectId: status.projectId,
     repositories: [repository],
+    verificationCommands: [
+      { repositoryKey: 'web', commands: [verificationCommand] },
+    ],
     credentials: [credential],
     capabilities: [capability],
     gitSyncs: [gitSync],
@@ -514,6 +529,8 @@ beforeEach(() => {
   vi.mocked(integrationApi.readIntegrationWorkspace).mockReset();
   vi.mocked(integrationApi.validateRepository).mockReset();
   vi.mocked(integrationApi.saveRepository).mockReset();
+  vi.mocked(integrationApi.readRepositoryVerificationCommands).mockReset();
+  vi.mocked(integrationApi.saveRepositoryVerificationCommands).mockReset();
   vi.mocked(integrationApi.saveCredential).mockReset();
   vi.mocked(integrationApi.deleteCredential).mockReset();
   vi.mocked(integrationApi.updateCapability).mockReset();
@@ -528,9 +545,9 @@ describe('ColdStart project workspace', () => {
     render(<App />);
 
     expect(screen.getByText('COLDSTART / 冷启动')).toBeInTheDocument();
-    expect(screen.getByText('PHASE 06 / INTEGRATION + HARDENING')).toBeInTheDocument();
+    expect(screen.getByText('PHASE 07 / COMMAND VERIFICATION')).toBeInTheDocument();
     expect(
-      within(screen.getByLabelText('当前阶段')).getByText('PHASE 06'),
+      within(screen.getByLabelText('当前阶段')).getByText('PHASE 07'),
     ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '冷启动' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '项目总览' })).toBeEnabled();
@@ -999,6 +1016,119 @@ describe('ColdStart project workspace', () => {
         syncPolicy: 'fetch_before_claim',
       }),
     );
+  });
+
+  it('adds, edits, reorders, deletes and saves repository verification commands', async () => {
+    const user = await openIntegrationView(
+      makeIntegrationWorkspace({ verificationCommands: [] }),
+    );
+    expect(screen.getByText('该仓库没有验证命令')).toBeInTheDocument();
+    const executable = String.raw`D:\tools\verify.exe`;
+    const saved: RepositoryVerificationCommand[] = [
+      {
+        name: 'test-suite',
+        executable,
+        args: ['run', '--fast'],
+        timeoutSeconds: 120,
+        position: 0,
+      },
+    ];
+    vi.mocked(
+      integrationApi.saveRepositoryVerificationCommands,
+    ).mockResolvedValue(saved);
+
+    await user.click(screen.getByRole('button', { name: '新增验证命令' }));
+    await user.type(screen.getByLabelText('验证命令名称 1'), 'build-web');
+    await user.type(screen.getByLabelText('验证命令可执行文件 1'), executable);
+    await user.type(screen.getByLabelText('验证命令参数 1'), 'build\n--release');
+    await user.click(screen.getByRole('button', { name: '新增验证命令' }));
+    await user.type(screen.getByLabelText('验证命令名称 2'), 'test-suite');
+    await user.type(screen.getByLabelText('验证命令可执行文件 2'), executable);
+    await user.type(screen.getByLabelText('验证命令参数 2'), 'run\n--fast');
+    await user.clear(screen.getByLabelText('验证命令超时 2'));
+    await user.type(screen.getByLabelText('验证命令超时 2'), '120');
+    await user.click(screen.getByRole('button', { name: '上移命令 2' }));
+    await user.click(screen.getByRole('button', { name: '删除命令 2' }));
+    await user.click(screen.getByRole('button', { name: '保存验证命令' }));
+
+    await waitFor(() =>
+      expect(
+        integrationApi.saveRepositoryVerificationCommands,
+      ).toHaveBeenCalledWith(projectPath, 'web', saved),
+    );
+  });
+
+  it('shows the latest failed verification and its sanitized output', async () => {
+    const verificationReport: WorkReportRecord = {
+      id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+      workItemId: '55555555-5555-4555-8555-555555555555',
+      workRunId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      contractHash: 'a'.repeat(64),
+      report: {
+        status: 'completed',
+        summary: '实现订单接口',
+        branch: agentTask.workBranch,
+        commitSha: 'abcdef1',
+        changedFiles: ['src/main.rs'],
+        acceptanceResults: [],
+        commandsRun: [],
+        evidenceRefs: [],
+        knownIssues: [],
+        followUpItems: [],
+        contractHash: 'a'.repeat(64),
+        idempotencyKey: 'verification-report-1',
+      },
+      reportHash: 'e'.repeat(64),
+      accepted: false,
+      rejectionReasons: ['repository verification failed'],
+      verificationStatus: 'failed',
+      verification: {
+        snapshotHash: 'f'.repeat(64),
+        status: 'failed',
+        startedAt: '2026-10-30T12:10:00Z',
+        finishedAt: '2026-10-30T12:10:01Z',
+        totalDurationMs: 1000,
+        failureKind: 'non_zero_exit',
+        failureCommand: 'web-test',
+        commands: [
+          {
+            name: 'web-test',
+            exitCode: 1,
+            durationMs: 42,
+            outputSummary: 'FAIL src/main.test.ts\nAuthorization: [REDACTED]',
+            truncated: false,
+            failureKind: 'non_zero_exit',
+          },
+        ],
+      },
+      createdAt: '2026-10-30T12:10:02Z',
+    };
+    const publishedPlan = makePlanRevision({
+      status: 'published',
+      publishedAt: '2026-10-30T12:00:00Z',
+    });
+    const workItem = makeAgentWorkItem({ status: 'in_progress' });
+    workItem.latestReport = verificationReport;
+    const user = await openProject(
+      makeWorkspace({
+        plan: makePlanWorkspace({
+          published: publishedPlan,
+          workItems: [workItem],
+        }),
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: '计划看板' }));
+    expect(await screen.findByText('仓库验证 · 未通过')).toBeInTheDocument();
+    const failureLine = screen.getByText('web-test').closest('p');
+    expect(failureLine).not.toBeNull();
+    expect(failureLine).toHaveTextContent(/失败命令\s*web-test/);
+    expect(failureLine).toHaveTextContent(/退出码\s*1/);
+    expect(failureLine).toHaveTextContent(/耗时\s*42\s*ms/);
+    await user.click(screen.getByText('查看脱敏输出摘要'));
+    expect(
+      screen.getByText(/Authorization: \[REDACTED\]/),
+    ).toBeInTheDocument();
   });
 
   it('stores a credential secret without rendering it afterward', async () => {

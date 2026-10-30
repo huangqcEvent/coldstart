@@ -63,6 +63,27 @@ const dependencyLabels: Record<TaskDependency['kind'], string> = {
   conflicts_with: '冲突',
 };
 
+const verificationStatusLabels = {
+  not_required: '无需验证',
+  running: '验证中',
+  passed: '已通过',
+  failed: '未通过',
+  interrupted: '已中断',
+} as const;
+
+const verificationFailureLabels = {
+  non_zero_exit: '命令退出码非零',
+  launch_failed: '命令启动失败',
+  timeout: '命令超时',
+  git_invariant: 'Git 不变量被破坏',
+  infrastructure: '验证基础设施失败',
+  interrupted: '租约过期或进程中断',
+} as const;
+
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString('zh-CN', { hour12: false });
+}
+
 function clonePlanContent(content: PlanContent): PlanContent {
   return {
     warnings: [...content.warnings],
@@ -305,6 +326,10 @@ function PlanTaskCard({
   const openHumanTask =
     isHuman &&
     !['done', 'cancelled'].includes(item.workItem.status);
+  const verification = item.latestReport?.verification ?? null;
+  const failedCommand = verification?.commands.find(
+    (command) => command.name === verification.failureCommand,
+  );
 
   return (
     <article className={`plan-task plan-task--${item.workItem.status}`}>
@@ -383,6 +408,46 @@ function PlanTaskCard({
             最近报告 · {item.latestReport.accepted ? '已验收' : '未验收'}
           </span>
           <p>{item.latestReport.report.summary}</p>
+          {verification ? (
+            <div
+              className={`plan-task__verification plan-task__verification--${verification.status}`}
+            >
+              <div className="plan-task__verification-head">
+                <strong>
+                  仓库验证 · {verificationStatusLabels[verification.status]}
+                </strong>
+                {verification.failureKind ? (
+                  <span>{verificationFailureLabels[verification.failureKind]}</span>
+                ) : null}
+              </div>
+              {verification.failureCommand ? (
+                <p>
+                  失败命令 <code>{verification.failureCommand}</code>
+                  {failedCommand ? (
+                    <>
+                      {' '}· 退出码 {failedCommand.exitCode ?? '未启动'} · 耗时{' '}
+                      {failedCommand.durationMs} ms
+                    </>
+                  ) : null}
+                </p>
+              ) : (
+                <p>
+                  {verification.commands.length} 条命令全部通过 · 总耗时{' '}
+                  {verification.totalDurationMs ?? 0} ms
+                </p>
+              )}
+              {failedCommand?.outputSummary ? (
+                <details>
+                  <summary>查看脱敏输出摘要</summary>
+                  <pre>{failedCommand.outputSummary}</pre>
+                </details>
+              ) : null}
+              <small>
+                快照 {verification.snapshotHash.slice(0, 12)}… · 开始{' '}
+                {formatDateTime(verification.startedAt)}
+              </small>
+            </div>
+          ) : null}
           {item.latestReport.rejectionReasons.length > 0 ? (
             <ul>
               {item.latestReport.rejectionReasons.map((reason) => (

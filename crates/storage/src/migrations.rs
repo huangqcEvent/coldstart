@@ -2,7 +2,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::StorageError;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let current = read_schema_version(connection)?;
@@ -30,23 +30,31 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v3(&transaction)?;
             create_schema_v4(&transaction)?;
             create_schema_v5(&transaction)?;
+            create_schema_v6(&transaction)?;
         }
         1 => {
             migrate_v1_to_v2(&transaction)?;
             create_schema_v3(&transaction)?;
             create_schema_v4(&transaction)?;
             create_schema_v5(&transaction)?;
+            create_schema_v6(&transaction)?;
         }
         2 => {
             create_schema_v3(&transaction)?;
             create_schema_v4(&transaction)?;
             create_schema_v5(&transaction)?;
+            create_schema_v6(&transaction)?;
         }
         3 => {
             create_schema_v4(&transaction)?;
             create_schema_v5(&transaction)?;
+            create_schema_v6(&transaction)?;
         }
-        4 => create_schema_v5(&transaction)?,
+        4 => {
+            create_schema_v5(&transaction)?;
+            create_schema_v6(&transaction)?;
+        }
+        5 => create_schema_v6(&transaction)?,
         _ => return Err(unsupported_schema(current)),
     }
 
@@ -393,6 +401,43 @@ fn create_schema_v5(transaction: &Transaction<'_>) -> Result<(), StorageError> {
                 PRIMARY KEY (project_id, setting_key),
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
             );
+            ",
+    )?;
+    Ok(())
+}
+
+fn create_schema_v6(transaction: &Transaction<'_>) -> Result<(), StorageError> {
+    transaction.execute_batch(
+        "
+            CREATE TABLE repository_verification_commands (
+                repository_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                executable TEXT NOT NULL,
+                args_json TEXT NOT NULL,
+                timeout_seconds INTEGER NOT NULL,
+                position INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (repository_id, name),
+                UNIQUE (repository_id, position),
+                FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX repository_verification_commands_by_position
+                ON repository_verification_commands(repository_id, position);
+
+            ALTER TABLE work_runs ADD COLUMN verification_snapshot_json TEXT;
+            ALTER TABLE work_runs ADD COLUMN verification_snapshot_hash TEXT;
+
+            ALTER TABLE work_reports
+                ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'not_required';
+            ALTER TABLE work_reports ADD COLUMN verification_json TEXT;
+            ALTER TABLE work_reports ADD COLUMN verification_started_at TEXT;
+            ALTER TABLE work_reports ADD COLUMN verification_finished_at TEXT;
+
+            CREATE UNIQUE INDEX work_reports_one_running_verification
+                ON work_reports(work_item_id)
+                WHERE verification_status = 'running';
             ",
     )?;
     Ok(())

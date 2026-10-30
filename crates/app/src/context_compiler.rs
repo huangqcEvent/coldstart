@@ -2,7 +2,7 @@ use chrono::Utc;
 use coldstart_core::{
     BlueprintContent, BlueprintEntityId, ContextOmission, ContextReference, ContextReferenceKind,
     InfoRequestStatus, PlanRevision, ProjectFact, TaskContext, TaskReferenceContent, TaskSpec,
-    WorkItem, estimate_tokens, sha256_hex,
+    VerificationSnapshot, WorkItem, estimate_tokens, sha256_hex,
 };
 
 use crate::{
@@ -25,6 +25,7 @@ pub(crate) fn compile_task_context(
     plan: &PlanRevision,
     task: &TaskSpec,
     work_items: &[WorkItem],
+    verification: Option<VerificationSnapshot>,
 ) -> Result<TaskContext, AppError> {
     let blueprint = project
         .database
@@ -46,15 +47,16 @@ pub(crate) fn compile_task_context(
     }];
     let mut omitted = Vec::new();
 
-    for section in build_sections(
-        &blueprint.content,
+    for section in build_sections(ContextSectionInputs {
+        blueprint: &blueprint.content,
         task,
         work_items,
         repository,
-        &capabilities,
-        &facts,
-        &info_requests,
-    ) {
+        verification: verification.as_ref(),
+        capabilities: &capabilities,
+        facts: &facts,
+        info_requests: &info_requests,
+    }) {
         let rendered = format!(
             "\n\n## {}\n\n{}\n",
             section.title,
@@ -95,6 +97,7 @@ pub(crate) fn compile_task_context(
         markdown,
         included,
         omitted,
+        verification,
         generated_at: Utc::now(),
     })
 }
@@ -189,18 +192,58 @@ fn render_header(task: &TaskSpec) -> String {
     )
 }
 
-fn build_sections(
-    blueprint: &BlueprintContent,
-    task: &TaskSpec,
-    work_items: &[WorkItem],
+struct ContextSectionInputs<'a> {
+    blueprint: &'a BlueprintContent,
+    task: &'a TaskSpec,
+    work_items: &'a [WorkItem],
     repository: Option<Section>,
-    capabilities: &[CapabilityStatusView],
-    facts: &[ProjectFact],
-    info_requests: &[coldstart_core::InfoRequest],
-) -> Vec<Section> {
+    verification: Option<&'a VerificationSnapshot>,
+    capabilities: &'a [CapabilityStatusView],
+    facts: &'a [ProjectFact],
+    info_requests: &'a [coldstart_core::InfoRequest],
+}
+
+fn build_sections(inputs: ContextSectionInputs<'_>) -> Vec<Section> {
+    let ContextSectionInputs {
+        blueprint,
+        task,
+        work_items,
+        repository,
+        verification,
+        capabilities,
+        facts,
+        info_requests,
+    } = inputs;
     let mut sections = Vec::new();
     if let Some(repository) = repository {
         sections.push(repository);
+    }
+    if let Some(verification) = verification {
+        let commands = verification
+            .commands
+            .iter()
+            .map(|command| {
+                format!(
+                    "- {}：{} {}（超时 {} 秒）",
+                    command.name,
+                    command.executable.to_string_lossy(),
+                    command.args.join(" "),
+                    command.timeout_seconds
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        sections.push(Section {
+            priority: 95,
+            id: "repository-verification".to_owned(),
+            kind: ContextReferenceKind::Instruction,
+            title: "仓库验证门禁".to_owned(),
+            content: format!(
+                "提交报告时 ColdStart 会在仓库根目录按以下顺序独立重跑全部命令；必须全部成功，任务才会完成。\n\n快照哈希：{}\n\n{}\n\n命令通过绝对 .exe 路径直接启动，不经过 Shell；不能跳过或临时替换。",
+                verification.content_hash(),
+                commands
+            ),
+        });
     }
     if !capabilities.is_empty() {
         let lines = capabilities

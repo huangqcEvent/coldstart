@@ -102,6 +102,14 @@ pub enum StorageError {
     HumanWorkRequired(WorkItemId),
     #[error("repository key {key} already exists for project {project_id}")]
     RepositoryKeyAlreadyExists { project_id: ProjectId, key: String },
+    #[error("repository {0} does not exist in the project")]
+    RepositoryNotFound(String),
+    #[error("work item {0} has no verification snapshot")]
+    VerificationNotConfigured(WorkItemId),
+    #[error("work item {0} is already running verification")]
+    VerificationInProgress(WorkItemId),
+    #[error("invalid verification command: {0}")]
+    VerificationCommandInvalid(String),
     #[error("credential secret reference already exists: {0}")]
     CredentialSecretRefAlreadyExists(String),
     #[error("credential {0} does not belong to the requested project")]

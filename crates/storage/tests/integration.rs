@@ -48,7 +48,7 @@ fn credential(project_id: coldstart_core::ProjectId) -> CredentialMetadata {
 }
 
 #[test]
-fn migrates_v4_to_v5_and_persists_integration_state() {
+fn migrates_v4_to_v6_and_persists_integration_state() {
     let fixture = PlanFixture::new(vec![support::agent_task("foundation:demo", &[])]);
     let database_path = fixture.database_path.clone();
     let project_id = fixture.project_id;
@@ -62,7 +62,15 @@ fn migrates_v4_to_v5_and_persists_integration_state() {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP INDEX work_reports_one_running_verification;
+             ALTER TABLE work_runs DROP COLUMN verification_snapshot_json;
+             ALTER TABLE work_runs DROP COLUMN verification_snapshot_hash;
+             ALTER TABLE work_reports DROP COLUMN verification_status;
+             ALTER TABLE work_reports DROP COLUMN verification_json;
+             ALTER TABLE work_reports DROP COLUMN verification_started_at;
+             ALTER TABLE work_reports DROP COLUMN verification_finished_at;
              DROP TABLE git_syncs;
+             DROP TABLE repository_verification_commands;
              DROP TABLE capability_states;
              DROP TABLE repositories;
              DROP TABLE credentials;
@@ -75,20 +83,20 @@ fn migrates_v4_to_v5_and_persists_integration_state() {
     let mut database = Database::open(&database_path).expect("v4 migration must run");
     assert_eq!(
         database.schema_version().expect("schema version must load"),
-        5
+        6
     );
 
     let credential = credential(project_id);
     database
         .save_credential(&credential)
         .expect("credential must save");
-    let repository = repository(project_id, "server", Some(credential.id));
+    let repository = repository(project_id, "admin", Some(credential.id));
     database
         .save_repository(&repository)
         .expect("repository must save");
     assert_eq!(
         database
-            .repository_by_key(&project_id, "server")
+            .repository_by_key(&project_id, "admin")
             .expect("repository query must work"),
         Some(repository.clone())
     );
@@ -101,7 +109,7 @@ fn migrates_v4_to_v5_and_persists_integration_state() {
     let database = Database::open(&database_path).expect("database must reopen");
     assert_eq!(
         database
-            .repository_by_key(&project_id, "server")
+            .repository_by_key(&project_id, "admin")
             .expect("repository query must work"),
         Some(repository)
     );
@@ -116,7 +124,7 @@ fn repository_keys_are_unique_and_deleting_a_credential_nulls_the_reference() {
         .database
         .save_credential(&credential)
         .expect("credential must save");
-    let repository = repository(project_id, "server", Some(credential.id));
+    let repository = repository(project_id, "admin", Some(credential.id));
     fixture
         .database
         .save_repository(&repository)
@@ -133,7 +141,7 @@ fn repository_keys_are_unique_and_deleting_a_credential_nulls_the_reference() {
         StorageError::RepositoryKeyAlreadyExists {
             project_id: found,
             key
-        } if found == project_id && key == "server"
+        } if found == project_id && key == "admin"
     ));
 
     assert!(
@@ -238,11 +246,11 @@ fn capability_state_upserts_and_project_settings_persist() {
 fn records_git_sync_outcomes_for_a_work_item() {
     let mut fixture = PlanFixture::new(vec![support::agent_task("foundation:demo", &[])]);
     let project_id = fixture.project_id;
-    let repository = repository(project_id, "server", None);
-    fixture
+    let repository = fixture
         .database
-        .save_repository(&repository)
-        .expect("repository must save");
+        .repository_by_key(&project_id, "server")
+        .expect("repository query must work")
+        .expect("fixture repository must exist");
     let work_item = fixture
         .database
         .list_work_items(&project_id)

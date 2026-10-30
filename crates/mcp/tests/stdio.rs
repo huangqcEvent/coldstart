@@ -1,4 +1,5 @@
 use std::{
+    fs,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
@@ -6,11 +7,14 @@ use std::{
 };
 
 use coldstart_adapters::{GitAdapter, MemorySecretStore};
-use coldstart_app::{IntegrationService, PlanService, ProjectService, SaveCredentialInput};
+use coldstart_app::{
+    IntegrationService, PlanService, ProjectService, RepositoryDraft, SaveCredentialInput,
+};
 use coldstart_core::{
     ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration, CapabilityObligation,
     CapabilityStatus, CredentialEnvironment, CredentialKind, GenerationSource, ModuleDefinition,
-    PlatformDefinition, PlatformKind, ProjectId, SourceReference, TraceableText, WorkItemStatus,
+    PlatformDefinition, PlatformKind, ProjectId, RepositoryAuthMode, RepositorySyncPolicy,
+    RepositoryVerificationCommand, SourceReference, TraceableText, WorkItemStatus,
 };
 use coldstart_storage::Database;
 use rusqlite::Connection;
@@ -22,12 +26,16 @@ struct Fixture {
     _directory: TempDir,
     home: PathBuf,
     project_id: ProjectId,
+    work: PathBuf,
 }
 
 impl Fixture {
     fn new() -> Self {
         let directory = tempfile::tempdir().expect("temporary directory must exist");
         let home = directory.path().join("project");
+        let remote = directory.path().join("remote.git");
+        let work = directory.path().join("web-work");
+        initialize_git_repository(&remote, &work);
         let status = ProjectService::new()
             .create_project("MCP 集成项目", home.clone())
             .expect("project must create");
@@ -50,6 +58,38 @@ impl Fixture {
             .publish_blueprint_revision(&status.project_id, &blueprint.id)
             .expect("blueprint must publish");
 
+        let integrations = IntegrationService::with_dependencies(
+            Arc::new(MemorySecretStore::default()),
+            GitAdapter::new(),
+            None,
+        );
+        integrations
+            .save_repository(
+                home.clone(),
+                RepositoryDraft {
+                    key: "web".to_owned(),
+                    name: "Web 前台".to_owned(),
+                    local_path: work.clone(),
+                    remote_url: remote.to_string_lossy().into_owned(),
+                    default_branch: "main".to_owned(),
+                    protected_branches: vec!["main".to_owned()],
+                    auth_mode: RepositoryAuthMode::None,
+                    credential_id: None,
+                    sync_policy: RepositorySyncPolicy::FetchBeforeClaim,
+                },
+            )
+            .expect("repository must save");
+        integrations
+            .save_verification_commands(
+                home.clone(),
+                "web",
+                vec![verification_command(
+                    "where-cmd",
+                    vec!["cmd.exe".to_owned()],
+                )],
+            )
+            .expect("verification command must save");
+
         let service = PlanService::new();
         let draft = service
             .generate_draft(home.clone())
@@ -64,7 +104,18 @@ impl Fixture {
             _directory: directory,
             home,
             project_id: status.project_id,
+            work,
         }
+    }
+
+    fn configure_verification(&self, commands: Vec<RepositoryVerificationCommand>) {
+        IntegrationService::with_dependencies(
+            Arc::new(MemorySecretStore::default()),
+            GitAdapter::new(),
+            None,
+        )
+        .save_verification_commands(self.home.clone(), "web", commands)
+        .expect("verification commands must save");
     }
 
     fn seed_configured_capability(&self) -> (String, String) {
@@ -96,6 +147,78 @@ impl Fixture {
             .expect("capability must update");
         (capability_id.to_string(), credential.secret_ref)
     }
+}
+
+fn verification_command(name: &str, args: Vec<String>) -> RepositoryVerificationCommand {
+    let system_root = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    RepositoryVerificationCommand {
+        name: name.to_owned(),
+        executable: system_root.join("System32").join("where.exe"),
+        args,
+        timeout_seconds: 10,
+        position: 0,
+    }
+}
+
+fn git(path: &Path, args: &[&str]) -> std::process::Output {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .output()
+        .expect("git must start");
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+fn initialize_git_repository(remote: &Path, work: &Path) {
+    git(
+        work.parent().expect("work parent must exist"),
+        &[
+            "init",
+            "--bare",
+            remote.to_str().expect("remote path must be UTF-8"),
+        ],
+    );
+    fs::create_dir_all(work).expect("work directory must create");
+    git(work, &["init", "-b", "main"]);
+    git(work, &["config", "user.name", "ColdStart MCP Test"]);
+    git(
+        work,
+        &["config", "user.email", "coldstart-mcp@example.invalid"],
+    );
+    fs::write(work.join("README.md"), "initial\n").expect("initial file must write");
+    git(work, &["add", "README.md"]);
+    git(work, &["commit", "-m", "initial"]);
+    git(
+        work,
+        &[
+            "remote",
+            "add",
+            "origin",
+            remote.to_str().expect("remote path must be UTF-8"),
+        ],
+    );
+    git(work, &["push", "--set-upstream", "origin", "main"]);
+}
+
+fn commit_file(work: &Path, relative_path: &str, content: &str) -> String {
+    let path = work.join(relative_path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("file parent must create");
+    }
+    fs::write(&path, content).expect("changed file must write");
+    git(work, &["add", relative_path]);
+    git(work, &["commit", "-m", "complete MCP task"]);
+    String::from_utf8(git(work, &["rev-parse", "HEAD"]).stdout)
+        .expect("commit SHA must be UTF-8")
+        .trim()
+        .to_owned()
 }
 
 fn blueprint_content(project_id: ProjectId) -> BlueprintContent {
@@ -301,6 +424,73 @@ fn claim_one(client: &mut McpStdioClient, request_id: &str) -> Value {
     claimed
 }
 
+fn task_for(fixture: &Fixture, work_id: &str) -> coldstart_core::TaskSpec {
+    PlanService::new()
+        .load_workspace(fixture.home.clone())
+        .expect("workspace must load")
+        .work_items
+        .into_iter()
+        .find(|item| item.work_item.id.to_string() == work_id)
+        .expect("claimed task must exist")
+        .task
+}
+
+fn completed_report(
+    task: &coldstart_core::TaskSpec,
+    context: &Value,
+    work_id: &str,
+    lease_token: &str,
+    commit_sha: &str,
+    idempotency_key: &str,
+) -> Value {
+    let allowed_root = task
+        .allowed_paths
+        .first()
+        .cloned()
+        .unwrap_or_else(|| ".".to_owned());
+    let changed_file = if allowed_root == "." {
+        "src/main.rs".to_owned()
+    } else {
+        format!("{allowed_root}/src/main.rs")
+    };
+    json!({
+        "work_id": work_id,
+        "lease_token": lease_token,
+        "report": {
+            "status": "completed",
+            "summary": "通过真实 MCP stdio 完成实现",
+            "branch": task.work_branch,
+            "commitSha": commit_sha,
+            "changedFiles": [changed_file],
+            "acceptanceResults": task.acceptance_criteria.iter().map(|criterion| json!({
+                "criterionId": criterion.id,
+                "passed": true,
+                "note": "已完成并通过测试",
+                "evidenceRefs": ["mcp-stdio-test"]
+            })).collect::<Vec<_>>(),
+            "commandsRun": [],
+            "evidenceRefs": ["mcp-stdio-test"],
+            "knownIssues": [],
+            "followUpItems": [],
+            "contractHash": context["contractHash"],
+            "idempotencyKey": idempotency_key
+        }
+    })
+}
+
+fn changed_file_for(task: &coldstart_core::TaskSpec) -> String {
+    let allowed_root = task
+        .allowed_paths
+        .first()
+        .cloned()
+        .unwrap_or_else(|| ".".to_owned());
+    if allowed_root == "." {
+        "src/main.rs".to_owned()
+    } else {
+        format!("{allowed_root}/src/main.rs")
+    }
+}
+
 fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
@@ -459,7 +649,23 @@ fn stdio_server_claims_work_returns_context_heartbeats_and_accepts_a_report() {
     );
     let context = structured(&context);
     assert!(context["markdown"].as_str().unwrap().contains("验收标准"));
+    assert!(
+        context["markdown"]
+            .as_str()
+            .unwrap()
+            .contains("仓库验证门禁")
+    );
     assert_eq!(context["taskKey"], claimed["workItem"]["taskKey"]);
+    assert_eq!(context["verification"]["repositoryKey"], "web");
+    assert_eq!(context["verification"]["commands"][0]["name"], "where-cmd");
+    assert_eq!(
+        context["verification"]["commands"][0]["executable"]
+            .as_str()
+            .expect("verification executable must be visible"),
+        verification_command("where-cmd", vec!["cmd.exe".to_owned()])
+            .executable
+            .to_string_lossy()
+    );
 
     let heartbeat = client.call_tool(
         "heartbeat_work",
@@ -487,14 +693,19 @@ fn stdio_server_claims_work_returns_context_heartbeats_and_accepts_a_report() {
     } else {
         format!("{allowed_root}/src/main.rs")
     };
+    let commit = commit_file(&fixture.work, &changed_file, "pub fn main() {}\n");
+    let branch = task
+        .work_branch
+        .clone()
+        .expect("agent task must have a work branch");
     let report = json!({
         "work_id": work_id,
         "lease_token": lease_token,
         "report": {
             "status": "completed",
             "summary": "通过真实 MCP stdio 完成实现",
-            "branch": task.work_branch,
-            "commitSha": null,
+            "branch": branch,
+            "commitSha": commit,
             "changedFiles": [changed_file],
             "acceptanceResults": task.acceptance_criteria.iter().map(|criterion| json!({
                 "criterionId": criterion.id,
@@ -511,7 +722,10 @@ fn stdio_server_claims_work_returns_context_heartbeats_and_accepts_a_report() {
         }
     });
     let submitted = client.call_tool("submit_work_report", report);
-    assert_eq!(structured(&submitted)["accepted"], true);
+    let submitted = structured(&submitted);
+    assert_eq!(submitted["accepted"], true);
+    assert_eq!(submitted["verificationStatus"], "passed");
+    assert_eq!(submitted["verification"]["failureKind"], Value::Null);
 
     let workspace = PlanService::new()
         .load_workspace(fixture.home.clone())
@@ -519,6 +733,141 @@ fn stdio_server_claims_work_returns_context_heartbeats_and_accepts_a_report() {
     assert!(workspace.work_items.iter().any(|item| {
         item.work_item.id.to_string() == work_id && item.work_item.status == WorkItemStatus::Done
     }));
+}
+
+#[test]
+fn stdio_server_returns_verification_failure_and_interrupted_without_leaking_lease() {
+    let fixture = Fixture::new();
+    fixture.configure_verification(vec![verification_command(
+        "missing-command",
+        vec!["coldstart-command-that-does-not-exist".to_owned()],
+    )]);
+    let mut client = McpStdioClient::spawn(&fixture.home);
+    client.initialize();
+    let claimed = claim_one(&mut client, "stdio-verification-failure-claim");
+    let work_id = claimed["workItem"]["id"].as_str().unwrap().to_owned();
+    let lease_token = claimed["leaseToken"].as_str().unwrap().to_owned();
+    let context = structured(&client.call_tool(
+        "get_work_context",
+        json!({ "work_id": work_id, "lease_token": lease_token }),
+    ))
+    .clone();
+    let task = task_for(&fixture, &work_id);
+    let changed_file = changed_file_for(&task);
+    let commit = commit_file(&fixture.work, &changed_file, "pub fn main() {}\n");
+    let report = completed_report(
+        &task,
+        &context,
+        &work_id,
+        &lease_token,
+        &commit,
+        "stdio-verification-failure-report",
+    );
+
+    let failed = client.call_tool("submit_work_report", report.clone());
+    let error = tool_error(&failed);
+    assert_eq!(error["code"], "verification_failed");
+    assert_eq!(error["details"]["failureKind"], "non_zero_exit");
+    assert_eq!(error["details"]["command"], "missing-command");
+    assert_eq!(error["details"]["exitCode"], 1);
+    assert!(error["details"]["durationMs"].as_u64().is_some());
+    assert!(
+        error["details"]["outputSummary"]
+            .as_str()
+            .expect("output summary must be a string")
+            .len()
+            <= 64 * 1024
+    );
+    let serialized = serde_json::to_string(&failed).expect("tool failure must serialize");
+    assert!(!serialized.contains(&lease_token));
+
+    let workspace = PlanService::new()
+        .load_workspace(fixture.home.clone())
+        .expect("workspace must load");
+    assert!(workspace.work_items.iter().any(|item| {
+        item.work_item.id.to_string() == work_id
+            && item.work_item.status == WorkItemStatus::InProgress
+    }));
+
+    let connection = Connection::open(fixture.home.join(".coldstart").join("state.db"))
+        .expect("database must open");
+    let updated = connection
+        .execute(
+            "UPDATE work_reports SET verification_status = 'interrupted'
+             WHERE work_item_id = ?1 AND verification_status = 'failed'",
+            [&work_id],
+        )
+        .expect("verification report must update");
+    assert_eq!(updated, 1);
+    drop(connection);
+
+    let interrupted = client.call_tool("submit_work_report", report);
+    let error = tool_error(&interrupted);
+    assert_eq!(error["code"], "verification_interrupted");
+    assert_eq!(error["details"]["failureKind"], "non_zero_exit");
+    let serialized = serde_json::to_string(&interrupted).expect("tool failure must serialize");
+    assert!(!serialized.contains(&lease_token));
+}
+
+#[test]
+fn stdio_server_returns_a_timeout_error_with_bounded_details() {
+    let fixture = Fixture::new();
+    let powershell = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    fixture.configure_verification(vec![RepositoryVerificationCommand {
+        name: "timeout-command".to_owned(),
+        executable: powershell,
+        args: vec![
+            "-NoProfile".to_owned(),
+            "-NonInteractive".to_owned(),
+            "-Command".to_owned(),
+            "Start-Sleep -Seconds 12".to_owned(),
+        ],
+        timeout_seconds: 10,
+        position: 0,
+    }]);
+    let mut client = McpStdioClient::spawn(&fixture.home);
+    client.initialize();
+    let claimed = claim_one(&mut client, "stdio-verification-timeout-claim");
+    let work_id = claimed["workItem"]["id"].as_str().unwrap().to_owned();
+    let lease_token = claimed["leaseToken"].as_str().unwrap().to_owned();
+    let context = structured(&client.call_tool(
+        "get_work_context",
+        json!({ "work_id": work_id, "lease_token": lease_token }),
+    ))
+    .clone();
+    let task = task_for(&fixture, &work_id);
+    let changed_file = changed_file_for(&task);
+    let commit = commit_file(&fixture.work, &changed_file, "pub fn main() {}\n");
+    let report = completed_report(
+        &task,
+        &context,
+        &work_id,
+        &lease_token,
+        &commit,
+        "stdio-verification-timeout-report",
+    );
+
+    let timed_out = client.call_tool("submit_work_report", report);
+    let error = tool_error(&timed_out);
+    assert_eq!(error["code"], "verification_timeout");
+    assert_eq!(error["details"]["failureKind"], "timeout");
+    assert_eq!(error["details"]["command"], "timeout-command");
+    assert!(
+        error["details"]["outputSummary"]
+            .as_str()
+            .expect("timeout summary must be a string")
+            .chars()
+            .count()
+            <= 64 * 1024
+    );
+    let serialized = serde_json::to_string(&timed_out).expect("timeout must serialize");
+    assert!(!serialized.contains(&lease_token));
 }
 
 #[test]
@@ -651,6 +1000,13 @@ fn stdio_server_releases_a_lease_and_allows_a_fresh_claim() {
         .expect("released task must exist");
     assert_eq!(view.work_item.status, WorkItemStatus::Ready);
     assert!(view.active_lease.is_none());
+    let branch = view
+        .task
+        .work_branch
+        .clone()
+        .expect("released agent task must have a work branch");
+    git(&fixture.work, &["switch", "main"]);
+    git(&fixture.work, &["branch", "--delete", &branch]);
 
     let reclaimed = claim_one(&mut client, "stdio-release-reclaim");
     assert_eq!(reclaimed["workItem"]["id"].as_str(), Some(work_id.as_str()));

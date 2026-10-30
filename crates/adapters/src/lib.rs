@@ -3,6 +3,7 @@ mod git;
 mod github;
 mod model;
 mod secret;
+mod verification;
 
 pub use document::{
     DocumentError, ExtractedDocument, MAX_DOCUMENT_BYTES, MAX_EXTRACTED_CHARACTERS,
@@ -18,3 +19,7 @@ pub use model::{
     OpenAiCompatibleModel,
 };
 pub use secret::{MemorySecretStore, SecretStore, SecretStoreError, WindowsSecretStore};
+pub use verification::{
+    VerificationCommandExecution, VerificationCommandExecutor, WindowsVerificationExecutor,
+    sanitize_verification_output,
+};

@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::VerificationSnapshot;
+
 pub const DEFAULT_CONTEXT_BUDGET_TOKENS: u32 = 12_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,6 +40,8 @@ pub struct TaskContext {
     pub budget_tokens: u32,
     pub included: Vec<ContextReference>,
     pub omitted: Vec<ContextOmission>,
+    #[serde(default)]
+    pub verification: Option<VerificationSnapshot>,
     pub generated_at: DateTime<Utc>,
 }
 

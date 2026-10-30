@@ -15,8 +15,8 @@ use coldstart_core::{
     BlueprintEntityId, CapabilityObligation, CapabilityStatus, ClaimResult, CredentialEnvironment,
     CredentialKind, GitSyncStatus, ModuleDefinition, PlanRevisionId, PlatformDefinition,
     PlatformKind, ProjectId, ReleasePrerequisite, ReportOutcome, RepositoryAuthMode,
-    RepositorySyncPolicy, SourceReference, TaskKind, TaskSpec, TechnologyChoice, TraceableText,
-    WorkItemStatus, WorkReportInput,
+    RepositorySyncPolicy, RepositoryVerificationCommand, SourceReference, TaskKind, TaskSpec,
+    TechnologyChoice, TraceableText, WorkItemStatus, WorkReportInput,
 };
 use coldstart_storage::Database;
 use rusqlite::Connection;
@@ -313,6 +313,19 @@ fn path(path: &Path) -> &str {
     path.to_str().expect("acceptance path must be UTF-8")
 }
 
+fn verification_command() -> RepositoryVerificationCommand {
+    let system_root = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    RepositoryVerificationCommand {
+        name: "where-cmd".to_owned(),
+        executable: system_root.join("System32").join("where.exe"),
+        args: vec!["cmd.exe".to_owned()],
+        timeout_seconds: 10,
+        position: 0,
+    }
+}
+
 #[test]
 fn mvp_closes_requirement_to_release_and_survives_restart() {
     let fixture = Fixture::new();
@@ -359,6 +372,9 @@ fn mvp_closes_requirement_to_release_and_survives_restart() {
         )
         .expect("repository must save");
     assert_eq!(integration_workspace.repositories.len(), 1);
+    integrations
+        .save_verification_commands(fixture.home.clone(), "server", vec![verification_command()])
+        .expect("verification command must save");
     let credential_workspace = integrations
         .save_credential(
             fixture.home.clone(),
@@ -739,6 +755,10 @@ fn mvp_closes_requirement_to_release_and_survives_restart() {
         .load_workspace(fixture.home.clone())
         .expect("integration workspace must survive restart");
     assert_eq!(restarted_integration_workspace.repositories.len(), 1);
+    assert_eq!(
+        restarted_integration_workspace.verification_commands[0].commands,
+        vec![verification_command()]
+    );
     assert_eq!(restarted_integration_workspace.credentials.len(), 1);
     assert!(
         restarted_integration_workspace

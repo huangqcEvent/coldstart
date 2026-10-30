@@ -8,15 +8,22 @@ use chrono::{DateTime, Duration, Utc};
 use coldstart_core::{
     ClaimFailure, ClaimResult, ClaimedWork, ContractState, DomainEvent, DomainEventKind, LeaseId,
     LeaseStatus, LeaseSummary, PlanContent, PlanPublishPreview, PlanRevision, PlanRevisionId,
-    PlanStatus, PlanTaskDiff, ProjectId, TaskKind, TaskSpec, TaskSpecId, WorkAuthorization,
-    WorkBlockerRecord, WorkItem, WorkItemId, WorkItemStatus, WorkReportId, WorkReportInput,
-    WorkReportRecord, WorkRun, WorkRunId, WorkRunStatus, inherited_work_status, sha256_hex,
-    validate_work_report,
+    PlanStatus, PlanTaskDiff, ProjectId, TaskKind, TaskSpec, TaskSpecId, VerificationResult,
+    VerificationSnapshot, VerificationStatus, WorkAuthorization, WorkBlockerRecord, WorkItem,
+    WorkItemId, WorkItemStatus, WorkReportId, WorkReportInput, WorkReportRecord, WorkRun,
+    WorkRunId, WorkRunStatus, inherited_work_status, sha256_hex, validate_work_report,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 use uuid::Uuid;
 
-use crate::{Database, StorageError, database::insert_event};
+use crate::{
+    Database, StorageError,
+    database::insert_event,
+    verification_store::{
+        commands_for_repository, interrupt_running_verification, read_verification_fields,
+        repository_id_by_key, verification_status_str,
+    },
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewWorkBlocker {
@@ -453,7 +460,7 @@ impl Database {
             break;
         }
 
-        let Some((item, _task)) = candidate else {
+        let Some((item, task)) = candidate else {
             let failure = if items.iter().all(|(item, _)| {
                 matches!(
                     item.status,
@@ -471,6 +478,18 @@ impl Database {
             transaction.commit()?;
             return Ok(ClaimResult::Empty(failure));
         };
+
+        let repository_key = task.repository_key.as_deref().unwrap_or_default();
+        let repository_id = repository_id_by_key(&transaction, project_id, repository_key)?;
+        let commands = commands_for_repository(&transaction, &repository_id)?;
+        if commands.is_empty() {
+            transaction.commit()?;
+            return Ok(ClaimResult::Empty(ClaimFailure::VerificationNotConfigured));
+        }
+        let snapshot = VerificationSnapshot::new(repository_key.to_owned(), commands)
+            .map_err(|error| StorageError::VerificationCommandInvalid(error.to_string()))?;
+        let snapshot_json = serde_json::to_string(&snapshot)?;
+        let snapshot_hash = snapshot.content_hash();
 
         let lease_token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let token_hash = sha256_hex(lease_token.as_bytes());
@@ -494,14 +513,17 @@ impl Database {
         transaction.execute(
             "INSERT INTO work_runs (
                 id, work_item_id, lease_id, agent_profile, claim_request_id,
-                status, started_at, ended_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, 'claimed', ?6, NULL)",
+                status, verification_snapshot_json, verification_snapshot_hash,
+                started_at, ended_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 'claimed', ?6, ?7, ?8, NULL)",
             params![
                 run_id.to_string(),
                 item.id.to_string(),
                 lease_id.to_string(),
                 agent_profile.trim(),
                 request_id.trim(),
+                snapshot_json,
+                snapshot_hash,
                 now.to_rfc3339(),
             ],
         )?;
@@ -545,6 +567,8 @@ impl Database {
                 agent_profile: agent_profile.trim().to_owned(),
                 claim_request_id: request_id.trim().to_owned(),
                 status: WorkRunStatus::Claimed,
+                verification_snapshot: Some(snapshot),
+                verification_snapshot_hash: Some(snapshot_hash),
                 started_at: now,
                 ended_at: None,
             },
@@ -783,6 +807,8 @@ impl Database {
                     idempotency_hash: &idempotency_hash,
                     accepted: false,
                     rejection_reasons: vec![error.to_string()],
+                    verification_status: VerificationStatus::NotRequired,
+                    verification: None,
                 },
                 now,
             )?;
@@ -810,6 +836,8 @@ impl Database {
                 idempotency_hash: &idempotency_hash,
                 accepted: true,
                 rejection_reasons: vec![],
+                verification_status: VerificationStatus::NotRequired,
+                verification: None,
             },
             now,
         )?;
@@ -955,7 +983,8 @@ impl Database {
     pub fn list_work_runs(&self, project_id: &ProjectId) -> Result<Vec<WorkRun>, StorageError> {
         let mut statement = self.connection().prepare(
             "SELECT r.id, r.work_item_id, r.lease_id, r.agent_profile,
-                    r.claim_request_id, r.status, r.started_at, r.ended_at
+                    r.claim_request_id, r.status, r.verification_snapshot_json,
+                    r.verification_snapshot_hash, r.started_at, r.ended_at
              FROM work_runs r JOIN work_items w ON w.id = r.work_item_id
              WHERE w.project_id = ?1 ORDER BY r.started_at DESC LIMIT 200",
         )?;
@@ -974,7 +1003,9 @@ impl Database {
         let mut statement = self.connection().prepare(
             "SELECT r.id, r.work_item_id, r.work_run_id, r.contract_hash,
                     r.report_json, r.report_hash, r.accepted,
-                    r.rejection_reasons_json, r.created_at
+                    r.rejection_reasons_json, r.created_at,
+                    r.verification_status, r.verification_json,
+                    r.verification_started_at, r.verification_finished_at
              FROM work_reports r JOIN work_items w ON w.id = r.work_item_id
              WHERE w.project_id = ?1 ORDER BY r.created_at DESC LIMIT 200",
         )?;
@@ -1056,6 +1087,7 @@ fn expire_active_leases(
              WHERE lease_id = ?2 AND ended_at IS NULL",
             params![now.to_rfc3339(), lease_id.to_string()],
         )?;
+        interrupt_running_verification(transaction, &work_item_id, now)?;
         if matches!(
             status,
             WorkItemStatus::Claimed | WorkItemStatus::InProgress | WorkItemStatus::Submitted
@@ -1292,7 +1324,7 @@ fn active_resource_keys(
     Ok(resources)
 }
 
-fn authorize_in_tx(
+pub(crate) fn authorize_in_tx(
     transaction: &Transaction<'_>,
     work_item_id: &WorkItemId,
     lease_token: &str,
@@ -1394,14 +1426,16 @@ fn authorize_in_tx(
     })
 }
 
-struct WorkReportInsert<'a> {
-    report: &'a WorkReportInput,
-    idempotency_hash: &'a str,
-    accepted: bool,
-    rejection_reasons: Vec<String>,
+pub(crate) struct WorkReportInsert<'a> {
+    pub report: &'a WorkReportInput,
+    pub idempotency_hash: &'a str,
+    pub accepted: bool,
+    pub rejection_reasons: Vec<String>,
+    pub verification_status: VerificationStatus,
+    pub verification: Option<VerificationResult>,
 }
 
-fn insert_work_report(
+pub(crate) fn insert_work_report(
     transaction: &Transaction<'_>,
     work_item_id: &WorkItemId,
     run_id: &WorkRunId,
@@ -1413,6 +1447,8 @@ fn insert_work_report(
         idempotency_hash,
         accepted,
         rejection_reasons,
+        verification_status,
+        verification,
     } = input;
     let report_id = WorkReportId::new();
     let report_json = serde_json::to_string(report)?;
@@ -1420,8 +1456,10 @@ fn insert_work_report(
     transaction.execute(
         "INSERT INTO work_reports (
             id, work_item_id, work_run_id, contract_hash, idempotency_key_hash,
-            report_json, report_hash, accepted, rejection_reasons_json, created_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            report_json, report_hash, accepted, rejection_reasons_json, created_at,
+            verification_status, verification_json, verification_started_at,
+            verification_finished_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             report_id.to_string(),
             work_item_id.to_string(),
@@ -1433,6 +1471,18 @@ fn insert_work_report(
             i64::from(accepted),
             serde_json::to_string(&rejection_reasons)?,
             now.to_rfc3339(),
+            verification_status_str(verification_status),
+            verification
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
+            verification
+                .as_ref()
+                .map(|result| result.started_at.to_rfc3339()),
+            verification
+                .as_ref()
+                .and_then(|result| result.finished_at)
+                .map(|value| value.to_rfc3339()),
         ],
     )?;
     Ok(WorkReportRecord {
@@ -1444,6 +1494,8 @@ fn insert_work_report(
         report_hash,
         accepted,
         rejection_reasons,
+        verification_status,
+        verification,
         created_at: now,
     })
 }
@@ -1584,6 +1636,8 @@ struct StoredRunRow {
     agent_profile: String,
     claim_request_id: String,
     status: String,
+    verification_snapshot_json: Option<String>,
+    verification_snapshot_hash: Option<String>,
     started_at: String,
     ended_at: Option<String>,
 }
@@ -1597,6 +1651,11 @@ impl StoredRunRow {
             agent_profile: self.agent_profile,
             claim_request_id: self.claim_request_id,
             status: parse_enum(&self.status, "work run status")?,
+            verification_snapshot: self
+                .verification_snapshot_json
+                .map(|value| serde_json::from_str(&value))
+                .transpose()?,
+            verification_snapshot_hash: self.verification_snapshot_hash,
             started_at: parse_date(&self.started_at)?,
             ended_at: parse_optional_date(self.ended_at)?,
         })
@@ -1611,8 +1670,10 @@ fn read_run_row(row: &Row<'_>) -> rusqlite::Result<StoredRunRow> {
         agent_profile: row.get(3)?,
         claim_request_id: row.get(4)?,
         status: row.get(5)?,
-        started_at: row.get(6)?,
-        ended_at: row.get(7)?,
+        verification_snapshot_json: row.get(6)?,
+        verification_snapshot_hash: row.get(7)?,
+        started_at: row.get(8)?,
+        ended_at: row.get(9)?,
     })
 }
 
@@ -1623,7 +1684,8 @@ fn query_active_run_for_lease(
     let row = connection
         .query_row(
             "SELECT id, work_item_id, lease_id, agent_profile, claim_request_id,
-                    status, started_at, ended_at
+                    status, verification_snapshot_json, verification_snapshot_hash,
+                    started_at, ended_at
              FROM work_runs WHERE lease_id = ?1 AND ended_at IS NULL
              ORDER BY started_at DESC LIMIT 1",
             [lease_id.to_string()],
@@ -1644,6 +1706,8 @@ struct StoredReportRow {
     accepted: i64,
     rejection_reasons_json: String,
     created_at: String,
+    verification_status: VerificationStatus,
+    verification: Option<VerificationResult>,
 }
 
 impl StoredReportRow {
@@ -1657,12 +1721,15 @@ impl StoredReportRow {
             report_hash: self.report_hash,
             accepted: self.accepted != 0,
             rejection_reasons: serde_json::from_str(&self.rejection_reasons_json)?,
+            verification_status: self.verification_status,
+            verification: self.verification,
             created_at: parse_date(&self.created_at)?,
         })
     }
 }
 
 fn read_report_row(row: &Row<'_>) -> rusqlite::Result<StoredReportRow> {
+    let verification = read_verification_fields(row, 9, 10, 11, 12)?;
     Ok(StoredReportRow {
         id: row.get(0)?,
         work_item_id: row.get(1)?,
@@ -1673,10 +1740,12 @@ fn read_report_row(row: &Row<'_>) -> rusqlite::Result<StoredReportRow> {
         accepted: row.get(6)?,
         rejection_reasons_json: row.get(7)?,
         created_at: row.get(8)?,
+        verification_status: verification.status,
+        verification: verification.result,
     })
 }
 
-fn query_report_by_idempotency(
+pub(crate) fn query_report_by_idempotency(
     connection: &Connection,
     work_item_id: &WorkItemId,
     idempotency_hash: &str,
@@ -1684,9 +1753,29 @@ fn query_report_by_idempotency(
     let row = connection
         .query_row(
             "SELECT id, work_item_id, work_run_id, contract_hash, report_json,
-                    report_hash, accepted, rejection_reasons_json, created_at
+                    report_hash, accepted, rejection_reasons_json, created_at,
+                    verification_status, verification_json, verification_started_at,
+                    verification_finished_at
              FROM work_reports WHERE work_item_id = ?1 AND idempotency_key_hash = ?2",
             params![work_item_id.to_string(), idempotency_hash],
+            read_report_row,
+        )
+        .optional()?;
+    row.map(StoredReportRow::into_record).transpose()
+}
+
+pub(crate) fn query_report_by_id(
+    connection: &Connection,
+    report_id: &WorkReportId,
+) -> Result<Option<WorkReportRecord>, StorageError> {
+    let row = connection
+        .query_row(
+            "SELECT id, work_item_id, work_run_id, contract_hash, report_json,
+                    report_hash, accepted, rejection_reasons_json, created_at,
+                    verification_status, verification_json, verification_started_at,
+                    verification_finished_at
+             FROM work_reports WHERE id = ?1",
+            [report_id.to_string()],
             read_report_row,
         )
         .optional()?;
@@ -1703,7 +1792,7 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
         == 0
 }
 
-fn refresh_work_items(
+pub(crate) fn refresh_work_items(
     transaction: &Transaction<'_>,
     project_id: &ProjectId,
     plan_revision_id: &PlanRevisionId,

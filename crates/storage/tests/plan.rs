@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use support::{PlanFixture, agent_task};
 
 #[test]
-fn migrates_v3_database_to_v5_and_preserves_the_published_blueprint() {
+fn migrates_v3_database_to_v6_and_preserves_the_published_blueprint() {
     let fixture = PlanFixture::new(vec![agent_task("foundation:demo", &[])]);
     let database_path = fixture.database_path.clone();
     let project_id = fixture.project_id;
@@ -18,6 +18,7 @@ fn migrates_v3_database_to_v5_and_preserves_the_published_blueprint() {
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
              DROP TABLE project_settings;
+             DROP TABLE repository_verification_commands;
              DROP TABLE git_syncs;
              DROP TABLE capability_states;
              DROP TABLE repositories;
@@ -45,7 +46,7 @@ fn migrates_v3_database_to_v5_and_preserves_the_published_blueprint() {
         .expect("read connection must open")
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("schema version must be readable");
-    assert_eq!(version, 5);
+    assert_eq!(version, 6);
 }
 
 #[test]
