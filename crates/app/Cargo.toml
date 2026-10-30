@@ -6,6 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 chrono.workspace = true
+coldstart-adapters = { path = "../adapters" }
 coldstart-core = { path = "../core" }
 coldstart-storage = { path = "../storage" }
 serde.workspace = true

@@ -91,6 +91,10 @@ impl ProjectHome {
         self.root.join(STATE_DIRECTORY).join(DATABASE_FILE)
     }
 
+    pub fn artifacts_directory(&self) -> PathBuf {
+        self.root.join(STATE_DIRECTORY).join("artifacts")
+    }
+
     pub fn load_manifest(&self) -> Result<ProjectManifest, AppError> {
         let path = self.manifest_path();
         let bytes = match fs::read(&path) {

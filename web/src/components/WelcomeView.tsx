@@ -29,7 +29,7 @@ export function WelcomeView({ onCreate, onOpen }: WelcomeViewProps) {
 
       <div className="welcome__panel" aria-label="当前阶段">
         <div className="welcome__panel-head">
-          <span>PHASE 02</span>
+          <span>PHASE 03</span>
           <span className="status-dot">READY</span>
         </div>
         <div className="welcome__orbit" aria-hidden="true">
@@ -38,8 +38,8 @@ export function WelcomeView({ onCreate, onOpen }: WelcomeViewProps) {
           <span className="welcome__orbit-ring welcome__orbit-ring--two" />
         </div>
         <div className="welcome__panel-copy">
-          <p>项目总览</p>
-          <span>创建、打开并查看本地项目状态</span>
+          <p>需求与蓝图</p>
+          <span>导入需求，生成并发布可追溯蓝图</span>
         </div>
       </div>
     </section>
