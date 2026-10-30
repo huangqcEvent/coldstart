@@ -68,6 +68,12 @@ pub enum StorageError {
     PlanNotDraft(PlanRevisionId),
     #[error("a plan revision is already active for this project")]
     PlanAlreadyActive,
+    #[error("active work leases must be completed, released, or expired before replanning")]
+    PlanLeaseActive,
+    #[error("plan revision {0} is no longer active")]
+    PlanNoLongerActive(PlanRevisionId),
+    #[error("work item {0} has a stale task contract")]
+    ContractStale(WorkItemId),
     #[error("publishing a plan requires a published blueprint")]
     PublishedBlueprintRequired,
     #[error("plan blueprint hash does not match the published blueprint")]

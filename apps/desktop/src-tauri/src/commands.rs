@@ -9,7 +9,7 @@ use coldstart_app::{
 };
 use coldstart_core::{
     BlueprintContent, BlueprintEntityId, BlueprintRevisionId, CapabilityStatus, CredentialId,
-    InfoRequestId, PlanContent, PlanRevisionId, WorkItemId,
+    InfoRequestId, PlanContent, PlanPublishPreview, PlanRevisionId, WorkItemId,
 };
 use tauri::State;
 
@@ -206,13 +206,34 @@ pub async fn save_plan_draft(
         .map_err(join_error)?
 }
 
+pub fn preview_plan_publish_sync(
+    path: String,
+    revision_id: String,
+) -> Result<PlanPublishPreview, CommandError> {
+    let revision_id = parse_plan_revision_id(&revision_id)?;
+    PlanService::new()
+        .preview_publish(PathBuf::from(path), revision_id)
+        .map_err(CommandError::from)
+}
+
+#[tauri::command]
+pub async fn preview_plan_publish(
+    path: String,
+    revision_id: String,
+) -> Result<PlanPublishPreview, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || preview_plan_publish_sync(path, revision_id))
+        .await
+        .map_err(join_error)?
+}
+
 pub fn publish_plan_sync(
     path: String,
     revision_id: String,
+    confirmed: bool,
 ) -> Result<ProjectWorkspace, CommandError> {
     let revision_id = parse_plan_revision_id(&revision_id)?;
     PlanService::new()
-        .publish(PathBuf::from(&path), revision_id)
+        .publish_confirmed(PathBuf::from(&path), revision_id, confirmed)
         .map_err(CommandError::from)?;
     read_requirements_workspace_sync(path)
 }
@@ -221,8 +242,9 @@ pub fn publish_plan_sync(
 pub async fn publish_plan(
     path: String,
     revision_id: String,
+    confirmed: bool,
 ) -> Result<ProjectWorkspace, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || publish_plan_sync(path, revision_id))
+    tauri::async_runtime::spawn_blocking(move || publish_plan_sync(path, revision_id, confirmed))
         .await
         .map_err(join_error)?
 }

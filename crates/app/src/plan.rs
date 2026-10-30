@@ -4,9 +4,9 @@ use chrono::{Duration, Utc};
 use coldstart_adapters::{GitAdapter, SecretStore, WindowsSecretStore};
 use coldstart_core::{
     ClaimResult, DEFAULT_LEASE_MINUTES, GitSyncRecord, GitSyncStatus, LeaseSummary, PlanContent,
-    PlanRevision, PlanRevisionId, Repository, RepositorySyncPolicy, TaskContext, TaskKind,
-    TaskReferenceContent, WorkBlockerRecord, WorkItem, WorkItemId, WorkReportInput,
-    WorkReportRecord, compile_plan,
+    PlanPublishPreview, PlanRevision, PlanRevisionId, Repository, RepositorySyncPolicy,
+    TaskContext, TaskKind, TaskReferenceContent, WorkBlockerRecord, WorkItem, WorkItemId,
+    WorkReportInput, WorkReportRecord, compile_plan,
 };
 use coldstart_storage::NewWorkBlocker;
 use serde::{Deserialize, Serialize};
@@ -90,12 +90,40 @@ impl PlanService {
         build_plan_workspace(&project)
     }
 
+    pub fn preview_publish(
+        &self,
+        project_home: PathBuf,
+        revision_id: PlanRevisionId,
+    ) -> Result<PlanPublishPreview, AppError> {
+        let mut project = OpenProject::open(project_home)?;
+        Ok(project
+            .database
+            .preview_plan_revision(&project.project.id, &revision_id, Utc::now())?)
+    }
+
     pub fn publish(
         &self,
         project_home: PathBuf,
         revision_id: PlanRevisionId,
     ) -> Result<PlanWorkspace, AppError> {
+        self.publish_confirmed(project_home, revision_id, false)
+    }
+
+    pub fn publish_confirmed(
+        &self,
+        project_home: PathBuf,
+        revision_id: PlanRevisionId,
+        confirmed: bool,
+    ) -> Result<PlanWorkspace, AppError> {
         let mut project = OpenProject::open(project_home)?;
+        let preview = project.database.preview_plan_revision(
+            &project.project.id,
+            &revision_id,
+            Utc::now(),
+        )?;
+        if preview.base_revision_id.is_some() && !confirmed {
+            return Err(AppError::ReplanConfirmationRequired);
+        }
         project
             .database
             .publish_plan_revision(&project.project.id, &revision_id, Utc::now())?;
@@ -177,7 +205,9 @@ impl PlanService {
             default_lease_duration(),
         )?;
         let plan = published_plan_for(&project, &authorization.work_item)?;
-        let work_items = project.database.list_work_items(&project.project.id)?;
+        let work_items = project
+            .database
+            .list_work_items_for_plan(&project.project.id, &plan.id)?;
         compile_task_context(&project, &plan, &authorization.task_spec, &work_items)
     }
 
@@ -196,7 +226,9 @@ impl PlanService {
             default_lease_duration(),
         )?;
         let plan = published_plan_for(&project, &authorization.work_item)?;
-        let work_items = project.database.list_work_items(&project.project.id)?;
+        let work_items = project
+            .database
+            .list_work_items_for_plan(&project.project.id, &plan.id)?;
         compile_reference(
             &project,
             &plan,

@@ -22,6 +22,14 @@ pub struct PlanFixture {
 
 impl PlanFixture {
     pub fn new(tasks: Vec<TaskSpec>) -> Self {
+        Self::build(tasks, true)
+    }
+
+    pub fn draft(tasks: Vec<TaskSpec>) -> Self {
+        Self::build(tasks, false)
+    }
+
+    fn build(tasks: Vec<TaskSpec>, publish: bool) -> Self {
         let directory = tempfile::tempdir().expect("temporary directory must exist");
         let database_path = directory.path().join("state.db");
         let project = Project::new("计划测试项目", directory.path().join("project"))
@@ -60,9 +68,11 @@ impl PlanFixture {
         let plan_revision = database
             .create_plan_revision(&project.id, blueprint_revision.id, plan, Utc::now())
             .expect("plan draft must create");
-        database
-            .publish_plan_revision(&project.id, &plan_revision.id, Utc::now())
-            .expect("plan must publish");
+        if publish {
+            database
+                .publish_plan_revision(&project.id, &plan_revision.id, Utc::now())
+                .expect("plan must publish");
+        }
 
         Self {
             _directory: directory,
@@ -72,6 +82,25 @@ impl PlanFixture {
             plan_id: plan_revision.id,
             tasks,
         }
+    }
+
+    pub fn create_plan(&mut self, tasks: Vec<TaskSpec>) -> coldstart_core::PlanRevision {
+        let blueprint = self
+            .database
+            .latest_blueprint(&self.project_id, coldstart_core::BlueprintStatus::Published)
+            .expect("blueprint query must work")
+            .expect("published blueprint must exist");
+        self.database
+            .create_plan_revision(
+                &self.project_id,
+                blueprint.id,
+                PlanContent {
+                    tasks,
+                    warnings: vec![],
+                },
+                Utc::now(),
+            )
+            .expect("plan candidate must create")
     }
 
     pub fn task(&self, task_key: &str) -> TaskSpec {

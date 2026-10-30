@@ -94,6 +94,18 @@ pub enum ContractState {
     Stale,
 }
 
+pub fn inherited_work_status(previous: WorkItemStatus, contract_changed: bool) -> WorkItemStatus {
+    if contract_changed {
+        return WorkItemStatus::Reopened;
+    }
+    match previous {
+        WorkItemStatus::Claimed | WorkItemStatus::InProgress | WorkItemStatus::Submitted => {
+            WorkItemStatus::Reopened
+        }
+        status => status,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DependencyKind {
@@ -191,6 +203,35 @@ impl TaskSpec {
 pub struct PlanContent {
     pub tasks: Vec<TaskSpec>,
     pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlanTaskDiff {
+    pub task_key: String,
+    pub title: String,
+    pub previous_status: Option<WorkItemStatus>,
+    pub next_status: Option<WorkItemStatus>,
+    pub contract_changed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PlanPublishPreview {
+    pub base_revision_id: Option<PlanRevisionId>,
+    pub base_revision_number: Option<u64>,
+    pub candidate_revision_id: PlanRevisionId,
+    pub candidate_revision_number: u64,
+    pub added: Vec<PlanTaskDiff>,
+    pub changed: Vec<PlanTaskDiff>,
+    pub unchanged: Vec<PlanTaskDiff>,
+    pub removed: Vec<PlanTaskDiff>,
+    pub carried_completed: usize,
+    pub reopened: usize,
+    pub cancelled: usize,
+    pub active_lease_count: usize,
+    pub publishable: bool,
+    pub blockers: Vec<String>,
 }
 
 impl PlanContent {
@@ -888,5 +929,53 @@ mod tests {
         assert!(!WorkItemStatus::Ready.can_transition_to(WorkItemStatus::InProgress));
         assert!(WorkItemStatus::Ready.can_transition_to(WorkItemStatus::Claimed));
         assert!(WorkItemStatus::Claimed.can_transition_to(WorkItemStatus::InProgress));
+    }
+
+    #[test]
+    fn replanning_inherits_only_safe_task_state() {
+        use WorkItemStatus::*;
+
+        assert_eq!(inherited_work_status(Done, false), Done);
+        assert_eq!(inherited_work_status(Ready, false), Ready);
+        assert_eq!(inherited_work_status(Cancelled, false), Cancelled);
+        assert_eq!(inherited_work_status(Done, true), Reopened);
+        assert_eq!(inherited_work_status(Cancelled, true), Reopened);
+        assert_eq!(inherited_work_status(InProgress, false), Reopened);
+        assert_eq!(inherited_work_status(Submitted, true), Reopened);
+    }
+
+    #[test]
+    fn plan_publish_preview_round_trips_as_camel_case() {
+        use WorkItemStatus::{Done, Reopened};
+
+        let preview = PlanPublishPreview {
+            base_revision_id: Some(PlanRevisionId::new()),
+            base_revision_number: Some(1),
+            candidate_revision_id: PlanRevisionId::new(),
+            candidate_revision_number: 2,
+            added: vec![],
+            changed: vec![PlanTaskDiff {
+                task_key: "slice:orders".to_owned(),
+                title: "订单切片".to_owned(),
+                previous_status: Some(Done),
+                next_status: Some(Reopened),
+                contract_changed: true,
+            }],
+            unchanged: vec![],
+            removed: vec![],
+            carried_completed: 0,
+            reopened: 1,
+            cancelled: 0,
+            active_lease_count: 0,
+            publishable: true,
+            blockers: vec![],
+        };
+
+        let json = serde_json::to_string(&preview).expect("preview must serialize");
+        assert!(json.contains("\"candidateRevisionNumber\":2"));
+        assert!(json.contains("\"contractChanged\":true"));
+        let restored: PlanPublishPreview =
+            serde_json::from_str(&json).expect("preview must deserialize");
+        assert_eq!(restored, preview);
     }
 }

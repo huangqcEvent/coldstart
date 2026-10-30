@@ -46,6 +46,8 @@ pub enum AppError {
     PlanNotDraft(PlanRevisionId),
     #[error("a plan revision is already active")]
     PlanAlreadyActive,
+    #[error("replacing the active plan requires explicit confirmation")]
+    ReplanConfirmationRequired,
     #[error("work item {0} does not exist")]
     WorkItemNotFound(WorkItemId),
     #[error("work item {0} cannot be operated in its current state")]
@@ -143,6 +145,7 @@ impl AppError {
             Self::PlanNotFound(_) => "plan_not_found",
             Self::PlanNotDraft(_) => "plan_not_draft",
             Self::PlanAlreadyActive => "plan_already_active",
+            Self::ReplanConfirmationRequired => "replan_confirmation_required",
             Self::WorkItemNotFound(_) => "work_item_not_found",
             Self::WorkNotClaimable(_) => "work_not_claimable",
             Self::LeaseInvalid(_) => "lease_invalid",
@@ -168,6 +171,9 @@ impl AppError {
             Self::Storage(StorageError::PlanNotFound(_)) => "plan_not_found",
             Self::Storage(StorageError::PlanNotDraft(_)) => "plan_not_draft",
             Self::Storage(StorageError::PlanAlreadyActive) => "plan_already_active",
+            Self::Storage(StorageError::PlanLeaseActive) => "plan_lease_active",
+            Self::Storage(StorageError::PlanNoLongerActive(_)) => "plan_no_longer_active",
+            Self::Storage(StorageError::ContractStale(_)) => "contract_stale",
             Self::Storage(StorageError::PublishedBlueprintRequired) => {
                 "published_blueprint_required"
             }

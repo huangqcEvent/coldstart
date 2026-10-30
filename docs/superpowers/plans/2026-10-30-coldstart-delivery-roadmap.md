@@ -9,7 +9,7 @@
 3. **Requirements and Blueprint（已完成）**：文档导入、模型适配器、结构化蓝图、来源追踪、不可变发布、缺失信息与 Inbox 基础。阶段计划与执行记录：[2026-10-30-coldstart-03-requirements-blueprint.md](2026-10-30-coldstart-03-requirements-blueprint.md)。
 4. **Plan Engine and MCP（已完成）**：计划编译、DAG、状态机、租约、上下文编译、MCP stdio 和完成报告。阶段计划与执行记录：[2026-10-30-coldstart-04-plan-engine-mcp.md](2026-10-30-coldstart-04-plan-engine-mcp.md)。
 5. **Git, GitHub, Capabilities and Release Gates（已完成）**：仓库远程、GitHub OAuth、任务分支推送、凭据引用、三方能力、发布清单与审批。阶段计划与执行记录：[2026-10-30-coldstart-05-git-capabilities-release.md](2026-10-30-coldstart-05-git-capabilities-release.md)。
-6. **Integration and Hardening（下一步）**：跨子系统端到端测试、安全测试、变更重规划、打包和 MVP 验收。
+6. **Integration and Hardening（已完成）**：跨子系统端到端测试、安全测试、变更重规划、打包和 MVP 验收。阶段计划与执行记录：[2026-10-30-coldstart-06-integration-hardening.md](2026-10-30-coldstart-06-integration-hardening.md)。
 
 ## 阶段门禁
 

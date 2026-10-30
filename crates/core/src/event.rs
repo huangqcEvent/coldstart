@@ -78,6 +78,10 @@ pub enum DomainEventKind {
         revision_number: u64,
         task_count: usize,
     },
+    PlanSuperseded {
+        revision_id: PlanRevisionId,
+        superseded_by: PlanRevisionId,
+    },
     WorkClaimed {
         work_item_id: WorkItemId,
         task_key: String,
@@ -159,6 +163,7 @@ impl DomainEventKind {
             Self::InfoRequestResolved { .. } => "info_request_resolved",
             Self::PlanDraftCreated { .. } => "plan_draft_created",
             Self::PlanPublished { .. } => "plan_published",
+            Self::PlanSuperseded { .. } => "plan_superseded",
             Self::WorkClaimed { .. } => "work_claimed",
             Self::WorkStarted { .. } => "work_started",
             Self::WorkHeartbeat { .. } => "work_heartbeat",

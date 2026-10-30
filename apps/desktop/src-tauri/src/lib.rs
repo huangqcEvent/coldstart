@@ -17,6 +17,7 @@ pub fn run() {
             commands::read_plan_workspace,
             commands::generate_plan_draft,
             commands::save_plan_draft,
+            commands::preview_plan_publish,
             commands::publish_plan,
             commands::complete_human_work,
             commands::read_integration_workspace,

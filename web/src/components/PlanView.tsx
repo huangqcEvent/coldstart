@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import type {
   PlanContent,
+  PlanPublishPreview,
+  PlanTaskDiff,
   ProjectWorkspace,
   TaskDependency,
   TaskSpec,
@@ -15,6 +17,7 @@ interface PlanViewProps {
   busyLabel: string | null;
   onGenerate: () => Promise<boolean>;
   onSave: (content: PlanContent) => Promise<boolean>;
+  onPreviewPublish: (revisionId: string) => Promise<PlanPublishPreview | null>;
   onPublish: (revisionId: string) => Promise<boolean>;
   onRefresh: () => Promise<ProjectWorkspace | null>;
   onNavigateBlueprint: () => void;
@@ -404,12 +407,41 @@ function PlanTaskCard({
   );
 }
 
+function PlanDiffGroup({
+  label,
+  items,
+}: {
+  label: string;
+  items: PlanTaskDiff[];
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+  return (
+    <section className="plan-diff-group">
+      <h3>
+        {label} · {items.length}
+      </h3>
+      <div>
+        {items.map((item) => (
+          <article key={item.taskKey}>
+            <span>{item.title}</span>
+            <code>{item.taskKey}</code>
+            {item.contractChanged ? <em>契约变化</em> : null}
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function PlanView({
   workspace,
   busy,
   busyLabel,
   onGenerate,
   onSave,
+  onPreviewPublish,
   onPublish,
   onRefresh,
   onNavigateBlueprint,
@@ -423,7 +455,12 @@ export function PlanView({
   const [isEditing, setIsEditing] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [publishPreview, setPublishPreview] =
+    useState<PlanPublishPreview | null>(null);
+  const [previewingPublish, setPreviewingPublish] = useState(false);
   const refreshing = useRef(false);
+  const publishButtonRef = useRef<HTMLButtonElement>(null);
+  const publishDialogTitleRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     setDraftContent(plan.draft ? clonePlanContent(plan.draft.content) : null);
@@ -453,6 +490,12 @@ export function PlanView({
       window.removeEventListener('focus', handleFocus);
     };
   }, [onRefresh]);
+
+  useEffect(() => {
+    if (publishPreview) {
+      publishDialogTitleRef.current?.focus();
+    }
+  }, [publishPreview]);
 
   const doneCount = plan.workItems.filter(
     (item) => item.workItem.status === 'done',
@@ -485,6 +528,36 @@ export function PlanView({
       setIsEditing(false);
       setIsDirty(false);
     }
+  }
+
+  async function handlePreviewPublish() {
+    if (!plan.draft) {
+      return;
+    }
+    setPreviewingPublish(true);
+    try {
+      const preview = await onPreviewPublish(plan.draft.id);
+      if (preview) {
+        setPublishPreview(preview);
+      }
+    } finally {
+      setPreviewingPublish(false);
+    }
+  }
+
+  async function handleConfirmPublish() {
+    if (!plan.draft || !publishPreview?.publishable) {
+      return;
+    }
+    const published = await onPublish(plan.draft.id);
+    if (published) {
+      setPublishPreview(null);
+    }
+  }
+
+  function closePublishPreview() {
+    setPublishPreview(null);
+    window.setTimeout(() => publishButtonRef.current?.focus(), 0);
   }
 
   async function handleCopyMcpConfig() {
@@ -581,10 +654,11 @@ export function PlanView({
             <button
               className="button button--primary"
               type="button"
-              onClick={() => void onPublish(plan.draft!.id)}
-              disabled={busy || isDirty}
+              onClick={() => void handlePreviewPublish()}
+              disabled={busy || isDirty || previewingPublish}
+              ref={publishButtonRef}
             >
-              {publishBusy ? '发布中…' : '发布计划'}
+              {previewingPublish ? '检查中…' : '发布计划'}
             </button>
           ) : null}
         </div>
@@ -594,6 +668,116 @@ export function PlanView({
           </p>
         ) : null}
       </section>
+
+      {publishPreview ? (
+        <div className="plan-publish-backdrop">
+          <section
+            className="plan-publish-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="plan-publish-dialog-title"
+          >
+            <div className="panel__head">
+              <div>
+                <p className="panel__eyebrow">PUBLISH DIFF / HUMAN CONFIRM</p>
+                <h2
+                  id="plan-publish-dialog-title"
+                  ref={publishDialogTitleRef}
+                  tabIndex={-1}
+                >
+                  {publishPreview.baseRevisionNumber === null
+                    ? `确认发布计划 v${publishPreview.candidateRevisionNumber}`
+                    : `确认替换计划 v${publishPreview.candidateRevisionNumber}`}
+                </h2>
+              </div>
+              <span className="count-badge">
+                {publishPreview.baseRevisionNumber === null
+                  ? '首个活动计划'
+                  : `替换 v${publishPreview.baseRevisionNumber}`}
+              </span>
+            </div>
+            <p>
+              这是人工确认步骤。确认后旧计划会标记为 superseded，历史契约、报告和事件仍保留用于审计。
+            </p>
+
+            <div className="plan-publish-metrics" aria-label="计划差异摘要">
+              <article>
+                <span>新增</span>
+                <strong>{publishPreview.added.length}</strong>
+              </article>
+              <article>
+                <span>契约变化</span>
+                <strong>{publishPreview.changed.length}</strong>
+              </article>
+              <article>
+                <span>保持不变</span>
+                <strong>{publishPreview.unchanged.length}</strong>
+              </article>
+              <article>
+                <span>删除</span>
+                <strong>{publishPreview.removed.length}</strong>
+              </article>
+              <article>
+                <span>继承完成</span>
+                <strong>{publishPreview.carriedCompleted}</strong>
+              </article>
+              <article>
+                <span>重新打开</span>
+                <strong>{publishPreview.reopened}</strong>
+              </article>
+              <article>
+                <span>取消</span>
+                <strong>{publishPreview.cancelled}</strong>
+              </article>
+              <article>
+                <span>活动租约</span>
+                <strong>{publishPreview.activeLeaseCount}</strong>
+              </article>
+            </div>
+
+            {publishPreview.blockers.length > 0 ? (
+              <div className="plan-publish-blockers" role="alert">
+                <strong>当前不能发布</strong>
+                <ul>
+                  {publishPreview.blockers.map((blocker) => (
+                    <li key={blocker}>{blocker}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div className="plan-diff-groups">
+              <PlanDiffGroup label="新增" items={publishPreview.added} />
+              <PlanDiffGroup label="契约变化" items={publishPreview.changed} />
+              <PlanDiffGroup label="保持不变" items={publishPreview.unchanged} />
+              <PlanDiffGroup label="删除" items={publishPreview.removed} />
+            </div>
+
+            <div className="plan-publish-actions">
+              <button
+                className="button button--secondary"
+                type="button"
+                onClick={closePublishPreview}
+                disabled={busy}
+              >
+                取消发布
+              </button>
+              <button
+                className="button button--primary"
+                type="button"
+                onClick={() => void handleConfirmPublish()}
+                disabled={busy || !publishPreview.publishable}
+              >
+                {publishBusy
+                  ? '发布中…'
+                  : publishPreview.baseRevisionId
+                    ? '确认替换活动计划'
+                    : '确认发布首个计划'}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       {isEditing && draftContent ? (
         <>

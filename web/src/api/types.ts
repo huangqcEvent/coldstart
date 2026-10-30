@@ -279,6 +279,31 @@ export interface PlanRevision {
   publishedAt: string | null;
 }
 
+export interface PlanTaskDiff {
+  taskKey: string;
+  title: string;
+  previousStatus: WorkItemStatus | null;
+  nextStatus: WorkItemStatus | null;
+  contractChanged: boolean;
+}
+
+export interface PlanPublishPreview {
+  baseRevisionId: string | null;
+  baseRevisionNumber: number | null;
+  candidateRevisionId: string;
+  candidateRevisionNumber: number;
+  added: PlanTaskDiff[];
+  changed: PlanTaskDiff[];
+  unchanged: PlanTaskDiff[];
+  removed: PlanTaskDiff[];
+  carriedCompleted: number;
+  reopened: number;
+  cancelled: number;
+  activeLeaseCount: number;
+  publishable: boolean;
+  blockers: string[];
+}
+
 export interface WorkItem {
   id: string;
   projectId: string;
