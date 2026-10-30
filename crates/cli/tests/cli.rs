@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 
 use assert_cmd::Command;
@@ -150,4 +150,125 @@ fn manifest_project_id_matches_database_project_and_initial_event() {
     assert_eq!(event_count, 1);
     assert_eq!(event_project_id, project_id_text);
     assert_eq!(event_type, "project_initialized");
+}
+
+fn run_status(home: &Path) -> Output {
+    Command::cargo_bin("coldstart")
+        .expect("binary must build")
+        .args(["status", "--json", "--path"])
+        .arg(home)
+        .output()
+        .expect("command must run")
+}
+
+#[test]
+fn status_reports_the_initialized_project_as_camel_case_json() {
+    let temp = TempDir::new().expect("temp directory must exist");
+    let home = temp.path().join("demo");
+    let initialized = run_init(&home);
+    assert!(initialized.status.success());
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(home.join("coldstart.project.json")).expect("manifest must be readable"),
+    )
+    .expect("manifest must be valid JSON");
+
+    let output = run_status(&home);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let status: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("status must be valid JSON");
+    assert_eq!(
+        status
+            .as_object()
+            .expect("status must be a JSON object")
+            .len(),
+        5
+    );
+    let expected_root: PathBuf = std::path::absolute(&home).expect("path must be absolute");
+    assert_eq!(status["projectId"], manifest["projectId"]);
+    assert_eq!(status["name"], "Demo Project");
+    assert_eq!(status["rootPath"].as_str(), expected_root.to_str());
+    assert_eq!(status["createdAt"], manifest["createdAt"]);
+    assert_eq!(status["eventCount"].as_u64(), Some(1));
+}
+
+#[test]
+fn status_fails_when_manifest_and_database_identity_disagree() {
+    let temp = TempDir::new().expect("temp directory must exist");
+    let home = temp.path().join("demo");
+    assert!(run_init(&home).status.success());
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(home.join("coldstart.project.json")).expect("manifest must be readable"),
+    )
+    .expect("manifest must be valid JSON");
+    let project_id = manifest["projectId"]
+        .as_str()
+        .expect("manifest must contain a project id");
+    let connection = Connection::open(home.join(".coldstart").join("state.db"))
+        .expect("database must open directly");
+    connection
+        .execute(
+            "UPDATE projects SET name = 'Tampered Project' WHERE id = ?1",
+            [project_id],
+        )
+        .expect("database project must be updated");
+    drop(connection);
+
+    let output = run_status(&home);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+    assert!(stderr.contains("disagree"), "stderr: {stderr}");
+}
+
+#[test]
+fn status_derives_the_root_after_the_project_home_moves() {
+    let temp = TempDir::new().expect("temp directory must exist");
+    let original_home = temp.path().join("original");
+    let moved_home = temp.path().join("moved");
+    assert!(run_init(&original_home).status.success());
+    fs::rename(&original_home, &moved_home).expect("project home must move");
+
+    let output = run_status(&moved_home);
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let status: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("status must be valid JSON");
+    let expected_root = std::path::absolute(&moved_home).expect("path must be absolute");
+    assert_eq!(status["rootPath"].as_str(), expected_root.to_str());
+}
+
+#[test]
+fn status_fails_for_an_empty_directory() {
+    let temp = TempDir::new().expect("temp directory must exist");
+
+    let output = run_status(temp.path());
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+    assert!(stderr.contains("manifest is missing"), "stderr: {stderr}");
+}
+
+#[test]
+fn status_does_not_recreate_a_missing_database() {
+    let temp = TempDir::new().expect("temp directory must exist");
+    let home = temp.path().join("demo");
+    assert!(run_init(&home).status.success());
+    let database_path = home.join(".coldstart").join("state.db");
+    fs::remove_file(&database_path).expect("database must be removable");
+
+    let output = run_status(&home);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+    assert!(stderr.contains("database is missing"), "stderr: {stderr}");
+    assert!(!database_path.exists());
 }
