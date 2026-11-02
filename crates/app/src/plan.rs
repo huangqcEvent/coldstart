@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
@@ -7,18 +7,20 @@ use std::{
 
 use chrono::{Duration, Utc};
 use coldstart_adapters::{
-    GitAdapter, GitCommitVerification, SecretStore, VerificationCommandExecution,
+    GitAdapter, GitCommitVerification, ModelConfig, OpenAiCompatibleReviewModel, ReviewModel,
+    ReviewModelRequest, ReviewStandardPrompt, SecretStore, VerificationCommandExecution,
     VerificationCommandExecutor, WindowsSecretStore, WindowsVerificationExecutor,
     sanitize_verification_output,
 };
 use coldstart_core::{
     ClaimResult, DEFAULT_LEASE_MINUTES, GitSyncRecord, GitSyncStatus, LeaseSummary, PlanContent,
-    PlanPublishPreview, PlanRevision, PlanRevisionId, Repository, RepositorySyncPolicy,
-    TaskContext, TaskKind, TaskReferenceContent, VerificationCommandResult,
-    VerificationFailureKind, VerificationResult, VerificationSnapshot, VerificationStatus,
-    WorkBlockerRecord, WorkItem, WorkItemId, WorkReportInput, WorkReportRecord, compile_plan,
+    PlanPublishPreview, PlanRevision, PlanRevisionId, PlanStatus, Repository, RepositorySyncPolicy,
+    ReviewFailure, ReviewResult, ReviewScope, ReviewSnapshot, ReviewStatus, TaskContext, TaskKind,
+    TaskReferenceContent, VerificationCommandResult, VerificationFailureKind, VerificationResult,
+    VerificationSnapshot, VerificationStatus, WorkBlockerRecord, WorkItem, WorkItemId,
+    WorkReportInput, WorkReportRecord, compile_plan, has_blocking_findings,
 };
-use coldstart_storage::{BeginVerification, NewWorkBlocker};
+use coldstart_storage::{BeginReview, BeginVerification, NewWorkBlocker, PendingReview};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -28,6 +30,7 @@ use crate::{
     context_compiler::{compile_reference, compile_task_context},
     integration::git_auth_for_repository,
     plan_workspace::build_plan_workspace,
+    review::{read_review_snapshot_standard, validate_review_standards_for_claim},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,11 +41,14 @@ pub struct ClaimRequest {
     pub request_id: String,
 }
 
+type ReviewClaimBases = BTreeMap<(String, String), String>;
+
 #[derive(Clone)]
 pub struct PlanService {
     secrets: Arc<dyn SecretStore>,
     git: Arc<dyn PlanGitGateway>,
     verification: Arc<dyn VerificationCommandExecutor>,
+    review_model: Arc<dyn ReviewModel>,
 }
 
 impl PlanService {
@@ -67,10 +73,25 @@ impl PlanService {
         git: Arc<dyn PlanGitGateway>,
         verification: Arc<dyn VerificationCommandExecutor>,
     ) -> Self {
+        Self::with_review_model(
+            secrets,
+            git,
+            verification,
+            Arc::new(OpenAiCompatibleReviewModel::new()),
+        )
+    }
+
+    pub fn with_review_model(
+        secrets: Arc<dyn SecretStore>,
+        git: Arc<dyn PlanGitGateway>,
+        verification: Arc<dyn VerificationCommandExecutor>,
+        review_model: Arc<dyn ReviewModel>,
+    ) -> Self {
         Self {
             secrets,
             git,
             verification,
+            review_model,
         }
     }
 
@@ -186,13 +207,16 @@ impl PlanService {
         request: ClaimRequest,
     ) -> Result<ClaimResult, AppError> {
         let mut project = OpenProject::open(project_home)?;
-        let claimed = project.database.claim_work(
+        let review_base_commits =
+            self.prepare_review_claim(&project, request.repository.as_deref())?;
+        let claimed = project.database.claim_work_with_review_bases(
             &project.project.id,
             &request.agent_profile,
             request.repository.as_deref(),
             &request.request_id,
             Utc::now(),
             default_lease_duration(),
+            review_base_commits.as_ref(),
         )?;
         let ClaimResult::Claimed(claimed) = claimed else {
             return Ok(claimed);
@@ -220,6 +244,24 @@ impl PlanService {
                 }),
             };
         }
+        if let Some(snapshot) = claimed.run.review_snapshot.as_ref() {
+            let base_ref = task
+                .base_ref
+                .as_deref()
+                .unwrap_or(&repository.default_branch);
+            let actual_base = self.git.resolve_commit(&repository.local_path, base_ref)?;
+            if actual_base != snapshot.base_commit {
+                let reason = "Review base commit changed during claim preparation".to_owned();
+                project.database.release_work(
+                    &claimed.work_item.id,
+                    &claimed.lease_token,
+                    &reason,
+                    Utc::now(),
+                    default_lease_duration(),
+                )?;
+                return Err(AppError::ReviewNotConfigured(claimed.work_item.id));
+            }
+        }
         Ok(ClaimResult::Claimed(claimed))
     }
 
@@ -246,6 +288,7 @@ impl PlanService {
             &authorization.task_spec,
             &work_items,
             authorization.run.verification_snapshot.clone(),
+            authorization.run.review_snapshot.as_ref(),
         )
     }
 
@@ -273,6 +316,7 @@ impl PlanService {
             &authorization.task_spec,
             &reference_id,
             &work_items,
+            authorization.run.review_snapshot.as_ref(),
         )?
         .ok_or(AppError::ReferenceNotFound(reference_id))
     }
@@ -362,7 +406,7 @@ impl PlanService {
             default_lease_duration(),
         )? {
             BeginVerification::AlreadyResolved(record) => {
-                return resolved_verification_report(record);
+                return resolved_verification_report(*record);
             }
             BeginVerification::Started(pending) => pending,
         };
@@ -382,16 +426,7 @@ impl PlanService {
             &git_verification,
             started_at,
         );
-        let passed = result.status == VerificationStatus::Passed;
-        let record = if passed {
-            project.database.finish_work_verification_success(
-                &project.project.id,
-                &work_item_id,
-                &pending.report.id,
-                result.clone(),
-                Utc::now(),
-            )?
-        } else {
+        if result.status != VerificationStatus::Passed {
             project.database.finish_work_verification_failure(
                 &project.project.id,
                 &work_item_id,
@@ -399,52 +434,406 @@ impl PlanService {
                 result.clone(),
                 Utc::now(),
                 default_lease_duration(),
-            )?
-        };
-
-        if !passed {
+            )?;
             return Err(verification_outcome_error(&result));
         }
 
-        if record.accepted {
-            let push = git_auth_for_repository(&project, &repository, self.secrets.as_ref())
-                .map_err(|error| error.to_string())
-                .and_then(|auth| {
-                    self.git
-                        .validate_remote(&repository.local_path, "origin", &repository.remote_url)
-                        .map_err(|error| error.to_string())?;
-                    self.git
-                        .push_branch(
-                            &repository.local_path,
-                            &git_verification.branch,
-                            &repository.protected_branches,
-                            &auth,
-                        )
-                        .map_err(|error| error.to_string())
-                });
-            let sync = match push {
-                Ok(()) => GitSyncRecord::new(
-                    project.project.id,
-                    work_item_id,
-                    repository.id,
-                    git_verification.branch,
-                    git_verification.commit_sha,
-                    GitSyncStatus::Pushed,
-                    None,
-                ),
-                Err(error) => GitSyncRecord::new(
-                    project.project.id,
-                    work_item_id,
-                    repository.id,
-                    git_verification.branch,
-                    git_verification.commit_sha,
-                    GitSyncStatus::Failed,
-                    Some(error),
-                ),
+        if pending.review.is_some() {
+            let begin = project.database.finish_work_verification_and_begin_review(
+                &project.project.id,
+                &work_item_id,
+                &pending.report.id,
+                result,
+                Utc::now(),
+            )?;
+            return match begin {
+                BeginReview::AlreadyResolved(record) => resolved_verification_report(record),
+                BeginReview::Running(_) => Err(AppError::ReviewInProgress(work_item_id)),
+                BeginReview::Started(review) => {
+                    let record = self.execute_review(
+                        &mut project,
+                        &task,
+                        &repository,
+                        &git_verification,
+                        review,
+                    )?;
+                    self.push_completed_report(
+                        &mut project,
+                        work_item_id,
+                        &repository,
+                        &git_verification,
+                    )?;
+                    Ok(record)
+                }
             };
-            project.database.record_git_sync(&sync)?;
+        }
+
+        let record = project.database.finish_work_verification_success(
+            &project.project.id,
+            &work_item_id,
+            &pending.report.id,
+            result,
+            Utc::now(),
+        )?;
+        if record.accepted {
+            self.push_completed_report(&mut project, work_item_id, &repository, &git_verification)?;
         }
         Ok(record)
+    }
+
+    pub fn waive_review(
+        &self,
+        project_home: PathBuf,
+        work_item_id: WorkItemId,
+        report_id: coldstart_core::WorkReportId,
+        reason: String,
+    ) -> Result<WorkReportRecord, AppError> {
+        let mut project = OpenProject::open(project_home)?;
+        let task = project
+            .database
+            .task_spec_for_work_item(&work_item_id)?
+            .ok_or(AppError::WorkItemNotFound(work_item_id))?;
+        let repository = repository_for_task(&project, &task)?
+            .ok_or(AppError::ReviewNotConfigured(work_item_id))?;
+        let existing = project
+            .database
+            .list_work_reports(&project.project.id)?
+            .into_iter()
+            .find(|report| report.id == report_id && report.work_item_id == work_item_id)
+            .ok_or_else(|| AppError::ReportRejected("work report does not exist".to_owned()))?;
+        let waived_by = std::env::var("USERNAME")
+            .or_else(|_| std::env::var("USER"))
+            .unwrap_or_else(|_| "local-operator".to_owned());
+        let record = project.database.waive_work_review(
+            &project.project.id,
+            &work_item_id,
+            &report_id,
+            &reason,
+            &waived_by,
+            Utc::now(),
+        )?;
+        if record.accepted {
+            let checkout =
+                GitCommitVerification {
+                    commit_sha: existing.report.commit_sha.clone().ok_or_else(|| {
+                        AppError::ReportRejected("commit SHA is required".to_owned())
+                    })?,
+                    branch: existing.report.branch.clone().ok_or_else(|| {
+                        AppError::ReportRejected("work branch is required".to_owned())
+                    })?,
+                    changed_files: existing.report.changed_files.clone(),
+                };
+            self.push_completed_report(&mut project, work_item_id, &repository, &checkout)?;
+        }
+        Ok(record)
+    }
+
+    fn execute_review(
+        &self,
+        project: &mut OpenProject,
+        task: &coldstart_core::TaskSpec,
+        repository: &Repository,
+        checkout: &GitCommitVerification,
+        pending: PendingReview,
+    ) -> Result<WorkReportRecord, AppError> {
+        let PendingReview { report, snapshot } = pending;
+        let started_at = Utc::now();
+        let api_key = match self.review_api_key(project, &snapshot) {
+            Ok(api_key) => api_key,
+            Err(error) => {
+                return self.fail_review(
+                    project,
+                    report.work_item_id,
+                    report.id,
+                    &snapshot,
+                    started_at,
+                    "review_credential_missing",
+                    "AI Review 模型凭据不可用".to_owned(),
+                    error,
+                );
+            }
+        };
+
+        let diff = match self.git.extract_review_diff(
+            &repository.local_path,
+            &snapshot.base_commit,
+            &checkout.commit_sha,
+        ) {
+            Ok(diff) => diff,
+            Err(error) => {
+                let app_error = AppError::Git(error);
+                return self.fail_review(
+                    project,
+                    report.work_item_id,
+                    report.id,
+                    &snapshot,
+                    started_at,
+                    app_error.code(),
+                    "无法从真实 Git 提交提取 Review diff".to_owned(),
+                    app_error,
+                );
+            }
+        };
+        if diff.base_commit != snapshot.base_commit
+            || diff.head_commit != checkout.commit_sha
+            || !same_changed_files(&diff.changed_files(), &checkout.changed_files)
+        {
+            return self.fail_review(
+                project,
+                report.work_item_id,
+                report.id,
+                &snapshot,
+                started_at,
+                "review_failed",
+                "Review diff 与领取快照或报告提交不一致".to_owned(),
+                AppError::ReviewFailed {
+                    details: json!({ "failureCode": "review_diff_mismatch" }),
+                },
+            );
+        }
+
+        let mut standards = Vec::with_capacity(snapshot.standards.len());
+        for standard in &snapshot.standards {
+            let content = match read_review_snapshot_standard(project, standard) {
+                Ok(content) => content,
+                Err(error) => {
+                    return self.fail_review(
+                        project,
+                        report.work_item_id,
+                        report.id,
+                        &snapshot,
+                        started_at,
+                        "review_standard_invalid",
+                        "AI Review 规范正文校验失败".to_owned(),
+                        error,
+                    );
+                }
+            };
+            standards.push(ReviewStandardPrompt {
+                name: standard.name.clone(),
+                scope: match &standard.scope {
+                    ReviewScope::Project => "project".to_owned(),
+                    ReviewScope::Repository(repository_key) => repository_key.clone(),
+                },
+                content,
+            });
+        }
+
+        let request = ReviewModelRequest {
+            config: ModelConfig {
+                base_url: snapshot.configuration.base_url.clone(),
+                model: snapshot.configuration.model.clone(),
+                api_key,
+            },
+            task_title: task.title.clone(),
+            task_goal: task.goal.clone(),
+            acceptance_criteria: task
+                .acceptance_criteria
+                .iter()
+                .map(|criterion| criterion.text.clone())
+                .collect(),
+            standards,
+            verification_summary: Some(
+                "ColdStart 已在报告提交的 Git commit 上独立重跑全部仓库验证命令，并全部通过。"
+                    .to_owned(),
+            ),
+            diff,
+        };
+        let output = match self.review_model.review(&request) {
+            Ok(output) => output,
+            Err(error) => {
+                let code = error.code();
+                let message = error.safe_message();
+                let app_error = AppError::ReviewModelFailure {
+                    code,
+                    details: json!({
+                        "failureCode": code,
+                        "message": message,
+                        "model": snapshot.configuration.model,
+                    }),
+                };
+                return self.fail_review(
+                    project,
+                    report.work_item_id,
+                    report.id,
+                    &snapshot,
+                    started_at,
+                    code,
+                    message,
+                    app_error,
+                );
+            }
+        };
+
+        let blocked = has_blocking_findings(
+            &output.findings,
+            &snapshot.configuration.blocking_severities,
+        );
+        let finished_at = Utc::now();
+        let review = ReviewResult {
+            snapshot_hash: snapshot.content_hash(),
+            status: if blocked {
+                ReviewStatus::Blocked
+            } else {
+                ReviewStatus::Passed
+            },
+            summary: output.summary,
+            findings: output.findings,
+            model: snapshot.configuration.model.clone(),
+            failure: None,
+            started_at,
+            finished_at: Some(finished_at),
+            duration_ms: Some(
+                (finished_at - started_at)
+                    .num_milliseconds()
+                    .max(0)
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            ),
+        };
+        if blocked {
+            project.database.finish_work_review_failure(
+                &project.project.id,
+                &report.work_item_id,
+                &report.id,
+                review.clone(),
+                Utc::now(),
+                default_lease_duration(),
+            )?;
+            return Err(AppError::ReviewBlocked {
+                details: review_details_json(&review, report.id),
+            });
+        }
+        project
+            .database
+            .finish_work_review_success(
+                &project.project.id,
+                &report.work_item_id,
+                &report.id,
+                review,
+                Utc::now(),
+            )
+            .map_err(Into::into)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn fail_review(
+        &self,
+        project: &mut OpenProject,
+        work_item_id: WorkItemId,
+        report_id: coldstart_core::WorkReportId,
+        snapshot: &ReviewSnapshot,
+        started_at: chrono::DateTime<Utc>,
+        failure_code: &str,
+        message: String,
+        error: AppError,
+    ) -> Result<WorkReportRecord, AppError> {
+        let finished_at = Utc::now();
+        let review = ReviewResult {
+            snapshot_hash: snapshot.content_hash(),
+            status: ReviewStatus::Failed,
+            summary: "AI Review 未能完成；任务保持进行中且不会推送。".to_owned(),
+            findings: Vec::new(),
+            model: snapshot.configuration.model.clone(),
+            failure: Some(ReviewFailure {
+                code: failure_code.to_owned(),
+                message,
+            }),
+            started_at,
+            finished_at: Some(finished_at),
+            duration_ms: Some(
+                (finished_at - started_at)
+                    .num_milliseconds()
+                    .max(0)
+                    .try_into()
+                    .unwrap_or(u64::MAX),
+            ),
+        };
+        project.database.finish_work_review_failure(
+            &project.project.id,
+            &work_item_id,
+            &report_id,
+            review,
+            Utc::now(),
+            default_lease_duration(),
+        )?;
+        Err(error)
+    }
+
+    fn review_api_key(
+        &self,
+        project: &OpenProject,
+        snapshot: &ReviewSnapshot,
+    ) -> Result<String, AppError> {
+        let Some(credential_id) = snapshot.configuration.credential_id else {
+            return Ok(String::new());
+        };
+        let credential = project
+            .database
+            .credential(&project.project.id, &credential_id)?
+            .ok_or(AppError::ReviewCredentialMissing)?;
+        self.secrets
+            .get(&credential.secret_ref)
+            .map_err(|_| AppError::ReviewCredentialMissing)
+    }
+
+    fn push_completed_report(
+        &self,
+        project: &mut OpenProject,
+        work_item_id: WorkItemId,
+        repository: &Repository,
+        checkout: &GitCommitVerification,
+    ) -> Result<(), AppError> {
+        if project
+            .database
+            .list_git_syncs(&project.project.id)?
+            .iter()
+            .any(|sync| {
+                sync.work_item_id == work_item_id
+                    && sync.branch == checkout.branch
+                    && sync.commit_sha == checkout.commit_sha
+                    && sync.status == GitSyncStatus::Pushed
+            })
+        {
+            return Ok(());
+        }
+        let push = git_auth_for_repository(project, repository, self.secrets.as_ref())
+            .map_err(|error| error.to_string())
+            .and_then(|auth| {
+                self.git
+                    .validate_remote(&repository.local_path, "origin", &repository.remote_url)
+                    .map_err(|error| error.to_string())?;
+                self.git
+                    .push_branch(
+                        &repository.local_path,
+                        &checkout.branch,
+                        &repository.protected_branches,
+                        &auth,
+                    )
+                    .map_err(|error| error.to_string())
+            });
+        let sync = match push {
+            Ok(()) => GitSyncRecord::new(
+                project.project.id,
+                work_item_id,
+                repository.id,
+                checkout.branch.clone(),
+                checkout.commit_sha.clone(),
+                GitSyncStatus::Pushed,
+                None,
+            ),
+            Err(error) => GitSyncRecord::new(
+                project.project.id,
+                work_item_id,
+                repository.id,
+                checkout.branch.clone(),
+                checkout.commit_sha.clone(),
+                GitSyncStatus::Failed,
+                Some(error),
+            ),
+        };
+        project.database.record_git_sync(&sync)?;
+        Ok(())
     }
 
     fn run_repository_verification(
@@ -590,6 +979,69 @@ impl PlanService {
         )?;
         Ok(())
     }
+
+    fn prepare_review_claim(
+        &self,
+        project: &OpenProject,
+        requested_repository: Option<&str>,
+    ) -> Result<Option<ReviewClaimBases>, AppError> {
+        let Some(configuration) = project.database.review_configuration(&project.project.id)?
+        else {
+            return Ok(None);
+        };
+        if !configuration.enabled {
+            return Ok(None);
+        }
+        if !configuration.has_valid_consent() {
+            return Err(AppError::ReviewConsentRequired);
+        }
+        if let Some(credential_id) = configuration.credential_id {
+            let credential = project
+                .database
+                .credential(&project.project.id, &credential_id)?
+                .ok_or(AppError::ReviewCredentialMissing)?;
+            self.secrets
+                .get(&credential.secret_ref)
+                .map_err(|_| AppError::ReviewCredentialMissing)?;
+        }
+        validate_review_standards_for_claim(project)?;
+
+        let Some(plan) = project
+            .database
+            .latest_plan(&project.project.id, PlanStatus::Published)?
+        else {
+            return Ok(Some(BTreeMap::new()));
+        };
+        let mut bases = BTreeMap::new();
+        for task in plan.content.tasks.iter().filter(|task| {
+            task.kind == TaskKind::AgentCoding
+                && requested_repository
+                    .is_none_or(|repository| task.repository_key.as_deref() == Some(repository))
+        }) {
+            let Some(repository_key) = task.repository_key.as_deref() else {
+                continue;
+            };
+            let Some(repository) = project
+                .database
+                .repository_by_key(&project.project.id, repository_key)?
+            else {
+                continue;
+            };
+            let base_ref = task
+                .base_ref
+                .as_deref()
+                .unwrap_or(&repository.default_branch);
+            let commit = self.git.resolve_commit(&repository.local_path, base_ref)?;
+            bases.insert(
+                (
+                    repository_key.to_owned(),
+                    task.base_ref.clone().unwrap_or_default(),
+                ),
+                commit,
+            );
+        }
+        Ok(Some(bases))
+    }
 }
 
 impl Default for PlanService {
@@ -641,6 +1093,31 @@ fn bounded_command_detail(existing: &str, detail: &str) -> String {
 }
 
 fn resolved_verification_report(record: WorkReportRecord) -> Result<WorkReportRecord, AppError> {
+    match record.review_status {
+        ReviewStatus::Running => return Err(AppError::ReviewInProgress(record.work_item_id)),
+        ReviewStatus::Blocked => {
+            return Err(AppError::ReviewBlocked {
+                details: record
+                    .review
+                    .as_ref()
+                    .map(|review| review_details_json(review, record.id))
+                    .unwrap_or_else(|| json!({ "reviewStatus": "blocked" })),
+            });
+        }
+        ReviewStatus::Failed => {
+            return Err(review_failure_error(&record));
+        }
+        ReviewStatus::Interrupted => {
+            return Err(AppError::ReviewInterrupted {
+                details: record
+                    .review
+                    .as_ref()
+                    .map(|review| review_details_json(review, record.id))
+                    .unwrap_or_else(|| json!({ "failureCode": "review_interrupted" })),
+            });
+        }
+        ReviewStatus::NotRequired | ReviewStatus::Passed | ReviewStatus::Waived => {}
+    }
     match record.verification_status {
         VerificationStatus::Passed | VerificationStatus::NotRequired => Ok(record),
         VerificationStatus::Running => Err(AppError::VerificationInProgress(record.work_item_id)),
@@ -658,6 +1135,27 @@ fn resolved_verification_report(record: WorkReportRecord) -> Result<WorkReportRe
                 .unwrap_or_else(|| json!({ "failureKind": "interrupted" })),
         }),
     }
+}
+
+fn review_failure_error(record: &WorkReportRecord) -> AppError {
+    let failure = record
+        .review
+        .as_ref()
+        .and_then(|review| review.failure.as_ref());
+    let code = match failure.map(|failure| failure.code.as_str()) {
+        Some("review_timeout") => "review_timeout",
+        Some("review_response_invalid") => "review_response_invalid",
+        Some("review_input_too_large") => "review_input_too_large",
+        Some("review_credential_missing") => "review_credential_missing",
+        Some("review_standard_invalid") => "review_standard_invalid",
+        _ => "review_failed",
+    };
+    let details = record
+        .review
+        .as_ref()
+        .map(|review| review_details_json(review, record.id))
+        .unwrap_or_else(|| json!({ "failureCode": code }));
+    AppError::ReviewModelFailure { code, details }
 }
 
 fn verification_outcome_error(result: &VerificationResult) -> AppError {
@@ -734,4 +1232,31 @@ fn ensure_reported_files_match(
             "reported changed files do not match the commit; reported {reported:?}, actual {actual:?}"
         )))
     }
+}
+
+fn same_changed_files(left: &[String], right: &[String]) -> bool {
+    let left = left
+        .iter()
+        .map(|path| path.replace('\\', "/"))
+        .collect::<BTreeSet<_>>();
+    let right = right
+        .iter()
+        .map(|path| path.replace('\\', "/"))
+        .collect::<BTreeSet<_>>();
+    left == right
+}
+
+fn review_details_json(
+    review: &ReviewResult,
+    report_id: coldstart_core::WorkReportId,
+) -> serde_json::Value {
+    json!({
+        "reportId": report_id,
+        "snapshotHash": review.snapshot_hash,
+        "reviewStatus": review.status,
+        "summary": review.summary,
+        "findings": review.findings,
+        "model": review.model,
+        "durationMs": review.duration_ms,
+    })
 }

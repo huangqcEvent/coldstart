@@ -21,12 +21,13 @@ use crate::{
 pub struct PendingVerification {
     pub report: WorkReportRecord,
     pub snapshot: VerificationSnapshot,
+    pub review: Option<coldstart_core::ReviewSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BeginVerification {
-    Started(PendingVerification),
-    AlreadyResolved(WorkReportRecord),
+    Started(Box<PendingVerification>),
+    AlreadyResolved(Box<WorkReportRecord>),
 }
 
 impl Database {
@@ -116,7 +117,7 @@ impl Database {
                 return Err(StorageError::VerificationInProgress(*work_item_id));
             }
             transaction.commit()?;
-            return Ok(BeginVerification::AlreadyResolved(existing));
+            return Ok(BeginVerification::AlreadyResolved(Box::new(existing)));
         }
 
         let authorization = authorize_in_tx(
@@ -162,6 +163,7 @@ impl Database {
             .verification_snapshot
             .clone()
             .ok_or(StorageError::VerificationNotConfigured(*work_item_id))?;
+        let review = authorization.run.review_snapshot.clone();
         let snapshot_hash = snapshot.content_hash();
         if authorization.run.verification_snapshot_hash.as_deref() != Some(snapshot_hash.as_str()) {
             return Err(StorageError::VerificationCommandInvalid(
@@ -222,10 +224,11 @@ impl Database {
             ),
         )?;
         transaction.commit()?;
-        Ok(BeginVerification::Started(PendingVerification {
+        Ok(BeginVerification::Started(Box::new(PendingVerification {
             report: record,
             snapshot,
-        }))
+            review,
+        })))
     }
 
     pub fn finish_work_verification_success(
@@ -475,7 +478,7 @@ pub(crate) fn interrupt_running_verification(
     Ok(())
 }
 
-fn update_verification_report(
+pub(crate) fn update_verification_report(
     transaction: &rusqlite::Transaction<'_>,
     report_id: &WorkReportId,
     verification: &VerificationResult,
@@ -526,7 +529,7 @@ fn failure_kind_str(kind: VerificationFailureKind) -> &'static str {
     }
 }
 
-fn record_work_item_project(
+pub(crate) fn record_work_item_project(
     transaction: &rusqlite::Transaction<'_>,
     work_item_id: &WorkItemId,
 ) -> Result<ProjectId, StorageError> {

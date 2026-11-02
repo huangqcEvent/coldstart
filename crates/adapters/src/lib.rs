@@ -2,6 +2,7 @@ mod document;
 mod git;
 mod github;
 mod model;
+mod review;
 mod secret;
 mod verification;
 
@@ -17,6 +18,10 @@ pub use github::{
 pub use model::{
     BlueprintModel, ModelAnchor, ModelConfig, ModelError, ModelExtractionRequest, ModelSource,
     OpenAiCompatibleModel,
+};
+pub use review::{
+    OpenAiCompatibleReviewModel, ReviewDiff, ReviewDiffFile, ReviewModel, ReviewModelError,
+    ReviewModelOutput, ReviewModelRequest, ReviewStandardPrompt,
 };
 pub use secret::{MemorySecretStore, SecretStore, SecretStoreError, WindowsSecretStore};
 pub use verification::{

@@ -8,7 +8,8 @@ use chrono::{DateTime, Duration, Utc};
 use coldstart_core::{
     ClaimFailure, ClaimResult, ClaimedWork, ContractState, DomainEvent, DomainEventKind, LeaseId,
     LeaseStatus, LeaseSummary, PlanContent, PlanPublishPreview, PlanRevision, PlanRevisionId,
-    PlanStatus, PlanTaskDiff, ProjectId, TaskKind, TaskSpec, TaskSpecId, VerificationResult,
+    PlanStatus, PlanTaskDiff, ProjectId, ReviewConfigurationSnapshot, ReviewSnapshot,
+    ReviewStandardSnapshot, ReviewStatus, TaskKind, TaskSpec, TaskSpecId, VerificationResult,
     VerificationSnapshot, VerificationStatus, WorkAuthorization, WorkBlockerRecord, WorkItem,
     WorkItemId, WorkItemStatus, WorkReportId, WorkReportInput, WorkReportRecord, WorkRun,
     WorkRunId, WorkRunStatus, inherited_work_status, sha256_hex, validate_work_report,
@@ -19,6 +20,9 @@ use uuid::Uuid;
 use crate::{
     Database, StorageError,
     database::insert_event,
+    review_store::{
+        applicable_review_standards_in, interrupt_running_review, review_configuration_in,
+    },
     verification_store::{
         commands_for_repository, interrupt_running_verification, read_verification_fields,
         repository_id_by_key, verification_status_str,
@@ -396,6 +400,76 @@ impl Database {
         now: DateTime<Utc>,
         lease_duration: Duration,
     ) -> Result<ClaimResult, StorageError> {
+        self.claim_work_impl(
+            project_id,
+            agent_profile,
+            repository,
+            request_id,
+            now,
+            lease_duration,
+            None,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn claim_work_with_review(
+        &mut self,
+        project_id: &ProjectId,
+        agent_profile: &str,
+        repository: Option<&str>,
+        request_id: &str,
+        now: DateTime<Utc>,
+        lease_duration: Duration,
+        review_base_commit: Option<&str>,
+    ) -> Result<ClaimResult, StorageError> {
+        self.claim_work_impl(
+            project_id,
+            agent_profile,
+            repository,
+            request_id,
+            now,
+            lease_duration,
+            review_base_commit,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn claim_work_with_review_bases(
+        &mut self,
+        project_id: &ProjectId,
+        agent_profile: &str,
+        repository: Option<&str>,
+        request_id: &str,
+        now: DateTime<Utc>,
+        lease_duration: Duration,
+        review_base_commits: Option<&BTreeMap<(String, String), String>>,
+    ) -> Result<ClaimResult, StorageError> {
+        self.claim_work_impl(
+            project_id,
+            agent_profile,
+            repository,
+            request_id,
+            now,
+            lease_duration,
+            None,
+            review_base_commits,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn claim_work_impl(
+        &mut self,
+        project_id: &ProjectId,
+        agent_profile: &str,
+        repository: Option<&str>,
+        request_id: &str,
+        now: DateTime<Utc>,
+        lease_duration: Duration,
+        review_base_commit: Option<&str>,
+        review_base_commits: Option<&BTreeMap<(String, String), String>>,
+    ) -> Result<ClaimResult, StorageError> {
         if agent_profile.trim().is_empty() || request_id.trim().is_empty() {
             return Err(StorageError::EmptyClaimRequest);
         }
@@ -491,6 +565,72 @@ impl Database {
         let snapshot_json = serde_json::to_string(&snapshot)?;
         let snapshot_hash = snapshot.content_hash();
 
+        let review_configuration = review_configuration_in(&transaction, project_id)?;
+        let review_snapshot = match review_configuration {
+            Some(configuration) if configuration.enabled => {
+                if !configuration.has_valid_consent() {
+                    transaction.commit()?;
+                    return Ok(ClaimResult::Empty(ClaimFailure::ReviewConsentRequired));
+                }
+                if let Some(credential_id) = configuration.credential_id {
+                    let credential_exists: bool = transaction.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM credentials
+                         WHERE id = ?1 AND project_id = ?2)",
+                        params![credential_id.to_string(), project_id.to_string()],
+                        |row| row.get(0),
+                    )?;
+                    if !credential_exists {
+                        transaction.commit()?;
+                        return Ok(ClaimResult::Empty(ClaimFailure::ReviewCredentialMissing));
+                    }
+                }
+                let base_ref = task.base_ref.as_deref().unwrap_or_default();
+                let base_commit = review_base_commit.or_else(|| {
+                    review_base_commits
+                        .and_then(|commits| {
+                            commits.get(&(repository_key.to_owned(), base_ref.to_owned()))
+                        })
+                        .map(String::as_str)
+                });
+                let Some(base_commit) = base_commit else {
+                    transaction.commit()?;
+                    return Ok(ClaimResult::Empty(ClaimFailure::ReviewNotConfigured));
+                };
+                let standards =
+                    applicable_review_standards_in(&transaction, project_id, repository_key)?
+                        .into_iter()
+                        .map(|standard| ReviewStandardSnapshot {
+                            standard_id: standard.id,
+                            revision_id: standard.current_revision.id,
+                            name: standard.name,
+                            scope: standard.scope,
+                            position: standard.position,
+                            content_hash: standard.current_revision.content_hash,
+                            character_count: standard.current_revision.character_count,
+                        })
+                        .collect();
+                Some(
+                    ReviewSnapshot::new(
+                        repository_key,
+                        base_commit,
+                        ReviewConfigurationSnapshot::from_configuration(&configuration),
+                        standards,
+                    )
+                    .map_err(|_| {
+                        StorageError::ReviewInvalid(
+                            "could not create a valid Review claim snapshot".to_owned(),
+                        )
+                    })?,
+                )
+            }
+            _ => None,
+        };
+        let review_snapshot_json = review_snapshot
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?;
+        let review_snapshot_hash = review_snapshot.as_ref().map(ReviewSnapshot::content_hash);
+
         let lease_token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let token_hash = sha256_hex(lease_token.as_bytes());
         let lease_id = LeaseId::new();
@@ -514,8 +654,8 @@ impl Database {
             "INSERT INTO work_runs (
                 id, work_item_id, lease_id, agent_profile, claim_request_id,
                 status, verification_snapshot_json, verification_snapshot_hash,
-                started_at, ended_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, 'claimed', ?6, ?7, ?8, NULL)",
+                review_snapshot_json, review_snapshot_hash, started_at, ended_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, 'claimed', ?6, ?7, ?8, ?9, ?10, NULL)",
             params![
                 run_id.to_string(),
                 item.id.to_string(),
@@ -524,6 +664,8 @@ impl Database {
                 request_id.trim(),
                 snapshot_json,
                 snapshot_hash,
+                review_snapshot_json,
+                review_snapshot_hash,
                 now.to_rfc3339(),
             ],
         )?;
@@ -569,6 +711,8 @@ impl Database {
                 status: WorkRunStatus::Claimed,
                 verification_snapshot: Some(snapshot),
                 verification_snapshot_hash: Some(snapshot_hash),
+                review_snapshot: review_snapshot.clone(),
+                review_snapshot_hash,
                 started_at: now,
                 ended_at: None,
             },
@@ -984,7 +1128,8 @@ impl Database {
         let mut statement = self.connection().prepare(
             "SELECT r.id, r.work_item_id, r.lease_id, r.agent_profile,
                     r.claim_request_id, r.status, r.verification_snapshot_json,
-                    r.verification_snapshot_hash, r.started_at, r.ended_at
+                    r.verification_snapshot_hash, r.review_snapshot_json,
+                    r.review_snapshot_hash, r.started_at, r.ended_at
              FROM work_runs r JOIN work_items w ON w.id = r.work_item_id
              WHERE w.project_id = ?1 ORDER BY r.started_at DESC LIMIT 200",
         )?;
@@ -1005,7 +1150,9 @@ impl Database {
                     r.report_json, r.report_hash, r.accepted,
                     r.rejection_reasons_json, r.created_at,
                     r.verification_status, r.verification_json,
-                    r.verification_started_at, r.verification_finished_at
+                    r.verification_started_at, r.verification_finished_at,
+                    r.review_status, r.review_json, r.review_started_at,
+                    r.review_finished_at, r.review_waiver_json
              FROM work_reports r JOIN work_items w ON w.id = r.work_item_id
              WHERE w.project_id = ?1 ORDER BY r.created_at DESC LIMIT 200",
         )?;
@@ -1088,6 +1235,7 @@ fn expire_active_leases(
             params![now.to_rfc3339(), lease_id.to_string()],
         )?;
         interrupt_running_verification(transaction, &work_item_id, now)?;
+        interrupt_running_review(transaction, &work_item_id, now)?;
         if matches!(
             status,
             WorkItemStatus::Claimed | WorkItemStatus::InProgress | WorkItemStatus::Submitted
@@ -1496,6 +1644,9 @@ pub(crate) fn insert_work_report(
         rejection_reasons,
         verification_status,
         verification,
+        review_status: ReviewStatus::NotRequired,
+        review: None,
+        review_waiver: None,
         created_at: now,
     })
 }
@@ -1638,6 +1789,8 @@ struct StoredRunRow {
     status: String,
     verification_snapshot_json: Option<String>,
     verification_snapshot_hash: Option<String>,
+    review_snapshot_json: Option<String>,
+    review_snapshot_hash: Option<String>,
     started_at: String,
     ended_at: Option<String>,
 }
@@ -1656,6 +1809,11 @@ impl StoredRunRow {
                 .map(|value| serde_json::from_str(&value))
                 .transpose()?,
             verification_snapshot_hash: self.verification_snapshot_hash,
+            review_snapshot: self
+                .review_snapshot_json
+                .map(|value| serde_json::from_str(&value))
+                .transpose()?,
+            review_snapshot_hash: self.review_snapshot_hash,
             started_at: parse_date(&self.started_at)?,
             ended_at: parse_optional_date(self.ended_at)?,
         })
@@ -1672,8 +1830,10 @@ fn read_run_row(row: &Row<'_>) -> rusqlite::Result<StoredRunRow> {
         status: row.get(5)?,
         verification_snapshot_json: row.get(6)?,
         verification_snapshot_hash: row.get(7)?,
-        started_at: row.get(8)?,
-        ended_at: row.get(9)?,
+        review_snapshot_json: row.get(8)?,
+        review_snapshot_hash: row.get(9)?,
+        started_at: row.get(10)?,
+        ended_at: row.get(11)?,
     })
 }
 
@@ -1685,7 +1845,7 @@ fn query_active_run_for_lease(
         .query_row(
             "SELECT id, work_item_id, lease_id, agent_profile, claim_request_id,
                     status, verification_snapshot_json, verification_snapshot_hash,
-                    started_at, ended_at
+                    review_snapshot_json, review_snapshot_hash, started_at, ended_at
              FROM work_runs WHERE lease_id = ?1 AND ended_at IS NULL
              ORDER BY started_at DESC LIMIT 1",
             [lease_id.to_string()],
@@ -1708,6 +1868,9 @@ struct StoredReportRow {
     created_at: String,
     verification_status: VerificationStatus,
     verification: Option<VerificationResult>,
+    review_status: ReviewStatus,
+    review: Option<coldstart_core::ReviewResult>,
+    review_waiver: Option<coldstart_core::ReviewWaiver>,
 }
 
 impl StoredReportRow {
@@ -1723,6 +1886,9 @@ impl StoredReportRow {
             rejection_reasons: serde_json::from_str(&self.rejection_reasons_json)?,
             verification_status: self.verification_status,
             verification: self.verification,
+            review_status: self.review_status,
+            review: self.review,
+            review_waiver: self.review_waiver,
             created_at: parse_date(&self.created_at)?,
         })
     }
@@ -1730,6 +1896,41 @@ impl StoredReportRow {
 
 fn read_report_row(row: &Row<'_>) -> rusqlite::Result<StoredReportRow> {
     let verification = read_verification_fields(row, 9, 10, 11, 12)?;
+    let review_status: String = row.get(13)?;
+    let review_json: Option<String> = row.get(14)?;
+    let _review_started_at: Option<String> = row.get(15)?;
+    let _review_finished_at: Option<String> = row.get(16)?;
+    let review_waiver_json: Option<String> = row.get(17)?;
+    let review_status = ReviewStatus::parse(&review_status).ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            0,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("unknown review status: {review_status}"),
+            )),
+        )
+    })?;
+    let review = review_json
+        .map(|value| serde_json::from_str(&value))
+        .transpose()
+        .map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
+    let review_waiver = review_waiver_json
+        .map(|value| serde_json::from_str(&value))
+        .transpose()
+        .map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
     Ok(StoredReportRow {
         id: row.get(0)?,
         work_item_id: row.get(1)?,
@@ -1742,6 +1943,9 @@ fn read_report_row(row: &Row<'_>) -> rusqlite::Result<StoredReportRow> {
         created_at: row.get(8)?,
         verification_status: verification.status,
         verification: verification.result,
+        review_status,
+        review,
+        review_waiver,
     })
 }
 
@@ -1755,7 +1959,8 @@ pub(crate) fn query_report_by_idempotency(
             "SELECT id, work_item_id, work_run_id, contract_hash, report_json,
                     report_hash, accepted, rejection_reasons_json, created_at,
                     verification_status, verification_json, verification_started_at,
-                    verification_finished_at
+                    verification_finished_at, review_status, review_json,
+                    review_started_at, review_finished_at, review_waiver_json
              FROM work_reports WHERE work_item_id = ?1 AND idempotency_key_hash = ?2",
             params![work_item_id.to_string(), idempotency_hash],
             read_report_row,
@@ -1773,7 +1978,8 @@ pub(crate) fn query_report_by_id(
             "SELECT id, work_item_id, work_run_id, contract_hash, report_json,
                     report_hash, accepted, rejection_reasons_json, created_at,
                     verification_status, verification_json, verification_started_at,
-                    verification_finished_at
+                    verification_finished_at, review_status, review_json,
+                    review_started_at, review_finished_at, review_waiver_json
              FROM work_reports WHERE id = ?1",
             [report_id.to_string()],
             read_report_row,

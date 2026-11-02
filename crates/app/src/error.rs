@@ -134,6 +134,31 @@ pub enum AppError {
     VerificationInterrupted { details: serde_json::Value },
     #[error("invalid verification command: {0}")]
     VerificationCommandInvalid(String),
+    #[error("AI Review configuration requires explicit privacy consent")]
+    ReviewConsentRequired,
+    #[error("AI Review credential is missing or unavailable")]
+    ReviewCredentialMissing,
+    #[error("work item {0} has no Review snapshot")]
+    ReviewNotConfigured(WorkItemId),
+    #[error("work item {0} is already running Review")]
+    ReviewInProgress(WorkItemId),
+    #[error("invalid Review standard: {0}")]
+    ReviewStandardInvalid(String),
+    #[error("Review input exceeds the {limit} character limit; found {actual}")]
+    ReviewInputTooLarge { actual: usize, limit: usize },
+    #[error("AI Review blocked completion")]
+    ReviewBlocked { details: serde_json::Value },
+    #[error("AI Review could not complete")]
+    ReviewFailed { details: serde_json::Value },
+    #[error("AI Review was interrupted")]
+    ReviewInterrupted { details: serde_json::Value },
+    #[error("AI Review failed with {code}")]
+    ReviewModelFailure {
+        code: &'static str,
+        details: serde_json::Value,
+    },
+    #[error("invalid AI Review waiver: {0}")]
+    ReviewWaiverInvalid(String),
 }
 
 impl AppError {
@@ -208,6 +233,13 @@ impl AppError {
             | Self::VerificationInProgress(_) => "verification_in_progress",
             Self::Storage(StorageError::VerificationCommandInvalid(_))
             | Self::VerificationCommandInvalid(_) => "verification_command_invalid",
+            Self::Storage(StorageError::ReviewNotConfigured(_)) => "review_not_configured",
+            Self::Storage(StorageError::ReviewInProgress(_)) => "review_in_progress",
+            Self::Storage(
+                StorageError::ReviewStandardNotFound(_) | StorageError::ReviewStandardDeleted(_),
+            ) => "review_standard_invalid",
+            Self::Storage(StorageError::ReviewInvalid(_)) => "review_failed",
+            Self::Storage(StorageError::EmptyReviewWaiverReason) => "review_waiver_invalid",
             Self::Storage(_) => "storage",
             Self::Io(_) => "io",
             Self::RollbackFailed { .. } => "rollback_failed",
@@ -226,6 +258,17 @@ impl AppError {
             Self::VerificationFailed { .. } => "verification_failed",
             Self::VerificationTimeout { .. } => "verification_timeout",
             Self::VerificationInterrupted { .. } => "verification_interrupted",
+            Self::ReviewConsentRequired => "review_consent_required",
+            Self::ReviewCredentialMissing => "review_credential_missing",
+            Self::ReviewNotConfigured(_) => "review_not_configured",
+            Self::ReviewInProgress(_) => "review_in_progress",
+            Self::ReviewStandardInvalid(_) => "review_standard_invalid",
+            Self::ReviewInputTooLarge { .. } => "review_input_too_large",
+            Self::ReviewBlocked { .. } => "review_blocked",
+            Self::ReviewFailed { .. } => "review_failed",
+            Self::ReviewInterrupted { .. } => "review_interrupted",
+            Self::ReviewModelFailure { code, .. } => code,
+            Self::ReviewWaiverInvalid(_) => "review_waiver_invalid",
         }
     }
 
@@ -234,6 +277,16 @@ impl AppError {
             Self::VerificationFailed { details }
             | Self::VerificationTimeout { details }
             | Self::VerificationInterrupted { details } => Some(details.clone()),
+            _ => None,
+        }
+    }
+
+    pub fn review_details(&self) -> Option<serde_json::Value> {
+        match self {
+            Self::ReviewBlocked { details }
+            | Self::ReviewFailed { details }
+            | Self::ReviewInterrupted { details }
+            | Self::ReviewModelFailure { details, .. } => Some(details.clone()),
             _ => None,
         }
     }

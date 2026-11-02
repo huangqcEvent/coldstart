@@ -2,80 +2,337 @@
 
 > Vibe Coding 之前，先把项目冷启动。
 
-ColdStart 是一款单机桌面工具，面向 Web、管理后台、App 和小程序组成的互联网产品。它在 AI 编码开始之前整理需求、项目蓝图、技术决策、三方服务、发布前置条件和开发计划，再通过 MCP 把正确的工作与上下文交给 Codex 等外部 Agent。
+ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review 和开发计划组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文和提交完成报告。
 
-ColdStart 不生成业务代码，也不替代 Agent。它负责项目的认知与交付控制面：知道项目需要什么、现在该做什么、哪些条件尚未满足、每一项完成依据是什么。
+ColdStart 本身不生成业务代码，也不替你启动 Agent。它解决的是编码之前与编码之后最容易失真的问题：现在到底要做什么、依赖是否满足、密钥和提审材料是否就绪、Agent 是否真的完成了任务，以及本次改动是否值得进入主分支。
 
-## 当前状态
+## 它解决什么问题
 
-- 第一阶段 Rust 核心与 CLI 已完成：可创建可迁移的项目主目录，在本地 SQLite 中保存项目和追加式事件，并查询项目状态。
-- 第二阶段 Tauri 桌面壳已完成：可通过桌面窗口创建、打开并刷新项目状态。
-- 第三阶段需求与蓝图已完成：可导入需求、调用 OpenAI 兼容模型生成结构化蓝图、人工编辑与发布，并在 Inbox 中补充阻塞信息。
-- 第四阶段计划引擎与 MCP 已完成：可从已发布蓝图编译确定性任务 DAG，通过租约领取工作、编译上下文、提交结构化报告，并在桌面看板观察进度。
-- 第五阶段仓库、能力与发布门禁已完成：可映射多仓库、使用 Windows Credential Manager 保存 Secret、验证并推送任务分支、配置 GitHub 与三方能力，并在只读发布中心汇总上架和审批状态。
-- 第六阶段集成、重规划与安全加固已完成：活动计划可在无租约时安全替换，历史任务与旧契约不能推进新计划；跨子系统 MVP 验收通过，并生成包含桌面端与 MCP 的 Windows NSIS 安装包。
-- 第七阶段本地命令验证与完成门禁已完成：仓库可配置受约束的 `.exe` 验证命令，Codex 的结构化报告只有在 ColdStart 独立重跑全部命令并确认 Git 不变量后才进入 `done`；失败保留租约并返回脱敏摘要。
-- 自动部署、App 打包、商店提审、小程序发布、自动合并和 Release Tag 仍明确不在当前 MVP 内。
+- 需求、模块划分、技术栈和三方服务散落在聊天、文档与个人记忆里。
+- App、小程序、管理后台和 Web 同时开发时，发布前置条件与账号资质容易遗漏。
+- Agent 每次都需要重新理解项目，容易越过范围或重复实现。
+- Agent 口头说“完成了”，但缺少独立验证、真实 diff 检查和可审计记录。
+- 团队代码规范只存在于 Wiki 或个人习惯中，AI 评审无法稳定参照。
+- 真实密钥容易进入 Prompt、日志或 Git，缺少本地隔离边界。
 
-```powershell
-cargo run -p coldstart-cli -- init --name "Demo Project" --path D:\work\demo
-cargo run -p coldstart-cli -- status --path D:\work\demo --json
+## 适合谁
+
+ColdStart 当前面向个人开发者、小团队中的单机使用场景，覆盖以下产品形态：
+
+- Web 前台
+- 管理后台
+- 移动 App
+- 微信小程序
+- 服务端
+
+仓库逻辑键固定为 `server`、`admin`、`web`、`app`、`mini_program`。一个项目可以使用其中任意组合，不要求五个仓库都存在。
+
+### 适合的场景
+
+**新项目从 0 到 1**
+
+从需求文档开始，生成并人工校正模块、平台、技术栈、三方能力、发布条件和任务 DAG，再把任务交给 Codex 逐项实现。
+
+**已有项目继续迭代**
+
+把 ColdStart 当作长期项目的交付控制面。每次迭代导入新的变更需求，发布新的蓝图与计划版本；稳定的 `taskKey` 会继承已完成状态，契约变化的任务会重新打开，删除的任务会取消。
+
+**第一次接入历史项目**
+
+不需要把整个历史代码库重新生成一遍。创建 ColdStart 项目，映射现有仓库，导入当前架构说明与本次变更需求，把蓝图范围收敛到本次迭代，再生成任务计划。
+
+ColdStart 不会自动通读整个仓库并替你还原完整架构。历史项目的基线信息仍应通过架构文档、接口说明、代码入口清单和人工校正提供；具体代码实现由 Codex 在已映射的 Git 工作区中完成。
+
+### 明确不做什么
+
+- 不做团队协作、云同步、远程执行器或云 CI。
+- 不自动部署生产环境。
+- 不自动打包 App、提交商店审核或发布小程序。
+- 不自动合并分支、创建 Release Tag 或强推远程历史。
+- 不替代架构师、代码审查者或安全审计。
+- 不承诺 AI Review 能证明代码“没有漏洞”。
+
+## 工作方式
+
+```text
+导入需求
+  -> 生成并人工校正蓝图
+  -> 编译带依赖关系的开发计划
+  -> 配置仓库、凭据、验证命令与代码规范
+  -> Codex 通过 MCP 主动领取任务
+  -> 提交结构化报告、分支、Commit 与证据
+  -> ColdStart 校验真实 Git 变更并独立执行验证命令
+  -> 从真实 diff 执行 AI Review
+  -> passed / waived 后完成任务并推送任务分支
+  -> 解锁后继任务
 ```
 
-`coldstart.project.json` 不保存机器绝对路径；移动到其他目录后，项目根路径由该文件所在目录重新推导。
+人工只在必须提供信息或承担风险时介入，例如补充阻塞信息、确认外部资质、授权三方能力、确认重规划、处理 Review 误报或执行不可逆操作。
 
-当前 CLI 的 `status --json` 要求项目根路径为 UTF-8；`init` 会在写入清单前以明确错误拒绝非 UTF-8 根路径。
+## 安装与启动
 
-## 桌面应用
+### 使用 Windows 安装包
 
-本机已将 Rust 与构建工具安装在 D 盘。新终端可先加载环境脚本，再在仓库根目录安装工作区依赖：
+构建好的 NSIS 安装包位于：
 
-```powershell
-. D:\DevTools\coldstart-env.ps1
-pnpm install
-pnpm --dir apps/desktop dev
-pnpm --dir apps/desktop build
-pnpm --dir apps/desktop build:installer
+```text
+target\release\bundle\nsis\ColdStart_0.1.0_x64-setup.exe
 ```
 
-开发窗口同时依赖 Vite 与 Tauri，Tauri CLI 从工作区 `node_modules` 运行；pnpm store 固定在仓库内的 `.pnpm-store`，Rust 构建产物位于 `target`，均留在 D 盘。只构建桌面二进制时输出 `target\release\coldstart-desktop.exe`；完整安装包由 `build:installer` 生成。
-
-桌面应用现在支持项目创建与打开、需求导入、蓝图生成与人工编辑、不可变版本发布、计划编译与发布、重规划差异确认、任务状态与验证摘要观察、Inbox 回答与人工计划任务，以及仓库映射、仓库验证命令编辑、GitHub 授权、系统凭据、三方能力状态和发布中心。
-
-## Windows 安装包
-
-完整安装包位于 `target\release\bundle\nsis\ColdStart_0.1.0_x64-setup.exe`，使用 Tauri NSIS 为当前用户安装，不要求管理员权限，并允许把安装目录改到 D 盘：
+安装到 D 盘独立目录：
 
 ```powershell
 & 'D:\coldstart\target\release\bundle\nsis\ColdStart_0.1.0_x64-setup.exe' /S /D=D:\DevTools\ColdStart
 ```
 
-安装目录同时包含 `coldstart-desktop.exe`、`coldstart-mcp.exe`、Web 资源和卸载器。安装版计划看板会优先定位桌面 EXE 同级的 MCP 二进制，也会识别 Tauri 的 `resources\coldstart-mcp.exe`。卸载会移除程序文件和开始菜单入口，但不会删除用户项目目录、SQLite 数据库、报告或 Git 仓库。
+安装目录包含桌面程序、`coldstart-mcp.exe`、Web 资源和卸载器。卸载不会删除 ColdStart 项目目录、SQLite 数据库、报告或 Git 仓库。
 
-安装包尚未代码签名，Windows SmartScreen 可能提示“未知发布者”。这是当前已知限制，不代表安装包已经签名。自动更新、崩溃上报和安装统计均未启用。
+安装包尚未代码签名，Windows SmartScreen 可能显示“未知发布者”。自动更新、崩溃上报和安装统计均未启用。
 
-若构建环境无法稳定下载 NSIS，可预先准备 `nsis-3.13` 与 `nsis_tauri_utils.dll`，放到 `target\.tauri\NSIS`，并保持 `bundle.useLocalToolsDir=true`；构建脚本会先把 MCP release 二进制放进安装资源，再执行 Tauri NSIS 构建并输出 SHA-256。
+### 从源码运行
 
-## 需求与蓝图
+本机开发依赖：
 
-1. 创建或打开项目后进入“需求导入”，导入 Markdown、TXT、DOCX 或 PDF 文档。
-2. 配置 OpenAI 兼容服务的 Base URL、模型名称与 API Key，并明确确认将需求文本发送到该服务。
-3. 生成结构化蓝图，检查平台矩阵、模块依赖、技术栈、三方服务和发布前置条件，再按需人工修改。
-4. 保存会创建新的草稿版本；只有通过结构、来源引用和模块 DAG 校验后才能发布。发布版本只读，后续修改会生成新版本。
-5. 阻塞性缺失信息进入人工 Inbox；回答后请求自动归档，并形成带版本的项目事实。
+- Windows 10/11
+- Rust 1.89 或更高版本
+- Node.js 与 pnpm 11
+- WebView2（Windows 11 通常已安装）
 
-支持单个不超过 20 MiB 的需求文档，单次抽取的锚点文本总量上限为 80,000 字符。扫描型 PDF 当前会返回“无可提取文本”的明确错误，不执行 OCR。
+先加载本机 D 盘工具链环境，再安装工作区依赖：
 
-模型 API Key 只存在于当前界面内存和本次 IPC 调用中，不写入项目文件、SQLite、事件、日志或错误消息。切换页面或重启应用后需要重新输入。
+```powershell
+. D:\DevTools\coldstart-env.ps1
+pnpm install
+pnpm --dir apps/desktop dev
+```
 
-## 开发计划与 MCP
+只构建桌面二进制：
 
-1. 发布蓝图后进入“计划看板”，编译由 `plan-v1` 模板确定性生成的开发计划。模板覆盖平台工程基础、服务端契约、模块纵向切片、三方能力准备与接入、发布条件和平台发布里程碑。
-2. 计划草稿可人工调整标题、目标、范围、明确不做、优先级、关键路径、验收标准、证据要求和 `blocks` 依赖；保存时重新校验任务键、DAG、路径边界和验收结构。
-3. 发布计划后，任务按 `blocks` 依赖解锁。编码任务只能由持有有效租约的 MCP Agent 提交完成报告；桌面 UI 只允许完成 `human_external` 与 `approval_gate` 任务。
-4. 需要替换已激活计划时，桌面端先展示新增、变更、未变化和删除任务，以及继承完成、重新打开、取消与活动租约数量；用户确认后才提交替换事务。存在活动租约时禁止发布。
-5. 新计划按稳定 `task_key` 继承安全状态；契约变化的旧工作项标记为过期并重新打开，删除任务会取消。旧计划、报告和事件永久保留，但计划看板、Inbox、发布中心、任务上下文和 MCP 引用只读取当前活动计划。
-6. 计划看板每 3 秒刷新，窗口重新获得焦点时立即刷新；刷新失败会保留最后一次成功快照并显示错误。
+```powershell
+pnpm --dir apps/desktop build
+```
+
+构建 NSIS 安装包：
+
+```powershell
+pnpm --dir apps/desktop build:installer
+```
+
+## 创建或打开项目
+
+ColdStart 的“项目主目录”与业务代码仓库可以分开存放。推荐为每个产品建立独立目录，例如：
+
+```text
+D:\work\your-project
+```
+
+1. 启动 ColdStart。
+2. 选择“新建项目”，输入名称并选择项目主目录。
+3. 或选择“打开项目”，定位已有 ColdStart 主目录。
+
+项目清单、SQLite 状态、规范文件和执行记录都在本地。清单不保存机器绝对路径，项目整体移动后根路径由清单所在目录重新推导；当前 CLI 的 JSON 状态输出仍要求根路径是 UTF-8。
+
+## 完整工作流
+
+### 1. 导入需求
+
+在“需求导入”中导入一个或多个 Markdown、TXT、DOCX、PDF 文档。单个文档不超过 20 MiB，单次抽取锚点文本总量不超过 80,000 字符。扫描型 PDF 暂不执行 OCR。
+
+生成蓝图前需要配置 OpenAI 兼容服务的 Base URL、模型名称和 API Key，并明确同意将需求文本发送到该服务。需求模型 Key 只存在于当前界面内存和本次 IPC 调用中，不写入 SQLite、事件、日志或项目文件；切换页面或重启后需要重新输入。
+
+### 2. 生成并发布蓝图
+
+蓝图包含：
+
+- 产品目标、范围与非目标
+- 角色与平台矩阵
+- 模块划分及依赖
+- 技术栈选择与理由
+- 文件存储、短信、支付等三方能力
+- App、小程序、商店账号等发布前置条件
+- 假设与风险
+
+生成结果只是草稿。手工修正模块、平台、技术栈和范围后，ColdStart 会校验来源引用、结构完整性和模块 DAG。发布版本不可变；后续修改会创建新版本。阻塞性缺失信息会进入“人工 Inbox”，回答后形成带版本的项目事实。
+
+### 3. 编译与发布计划
+
+“计划看板”会把已发布蓝图编译为确定性的任务 DAG，覆盖平台工程基础、服务端契约、模块纵向切片、三方能力准备、发布条件和平台里程碑。
+
+草稿可调整标题、目标、范围、明确不做、优先级、关键路径、验收标准、证据要求和阻塞依赖。发布前会重新校验任务键、DAG、路径边界与验收结构。
+
+替换活动计划时，ColdStart 会展示新增、变更、未变化、删除任务，以及继承完成、重新打开、取消和活动租约数量。用户确认后才执行替换；存在活动租约时禁止重规划。
+
+### 4. 映射仓库与能力
+
+在“仓库与能力”中：
+
+1. 按 `server`、`admin`、`web`、`app`、`mini_program` 映射已有 Git 工作区。
+2. 配置远程 URL、默认分支、保护分支、认证方式和同步策略。
+3. 在 Windows Credential Manager 中保存 Git、云存储、短信、支付等 Secret 引用。
+4. 按 `development`、`staging`、`production` 跟踪三方能力状态与关联凭据。
+
+领取编码任务时，ColdStart 会检查工作区、获取远程、验证基准分支并创建 `codex/*` 任务分支。工作区不干净、分支冲突、远程不可用或认证失败会释放租约，不覆盖本地或远程历史。
+
+### 5. 配置本地验证命令
+
+每个编码仓库必须配置受约束的验证命令，否则任务不能领取。规则如下：
+
+- 每个仓库 1 到 8 条命令，顺序执行。
+- 每条命令使用绝对路径 `.exe` 和独立参数数组。
+- 不经过 Shell，不接受 `.cmd`、`.bat`、`.ps1`、管道、重定向或变量展开。
+- 工作目录固定为仓库根目录。
+- 配置在任务领取时固化为快照，后续修改只影响下一次领取。
+
+Codex 提交报告后，ColdStart 先校验真实分支、HEAD、Commit 和变更路径，再独立执行全部命令。任何非零退出、启动失败、超时或 Git 不变量破坏都会保留任务为 `in_progress`、保留租约且不推送。
+
+### 6. 启用 AI Review
+
+在“AI 评审”中配置模型与规则：
+
+- Review 开关
+- OpenAI 兼容 Base URL
+- 模型名称
+- Windows 凭据库中的模型凭据引用（本地模型可以不绑定凭据）
+- 阻断完成的 finding 级别
+- 明确的隐私同意
+
+默认阻断 `critical` 与 `high`。模型不可用、超时、输入超限或响应格式非法时始终失败关闭，不提供“忽略失败”开关。
+
+### 7. 让 Codex 通过 MCP 领取工作
+
+Codex 通过 MCP 主动领取下一个可执行任务，读取编译后的上下文，完成代码后提交结构化报告。ColdStart 不启动 Codex，也不要求 Codex 与桌面 UI 同时打开。
+
+### 8. 完成与推送
+
+只有以下条件全部满足，编码任务才会进入 `done`：
+
+1. 报告中的分支、Commit 与变更文件通过真实 Git 校验。
+2. 仓库验证命令全部独立通过。
+3. AI Review 状态为 `not_required`、`passed` 或人工 `waived`。
+
+完成后 ColdStart 执行普通推送。推送失败不会回滚已完成任务，而是写入 Git 同步风险记录。禁止强推、删除远程分支和写入保护分支。
+
+## 接入历史项目的建议步骤
+
+### 同一产品继续迭代
+
+1. 打开原 ColdStart 项目，保留已有蓝图、计划、任务与仓库配置。
+2. 在“需求导入”中加入本次变更需求、缺陷说明或接口变更文档。
+3. 生成新的蓝图版本，人工收敛本次迭代的平台、模块、范围与非目标。
+4. 发布新蓝图，编译新计划并在预览中检查任务继承、重新打开和取消情况。
+5. 更新仓库验证命令与本次适用的代码规范。
+6. 发布计划，让 Codex 领取新任务。
+
+### 首次把历史项目纳入 ColdStart
+
+1. 新建一个独立 ColdStart 项目，不把控制面文件混入业务仓库。
+2. 映射现有 `server`、`admin`、`web`、`app`、`mini_program` 仓库。
+3. 导入现有架构说明、接口约定、目录约定和本次需求变更。
+4. 手工补齐关键模块、三方能力、账号资质与发布前置条件。
+5. 把蓝图范围限制在本次增量，不要试图一次描述完所有历史细节。
+6. 为每个仓库配置真实可运行的验证命令，再发布本轮计划。
+
+对于历史项目，最重要的不是让模型重写过去，而是明确“这次改什么、不能碰什么、如何验证、谁来提供必要信息”。
+
+## AI Review 与代码规范库
+
+### 评审对象
+
+AI Review 不接受 Codex 自报的“已完成”，也不把 Agent 提交的 diff 文本当作证据。ColdStart 会：
+
+1. 校验报告中的分支、Commit 和变更路径。
+2. 在任务分支上独立执行仓库验证命令。
+3. 以领取时固化的基准 Commit 和报告 Commit 为边界，从本地 Git 提取真实 diff。
+4. 把真实 diff、任务验收标准、启用规范和脱敏验证摘要发送给 Review 模型。
+5. 校验模型输出结构、finding 路径、行号、数量和长度。
+
+Git diff 使用固定安全参数，禁用外部 diff、textconv、颜色和重命名推断。diff 最多 160,000 字符、1,000 个文件。
+
+### 规范库
+
+“AI 评审”页面支持：
+
+- 上传 Markdown、TXT、DOCX、PDF 规范文件。
+- 直接新建 Markdown 规范。
+- 基于当前版本创建新修订。
+- 项目级或单仓库范围。
+- 启用、停用、排序和软删除。
+- 查看原始文件名、提取字符数、内容哈希、修订号和更新时间。
+
+规范限制：
+
+- 最多 20 个规范。
+- 单个规范最多 60,000 字符。
+- 启用规范合计最多 60,000 字符。
+- 正文不会静默截断；超限会返回 `review_input_too_large`。
+- 原始文件与提取文本保存在项目 `.coldstart/review-standards/` 下，读取时校验 SHA-256 和字符数。
+
+Review 领取任务时会原子固化配置、启用规范和基准 Commit。评审过程中使用快照，之后修改规范或 Review 配置只影响下一次领取。
+
+### 状态与阻断
+
+| 状态 | 是否允许完成 | 含义 |
+| --- | --- | --- |
+| `not_required` | 是 | 领取时 Review 未启用 |
+| `passed` | 是 | 评审完成且没有命中阻断级别 |
+| `waived` | 是 | `blocked` 后由桌面端人工豁免 |
+| `running` | 否 | 评审进行中 |
+| `blocked` | 否 | 存在达到阻断级别的 finding |
+| `failed` | 否 | 模型不可用、超时、响应非法或输入超限 |
+| `interrupted` | 否 | 租约过期或进程中断导致评审未完成 |
+
+`failed` 和 `interrupted` 不允许人工豁免。用户需要修复模型配置、缩小任务或规范，或重新领取后再次提交。
+
+### 误报人工豁免
+
+只有 `blocked` Review 可以提供人工豁免入口，而且只在桌面端出现，MCP 不提供豁免工具。
+
+流程：
+
+1. 打开“AI 评审”历史，核对 finding、文件、严重级别和规范依据。
+2. 点击“人工豁免”。
+3. 填写非空理由。
+4. 进入二次确认，明确任务将被接受并进入推送流程。
+5. ColdStart 记录理由、本机操作者、时间、finding 哈希和规范快照哈希。
+
+豁免不可撤销。租约过期或报告已不是当前有效报告时，存储层会拒绝豁免。
+
+### 隐私边界
+
+发送到 Review 模型的内容仅包括：
+
+- 本次真实 Git diff
+- 任务标题、目标和验收标准
+- 启用规范的提取文本
+- 脱敏验证摘要
+
+不会发送：
+
+- API Key 或其他 Secret
+- Windows Credential Manager 中的值
+- 完整环境变量
+- 项目 SQLite 数据库
+- diff 之外的项目文件
+- 租约令牌
+
+模型输出只能形成结构化 summary 和 findings，不能触发 Git、Shell、网络下载、文件写入或任意 MCP 工具。错误、事件、UI 与数据库只保留稳定错误码和脱敏摘要。
+
+### 常见 Review 错误
+
+- `review_consent_required`：更换模型、Base URL 或凭据后没有重新确认隐私边界。
+- `review_credential_missing`：凭据元数据不存在，或 Windows 凭据库中的 Secret 不可读。
+- `review_not_configured`：领取 `agent_coding` 任务时 Review 已启用但配置不完整。
+- `review_input_too_large`：diff 或规范超过限制，需要拆分任务或缩小规范。
+- `review_timeout`：模型调用超过 180 秒；任务保持进行中且保留租约。
+- `review_response_invalid`：模型响应不是合法 JSON，或 finding 不符合路径、长度、数量约束。
+- `review_failed`：网络或模型 HTTP 调用失败；不会保存原始响应正文。
+- `review_blocked`：存在阻断 finding；修复后使用新的幂等键重新提交，或由桌面端人工豁免。
+- `review_interrupted`：评审运行中遇到租约过期或进程中断。
+- `review_standard_invalid`：规范文件缺失、哈希不一致或修订无效。
+
+Review 成功后推送失败不会重新打开任务。风险会保留在“Git 同步记录”中。
+
+## MCP 与 Codex
 
 构建 release MCP 二进制：
 
@@ -84,7 +341,7 @@ pnpm --dir apps/desktop build:installer
 cargo build -p coldstart-mcp --release
 ```
 
-Codex 或兼容 MCP 客户端使用以下配置主动连接项目：
+Codex 或兼容 MCP 客户端使用以下配置连接某个 ColdStart 项目：
 
 ```json
 {
@@ -97,104 +354,198 @@ Codex 或兼容 MCP 客户端使用以下配置主动连接项目：
 }
 ```
 
-MCP 暴露七个工作工具和一项只读能力状态查询：
+安装版通常使用：
 
-- `claim_next_work`：按 Agent 与逻辑仓库原子领取下一个可执行任务。
-- `get_work_context`：返回所选任务在预算内编译的上下文包。
-- `read_task_reference`：读取任务白名单内的额外引用。
-- `heartbeat_work`：续租并记录活动。
-- `report_work_blocker`：上报阻塞与需要人工提供的最小输入。
-- `submit_work_report`：提交带契约哈希、验收结果、证据和幂等键的结构化报告，并由 ColdStart 独立执行仓库验证命令。
-- `release_work`：释放无法继续的任务租约。
-- `get_capability_status`：按能力与环境读取状态、提供方和凭据引用标识，永不返回值。
-
-ColdStart 不启动 Codex，也不常驻后台。默认租约为 30 分钟，建议每 5 分钟心跳；默认上下文预算为 12,000 tokens。租约令牌是 256 位随机值，SQLite 只保存 SHA-256 哈希，令牌不会写入事件、日志、UI、报告或 MCP 回放。授权类项目事实在 Agent 上下文中只标记为“已登记”，具体值不会展开。
-
-## 仓库、凭据与发布
-
-1. 在“仓库与能力”中按固定逻辑键 `server`、`admin`、`web`、`app`、`mini_program` 映射已有 Git 工作区，配置远程 URL、默认分支、保护分支、认证方式与同步策略。
-2. 领取编码任务时，ColdStart 使用系统 `git` 检查工作区、获取远程、验证基准分支并创建 `codex/*` 工作分支。工作区不干净、分支已存在、远程不可用或认证失败会释放租约，不覆盖本地或远程历史。
-3. Agent 报告完成后，ColdStart 验证任务分支、Commit HEAD 和实际变更路径，并在仓库根目录顺序执行已配置的 `.exe` 验证命令；全部通过后才完成任务并执行普通推送。推送失败不会回滚已完成任务，但会在 Git 同步记录中保留风险和错误摘要。禁止强推、删除远程分支和写入保护分支。
-4. 明文 Secret 只写入 Windows Credential Manager，SQLite、事件、日志、错误、任务上下文、MCP 响应和 Git 仓库只保留引用或状态。界面提供写入和删除，不提供回读；删除凭据元数据时会同步删除系统凭据条目。
-5. 三方能力按 `development`、`staging`、`production` 跟踪，状态为 `missing`、`configured`、`verified`、`auth_required` 或 `disabled`，可关联一个系统凭据。
-6. GitHub 支持导入本机 `gh` 已登录账号，也支持通过用户提供的 OAuth App Client ID 启动 Device Flow。创建私有仓库必须由桌面界面二次确认，成功后只更新对应本地仓库的 `origin`；MCP 不提供仓库 CRUD。
-7. 发布中心只汇总 `release-prereq:*`、`release:*`、人工审批闸门和人工外部任务。它不部署、不打包、不提审，也不提供绕过 Inbox 的高风险任务完成入口。
-
-当前 MVP 仍不执行自动合并、创建 Release Tag、生产部署、App 打包、商店提审和小程序发布。ColdStart 会执行仓库绑定的本地验证命令，但不提供云 CI、远程执行器或自动修复；MCP 不会获得 Secret，只会获得能力状态、环境变量名称和领取时的验证快照。
-
-## 本地命令验证
-
-1. 在“仓库与能力”的“仓库验证门禁”中为每个编码仓库配置 1-8 条命令。命令按顺序执行，每条包含名称、绝对路径 `.exe`、独立参数数组、超时和执行位置。
-2. 命令不经过 Shell；不接受 `.cmd`、`.bat`、`.ps1`、管道、重定向、变量展开或 Credential Manager Secret 注入。工作目录固定为仓库根目录。
-3. 配置在任务领取时固化为快照并写入 `work_runs`。之后修改仓库配置只影响下一次领取，已经领取的 Codex 任务仍使用原快照。
-4. Codex 提交完成报告后，ColdStart 先校验真实 Git 分支、HEAD 和变更范围，再运行全部命令。执行前后都检查分支、HEAD 与已跟踪文件未变化。
-5. 全部通过后写入验证通过记录、接受报告、完成任务并推送任务分支。非零退出、启动失败、超时或 Git 不变量破坏会把任务退回 `in_progress`，保留租约供修复后使用新幂等键重试。
-6. 失败结果包含快照哈希、失败类型、命令名、退出码、耗时和最多 64 KiB 的脱敏尾部摘要；不会持久化或返回原始输出、租约令牌、Secret 或完整环境变量。
-7. 稳定错误码包括 `verification_not_configured`、`verification_in_progress`、`verification_failed`、`verification_timeout`、`verification_interrupted` 和 `verification_command_invalid`。租约过期或进程崩溃会把运行中的验证标记为 `interrupted`，任务回到 `ready`。
-
-## 解决的问题
-
-- 需求、技术栈、账号、密钥、提审材料和发布条件散落在不同文档与对话中。
-- Agent 每次都需要重新理解项目，容易丢失约束或重复实现。
-- 传统待办列表无法表达前置条件、外部审批、长周期发布任务和完成证据。
-- 把全部需求与密钥塞进上下文既昂贵，也不安全。
-- Agent 口头报告完成，但项目缺少可追踪的上下文、证据和审计记录。
-
-## 核心闭环
-
-```text
-导入需求
-  -> 生成并编辑项目蓝图
-  -> 发现缺失信息与待授权能力
-  -> 编译带依赖关系的开发计划
-  -> Codex 通过 MCP 主动领取任务
-  -> 提交结构化完成报告与证据
-  -> ColdStart 独立执行仓库验证命令
-  -> 自动解锁后继任务
-  -> 人工只处理信息、决策、授权和风险门禁
+```json
+{
+  "mcpServers": {
+    "coldstart": {
+      "command": "D:\\DevTools\\ColdStart\\coldstart-mcp.exe",
+      "args": ["--project-home", "D:\\work\\your-project"]
+    }
+  }
+}
 ```
 
-## 设计原则
+实际路径以安装目录或 `target\release` 为准。计划看板提供“复制 MCP 配置”，会生成当前项目的版本。
 
-- **单机优先**：项目数据、计划和执行记录保存在本地。
-- **按需中断**：不要求用户全程盯盘，只在缺信息、缺授权、低置信度决策和不可逆操作时介入。
-- **确定性内核**：模板、依赖、门禁和状态机由确定性代码控制；模型只负责提取、生成建议和总结。
-- **最小上下文**：每个任务只接收相关需求、契约、约束、代码入口和能力状态。
-- **凭据隔离**：真实密钥不进入 Prompt、MCP 响应、日志或 Git；Agent 只看到能力与使用约束。
-- **可追踪**：蓝图、计划、任务契约、完成报告和审批都有版本与审计记录。
-- **独立验证完成**：Agent 报告不等于完成；ColdStart 在任务分支上重跑仓库配置的验证命令，全部通过后才接受完成结果。
-- **仓库安全**：任务分支可自动推送；受保护分支、生产发布、提审和破坏性操作必须人工确认。
+### MCP 工具
 
-## MVP 范围
+当前实际暴露 8 个工具：
 
-- 单用户、本地桌面客户端。
-- 支持多仓库项目，以及 Web、服务端、管理后台、App、小程序平台目标。
-- 导入 Markdown、TXT、DOCX、PDF 需求文档。
-- 自动或手工生成模块、技术栈、接口、三方能力与发布条件。
-- 生成并编辑任务 DAG、验收策略和人工门禁。
-- 提供 MCP 任务领取、上下文读取、心跳、阻塞上报和完成报告。
-- 支持 GitHub 私有仓库创建、远程仓库配置和任务分支自动推送。
-- 支持仓库级本地命令验证、领取时快照、失败重试和脱敏验证摘要。
-- 管理本地凭据引用、能力状态与发布清单。
+- `claim_next_work`：按 Agent 与逻辑仓库原子领取下一个可执行任务，使用 `requestId` 保证重试幂等。
+- `get_work_context`：用租约令牌读取预算内的任务上下文、验证快照和 Review 规范引用。
+- `read_task_reference`：读取任务白名单内的额外引用，包括当前 Review 快照中的规范修订。
+- `heartbeat_work`：续租并记录 Agent 活动。
+- `report_work_blocker`：上报阻塞与需要人工提供的最小输入。
+- `submit_work_report`：提交契约哈希、验收结果、分支、Commit、变更文件、证据和幂等键；触发真实 Git 校验、本地验证、AI Review 和推送。
+- `release_work`：释放无法继续的任务租约。
+- `get_capability_status`：读取能力与环境状态、提供方和凭据引用标识，永不返回 Secret。
 
-明确不做：团队协作、云同步、自动 App 提审、自动小程序发布、生产部署、云 CI、远程执行器、失败自动修复和通用行业模板。
+默认租约为 30 分钟，建议每 5 分钟心跳；默认上下文预算为 12,000 tokens。租约令牌是随机值，SQLite 只保存 SHA-256 哈希，不写入事件、日志、UI 或报告。
+
+### Codex 的推荐执行循环
+
+```text
+claim_next_work
+  -> get_work_context
+  -> 按允许路径修改代码
+  -> 运行必要检查
+  -> heartbeat_work（长任务期间）
+  -> submit_work_report
+  -> 若 verification/review 未通过：读取错误、修复、用新幂等键再次提交
+  -> 任务完成后继续领取下一个
+```
+
+遇到缺少账号、外部授权、产品决策或不可逆操作时，使用 `report_work_blocker`，不要猜测或绕过。
+
+## 凭据与安全边界
+
+### 凭据
+
+- Git 与三方服务的 Secret 保存在 Windows Credential Manager。
+- SQLite、事件、日志、错误、任务上下文、MCP 响应和 Git 仓库只保存凭据引用或状态。
+- UI 支持写入和删除凭据，不支持回读明文。
+- 删除凭据元数据时会同步删除对应系统凭据条目。
+- Review 模型凭据通过引用选择；实际值只在执行评审时读取到内存。
+- 需求生成蓝图的 API Key 只存在于当前界面内存与本次 IPC 调用中，重启后清空。
+
+### 仓库安全
+
+- 自动创建 `codex/*` 任务分支，不直接修改保护分支。
+- 拒绝强推、删除远程分支和越过任务允许路径的变更。
+- 推送失败只记录风险，不伪造成功或回滚已完成状态。
+- 创建 GitHub 私有仓库需要桌面端二次确认。
+
+### 执行安全
+
+- 本地验证只接受绝对路径 `.exe` 与参数数组，不经过 Shell。
+- Review 模型输出不能执行命令或修改文件。
+- MCP 不提供仓库 CRUD、凭据回读、Review 配置管理或人工豁免。
+- 项目数据库与规范文件都在本地。
+
+MVP 不是面向恶意本地进程的完整沙箱。运行 Agent 的账户权限仍应与生产密钥隔离；高风险生产凭据不应交给日常 Coding Agent 使用。
+
+## 数据、备份与迁移
+
+每个 ColdStart 项目包含：
+
+```text
+your-project/
+  coldstart.project.json
+  .coldstart/
+    state.db
+    artifacts/
+    snapshots/
+    review-standards/
+```
+
+- `coldstart.project.json`：项目清单，不保存机器绝对路径。
+- `.coldstart/state.db`：SQLite 状态、蓝图、计划、任务、报告、验证与 Review 记录。
+- `.coldstart/artifacts/`：导入的需求文档与提取结果。
+- `.coldstart/review-standards/`：规范原文件、提取文本和修订目录。
+
+备份时应整体复制项目主目录。业务 Git 仓库是独立目录，需要按原有 Git 策略单独备份。
+
+## 已知限制
+
+- 只支持 Windows 单机桌面。
+- 只覆盖 Web/管理后台 + App + 小程序 + 服务端，不提供通用平台模板。
+- 扫描型 PDF 不执行 OCR。
+- 历史项目不会自动还原完整架构，需要文档和人工收敛。
+- 没有团队权限、多人并发审批或云端同步。
+- 不自动部署、打包、提审、发布小程序、合并分支或创建 Release Tag。
+- Review 依赖外部 OpenAI 兼容模型；模型服务故障会失败关闭而不是跳过。
+- AI Review 不能证明代码没有漏洞，也不能替代人工安全审计。
+- 安装包未签名。
+
+## 常见故障
+
+### 打开项目提示清单或数据库缺失
+
+- `manifest_missing`：目标目录下没有 `coldstart.project.json`，确认选择了 ColdStart 项目主目录，而不是业务仓库根目录。
+- `database_missing`：`.coldstart/state.db` 不存在或被移动，恢复完整项目备份。
+- `project_metadata_mismatch`：项目清单与 SQLite 元数据不属于同一项目，不要强行混用。
+
+### 无法生成蓝图
+
+- `no_requirement_sources`：先导入至少一份需求文档。
+- `document_empty`：PDF 可能是扫描件，当前不执行 OCR。
+- 模型调用失败：检查 Base URL、模型名、网络和隐私同意；需求模型 Key 不会持久化，重启后需要重新输入。
+
+### 任务无法被 Codex 领取
+
+- 没有已发布计划，或依赖任务尚未完成。
+- 仓库没有配置有效的 `.exe` 验证命令，返回 `verification_not_configured`。
+- 工作区不干净、任务分支已存在、远程不可达或 Git 认证失败。
+- Review 已启用但没有有效隐私同意，返回 `review_consent_required`。
+- Review 凭据缺失，返回 `review_credential_missing`。
+- 规范正文哈希不一致，返回 `review_standard_invalid`。
+
+### 提交后一直无法完成
+
+按以下顺序检查：
+
+1. 计划看板的仓库验证状态；失败会保留租约。
+2. AI 评审历史中的状态、模型错误与 findings。
+3. 任务是否仍在当前活动计划中，契约是否已过期。
+4. 租约是否过期；过期后需要重新领取。
+5. 修复后使用新的 `idempotencyKey` 再提交，不要复用已处理报告。
+
+### Review 显示 failed
+
+`failed` 不是可豁免的 finding，而是评审基础设施或输出失败。检查模型地址、凭据、网络、响应格式与输入大小。任务会保持 `in_progress` 且保留租约，不推送。
+
+### 任务已完成但推送失败
+
+这是预期风险记录，不是任务回滚。到“仓库与能力”的 Git 同步记录查看错误摘要，修复远程认证后按正常 Git 流程处理。
+
+### 安装后找不到 MCP
+
+安装版计划看板会优先定位桌面 EXE 同级的 `coldstart-mcp.exe`，也会识别 Tauri 的 `resources\coldstart-mcp.exe`。复制 MCP 配置前确认文件存在；源码运行时可先执行 `cargo build -p coldstart-mcp --release`。
+
+## 开发与验证
+
+### Rust
+
+```powershell
+. D:\DevTools\coldstart-env.ps1
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
+```
+
+### Web 前端
+
+```powershell
+pnpm --dir web typecheck
+pnpm --dir web test
+pnpm --dir web build
+```
+
+### 桌面与安装包
+
+```powershell
+pnpm --dir apps/desktop build
+pnpm --dir apps/desktop build:installer
+```
+
+构建脚本会先把 `coldstart-mcp.exe` 放入安装资源，再执行 Tauri NSIS 构建并输出 SHA-256。若构建环境无法稳定下载 NSIS，可预先准备 `nsis-3.13` 与 `nsis_tauri_utils.dll`，放到 `target\.tauri\NSIS`，并使用本地工具目录。
+
+## 文档索引
+
+- [产品与系统架构规格](docs/superpowers/specs/2026-10-30-coldstart-design.md)
+- [AI Review 与规范库设计](docs/superpowers/specs/2026-11-02-coldstart-ai-review-design.md)
+- [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
+- [AI Review 实施计划](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
+- [第一阶段：Rust 核心与 CLI](docs/superpowers/plans/2026-10-30-coldstart-01-core-foundation.md)
+- [第二阶段：Tauri Desktop Shell](docs/superpowers/plans/2026-10-30-coldstart-02-desktop-shell.md)
+- [第三阶段：需求与蓝图](docs/superpowers/plans/2026-10-30-coldstart-03-requirements-blueprint.md)
+- [第四阶段：计划引擎与 MCP](docs/superpowers/plans/2026-10-30-coldstart-04-plan-engine-mcp.md)
+- [第五阶段：仓库、能力与发布门禁](docs/superpowers/plans/2026-10-30-coldstart-05-git-capabilities-release.md)
+- [第六阶段：集成、重规划与安全加固](docs/superpowers/plans/2026-10-30-coldstart-06-integration-hardening.md)
+- [第七阶段：本地命令验证与完成门禁](docs/superpowers/plans/2026-10-30-coldstart-07-command-verification.md)
 
 ## 技术形态
 
-MVP 采用 Tauri 2、Rust、React、TypeScript 和 SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、凭据、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。
-
-## 文档
-
-- [产品与系统架构规格](docs/superpowers/specs/2026-10-30-coldstart-design.md)
-- [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
-- [第一阶段实施计划：Rust 核心与 CLI](docs/superpowers/plans/2026-10-30-coldstart-01-core-foundation.md)
-- [第二阶段实施计划：Tauri Desktop Shell](docs/superpowers/plans/2026-10-30-coldstart-02-desktop-shell.md)
-- [第三阶段实施计划：需求与蓝图](docs/superpowers/plans/2026-10-30-coldstart-03-requirements-blueprint.md)
-- [第四阶段实施计划：计划引擎与 MCP](docs/superpowers/plans/2026-10-30-coldstart-04-plan-engine-mcp.md)
-- [第五阶段实施计划：仓库、能力与发布门禁](docs/superpowers/plans/2026-10-30-coldstart-05-git-capabilities-release.md)
-- [第六阶段实施计划：集成、重规划与安全加固](docs/superpowers/plans/2026-10-30-coldstart-06-integration-hardening.md)
-- [第七阶段实施计划：本地命令验证与完成门禁](docs/superpowers/plans/2026-10-30-coldstart-07-command-verification.md)
-
-## 安全说明
-
-ColdStart 避免把明文凭据交给模型，通过 Windows Credential Manager 保存 Secret，并限制 MCP 可访问的项目范围。MVP 不是面向恶意本地进程的完整沙箱；运行 Agent 的账户权限仍应与敏感生产凭据隔离。Git 推送主动拒绝保护分支、强推和越过任务范围的 Commit 变更。安装包未签名，分发时不要把它误标为已通过代码签名或商店审核。
+Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。

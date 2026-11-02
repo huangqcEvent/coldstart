@@ -202,7 +202,7 @@ fn build_user_prompt(request: &ModelExtractionRequest) -> String {
     prompt
 }
 
-fn strip_code_fence(content: &str) -> &str {
+pub(crate) fn strip_code_fence(content: &str) -> &str {
     let trimmed = content.trim();
     let Some(rest) = trimmed.strip_prefix("```") else {
         return trimmed;

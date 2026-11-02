@@ -48,7 +48,7 @@ fn credential(project_id: coldstart_core::ProjectId) -> CredentialMetadata {
 }
 
 #[test]
-fn migrates_v4_to_v6_and_persists_integration_state() {
+fn migrates_v4_to_v7_and_persists_integration_state() {
     let fixture = PlanFixture::new(vec![support::agent_task("foundation:demo", &[])]);
     let database_path = fixture.database_path.clone();
     let project_id = fixture.project_id;
@@ -63,6 +63,14 @@ fn migrates_v4_to_v6_and_persists_integration_state() {
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
              DROP INDEX work_reports_one_running_verification;
+             DROP INDEX work_reports_one_running_review;
+             ALTER TABLE work_runs DROP COLUMN review_snapshot_json;
+             ALTER TABLE work_runs DROP COLUMN review_snapshot_hash;
+             ALTER TABLE work_reports DROP COLUMN review_status;
+             ALTER TABLE work_reports DROP COLUMN review_json;
+             ALTER TABLE work_reports DROP COLUMN review_started_at;
+             ALTER TABLE work_reports DROP COLUMN review_finished_at;
+             ALTER TABLE work_reports DROP COLUMN review_waiver_json;
              ALTER TABLE work_runs DROP COLUMN verification_snapshot_json;
              ALTER TABLE work_runs DROP COLUMN verification_snapshot_hash;
              ALTER TABLE work_reports DROP COLUMN verification_status;
@@ -70,6 +78,9 @@ fn migrates_v4_to_v6_and_persists_integration_state() {
              ALTER TABLE work_reports DROP COLUMN verification_started_at;
              ALTER TABLE work_reports DROP COLUMN verification_finished_at;
              DROP TABLE git_syncs;
+             DROP TABLE review_standard_revisions;
+             DROP TABLE review_standards;
+             DROP TABLE review_configurations;
              DROP TABLE repository_verification_commands;
              DROP TABLE capability_states;
              DROP TABLE repositories;
@@ -83,7 +94,7 @@ fn migrates_v4_to_v6_and_persists_integration_state() {
     let mut database = Database::open(&database_path).expect("v4 migration must run");
     assert_eq!(
         database.schema_version().expect("schema version must load"),
-        6
+        7
     );
 
     let credential = credential(project_id);

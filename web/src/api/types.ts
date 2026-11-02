@@ -379,6 +379,9 @@ export interface WorkReportRecord {
   rejectionReasons: string[];
   verificationStatus: VerificationStatus;
   verification: VerificationResult | null;
+  reviewStatus: ReviewStatus;
+  review: ReviewResult | null;
+  reviewWaiver: ReviewWaiver | null;
   createdAt: string;
 }
 
@@ -603,6 +606,145 @@ export interface IntegrationWorkspace {
   capabilities: CapabilityStatusView[];
   gitSyncs: GitSyncRecord[];
   release: ReleaseCenter;
+}
+
+export type ReviewSeverity = 'critical' | 'high' | 'medium' | 'low';
+
+export type ReviewCategory =
+  | 'security'
+  | 'correctness'
+  | 'tests'
+  | 'maintainability'
+  | 'style'
+  | 'performance'
+  | 'other';
+
+export type ReviewScope =
+  | { kind: 'project' }
+  | { kind: 'repository'; repositoryKey: string };
+
+export type ReviewStandardSource = 'upload' | 'manual';
+
+export type ReviewStatus =
+  | 'not_required'
+  | 'running'
+  | 'passed'
+  | 'blocked'
+  | 'failed'
+  | 'waived'
+  | 'interrupted';
+
+export interface ReviewConfigurationInput {
+  enabled: boolean;
+  baseUrl: string;
+  model: string;
+  credentialId: string | null;
+  blockingSeverities: ReviewSeverity[];
+  consentConfirmed: boolean;
+}
+
+export interface ReviewConfiguration {
+  projectId: string;
+  enabled: boolean;
+  baseUrl: string;
+  model: string;
+  credentialId: string | null;
+  blockingSeverities: ReviewSeverity[];
+  consentFingerprint: string | null;
+  updatedAt: string;
+}
+
+export interface ReviewStandardView {
+  id: string;
+  name: string;
+  scope: ReviewScope;
+  enabled: boolean;
+  position: number;
+  currentRevisionId: string;
+  revisionNumber: number;
+  source: ReviewStandardSource;
+  fileName: string;
+  format: ArtifactFormat;
+  characterCount: number;
+  contentHash: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReviewStandardContent {
+  standard: ReviewStandardView;
+  revisionId: string;
+  text: string;
+}
+
+export interface ReviewStandardImport {
+  name: string;
+  scope: ReviewScope;
+  path: string;
+}
+
+export interface ReviewStandardManualInput {
+  name: string;
+  scope: ReviewScope;
+  text: string;
+}
+
+export interface ReviewStandardRevisionInput {
+  name: string;
+  scope: ReviewScope;
+  text: string;
+}
+
+export interface ReviewFinding {
+  severity: ReviewSeverity;
+  category: ReviewCategory;
+  file: string;
+  line: number | null;
+  message: string;
+  recommendation: string;
+  standard: string | null;
+}
+
+export interface ReviewFailure {
+  code: string;
+  message: string;
+}
+
+export interface ReviewResult {
+  snapshotHash: string;
+  status: ReviewStatus;
+  summary: string;
+  findings: ReviewFinding[];
+  model: string;
+  failure: ReviewFailure | null;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | null;
+}
+
+export interface ReviewWaiver {
+  reason: string;
+  waivedBy: string;
+  waivedAt: string;
+  findingsHash: string;
+  standardsHash: string;
+}
+
+export interface ReviewHistoryView {
+  reportId: string;
+  workItemId: string;
+  taskKey: string;
+  reviewStatus: ReviewStatus;
+  review: ReviewResult | null;
+  waiver: ReviewWaiver | null;
+  createdAt: string;
+}
+
+export interface ReviewWorkspace {
+  projectId: string;
+  configuration: ReviewConfiguration | null;
+  standards: ReviewStandardView[];
+  recentReviews: ReviewHistoryView[];
 }
 
 export interface GitHubSession {

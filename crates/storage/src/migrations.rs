@@ -2,7 +2,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::StorageError;
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let current = read_schema_version(connection)?;
@@ -31,6 +31,7 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v4(&transaction)?;
             create_schema_v5(&transaction)?;
             create_schema_v6(&transaction)?;
+            create_schema_v7(&transaction)?;
         }
         1 => {
             migrate_v1_to_v2(&transaction)?;
@@ -38,23 +39,31 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v4(&transaction)?;
             create_schema_v5(&transaction)?;
             create_schema_v6(&transaction)?;
+            create_schema_v7(&transaction)?;
         }
         2 => {
             create_schema_v3(&transaction)?;
             create_schema_v4(&transaction)?;
             create_schema_v5(&transaction)?;
             create_schema_v6(&transaction)?;
+            create_schema_v7(&transaction)?;
         }
         3 => {
             create_schema_v4(&transaction)?;
             create_schema_v5(&transaction)?;
             create_schema_v6(&transaction)?;
+            create_schema_v7(&transaction)?;
         }
         4 => {
             create_schema_v5(&transaction)?;
             create_schema_v6(&transaction)?;
+            create_schema_v7(&transaction)?;
         }
-        5 => create_schema_v6(&transaction)?,
+        5 => {
+            create_schema_v6(&transaction)?;
+            create_schema_v7(&transaction)?;
+        }
+        6 => create_schema_v7(&transaction)?,
         _ => return Err(unsupported_schema(current)),
     }
 
@@ -438,6 +447,79 @@ fn create_schema_v6(transaction: &Transaction<'_>) -> Result<(), StorageError> {
             CREATE UNIQUE INDEX work_reports_one_running_verification
                 ON work_reports(work_item_id)
                 WHERE verification_status = 'running';
+            ",
+    )?;
+    Ok(())
+}
+
+fn create_schema_v7(transaction: &Transaction<'_>) -> Result<(), StorageError> {
+    transaction.execute_batch(
+        "
+            CREATE TABLE review_configurations (
+                project_id TEXT PRIMARY KEY NOT NULL,
+                enabled INTEGER NOT NULL,
+                base_url TEXT NOT NULL,
+                model TEXT NOT NULL,
+                credential_id TEXT,
+                blocking_severities_json TEXT NOT NULL,
+                consent_fingerprint TEXT,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (credential_id) REFERENCES credentials(id) ON DELETE SET NULL
+            );
+
+            CREATE TABLE review_standards (
+                id TEXT PRIMARY KEY NOT NULL,
+                project_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                scope_kind TEXT NOT NULL,
+                repository_key TEXT,
+                enabled INTEGER NOT NULL,
+                position INTEGER NOT NULL,
+                current_revision_id TEXT NOT NULL,
+                deleted_at TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX review_standards_by_project
+                ON review_standards(project_id, deleted_at, position);
+
+            CREATE TABLE review_standard_revisions (
+                id TEXT PRIMARY KEY NOT NULL,
+                standard_id TEXT NOT NULL,
+                project_id TEXT NOT NULL,
+                revision_number INTEGER NOT NULL,
+                source TEXT NOT NULL,
+                file_name TEXT NOT NULL,
+                format TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                text_hash TEXT NOT NULL,
+                character_count INTEGER NOT NULL,
+                storage_relative_path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(standard_id, revision_number),
+                FOREIGN KEY (standard_id) REFERENCES review_standards(id) ON DELETE CASCADE,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX review_standard_revisions_by_standard
+                ON review_standard_revisions(standard_id, revision_number DESC);
+
+            ALTER TABLE work_runs ADD COLUMN review_snapshot_json TEXT;
+            ALTER TABLE work_runs ADD COLUMN review_snapshot_hash TEXT;
+
+            ALTER TABLE work_reports
+                ADD COLUMN review_status TEXT NOT NULL DEFAULT 'not_required';
+            ALTER TABLE work_reports ADD COLUMN review_json TEXT;
+            ALTER TABLE work_reports ADD COLUMN review_started_at TEXT;
+            ALTER TABLE work_reports ADD COLUMN review_finished_at TEXT;
+            ALTER TABLE work_reports ADD COLUMN review_waiver_json TEXT;
+
+            CREATE UNIQUE INDEX work_reports_one_running_review
+                ON work_reports(work_item_id)
+                WHERE review_status = 'running';
             ",
     )?;
     Ok(())

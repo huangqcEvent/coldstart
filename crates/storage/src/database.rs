@@ -108,6 +108,18 @@ pub enum StorageError {
     VerificationNotConfigured(WorkItemId),
     #[error("work item {0} is already running verification")]
     VerificationInProgress(WorkItemId),
+    #[error("work item {0} has no Review snapshot")]
+    ReviewNotConfigured(WorkItemId),
+    #[error("work item {0} is already running Review")]
+    ReviewInProgress(WorkItemId),
+    #[error("Review standard {0} does not exist in the project")]
+    ReviewStandardNotFound(coldstart_core::ReviewStandardId),
+    #[error("Review standard {0} has been deleted")]
+    ReviewStandardDeleted(coldstart_core::ReviewStandardId),
+    #[error("Review waiver reason cannot be empty")]
+    EmptyReviewWaiverReason,
+    #[error("invalid Review state: {0}")]
+    ReviewInvalid(String),
     #[error("invalid verification command: {0}")]
     VerificationCommandInvalid(String),
     #[error("credential secret reference already exists: {0}")]
@@ -655,7 +667,7 @@ where
     })
 }
 
-fn parse_date(value: &str) -> Result<DateTime<Utc>, StorageError> {
+pub(crate) fn parse_date(value: &str) -> Result<DateTime<Utc>, StorageError> {
     Ok(DateTime::parse_from_rfc3339(value)?.with_timezone(&Utc))
 }
 

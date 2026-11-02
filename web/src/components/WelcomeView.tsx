@@ -29,7 +29,7 @@ export function WelcomeView({ onCreate, onOpen }: WelcomeViewProps) {
 
       <div className="welcome__panel" aria-label="当前阶段">
         <div className="welcome__panel-head">
-          <span>PHASE 07</span>
+          <span>PHASE 08</span>
           <span className="status-dot">READY</span>
         </div>
         <div className="welcome__orbit" aria-hidden="true">
@@ -38,8 +38,8 @@ export function WelcomeView({ onCreate, onOpen }: WelcomeViewProps) {
           <span className="welcome__orbit-ring welcome__orbit-ring--two" />
         </div>
         <div className="welcome__panel-copy">
-          <p>命令验证门禁</p>
-          <span>Codex 报告后独立执行仓库命令，全部通过才算完成</span>
+          <p>AI 评审批次门禁</p>
+          <span>真实 Git diff 通过模型评审后，任务才允许完成与推送</span>
         </div>
       </div>
     </section>

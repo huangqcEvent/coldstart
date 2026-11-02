@@ -306,6 +306,10 @@ pub struct WorkRun {
     pub verification_snapshot: Option<VerificationSnapshot>,
     #[serde(default)]
     pub verification_snapshot_hash: Option<String>,
+    #[serde(default)]
+    pub review_snapshot: Option<crate::ReviewSnapshot>,
+    #[serde(default)]
+    pub review_snapshot_hash: Option<String>,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
 }
@@ -359,6 +363,12 @@ pub struct WorkReportRecord {
     pub verification_status: crate::VerificationStatus,
     #[serde(default)]
     pub verification: Option<crate::VerificationResult>,
+    #[serde(default)]
+    pub review_status: crate::ReviewStatus,
+    #[serde(default)]
+    pub review: Option<crate::ReviewResult>,
+    #[serde(default)]
+    pub review_waiver: Option<crate::ReviewWaiver>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -390,6 +400,9 @@ pub enum ClaimFailure {
     WaitingHuman,
     NoMatchingRepository,
     VerificationNotConfigured,
+    ReviewNotConfigured,
+    ReviewConsentRequired,
+    ReviewCredentialMissing,
 }
 
 impl ClaimFailure {
@@ -401,6 +414,9 @@ impl ClaimFailure {
             Self::WaitingHuman => "waiting_human",
             Self::NoMatchingRepository => "no_matching_repository",
             Self::VerificationNotConfigured => "verification_not_configured",
+            Self::ReviewNotConfigured => "review_not_configured",
+            Self::ReviewConsentRequired => "review_consent_required",
+            Self::ReviewCredentialMissing => "review_credential_missing",
         }
     }
 }

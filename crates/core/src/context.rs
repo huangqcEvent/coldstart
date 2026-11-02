@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::VerificationSnapshot;
+use crate::{ReviewContextView, VerificationSnapshot};
 
 pub const DEFAULT_CONTEXT_BUDGET_TOKENS: u32 = 12_000;
 
@@ -13,6 +13,7 @@ pub enum ContextReferenceKind {
     ProjectFact,
     DependencySummary,
     Instruction,
+    ReviewStandard,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +43,8 @@ pub struct TaskContext {
     pub omitted: Vec<ContextOmission>,
     #[serde(default)]
     pub verification: Option<VerificationSnapshot>,
+    #[serde(default)]
+    pub review: Option<ReviewContextView>,
     pub generated_at: DateTime<Utc>,
 }
 

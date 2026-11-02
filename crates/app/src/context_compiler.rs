@@ -1,14 +1,16 @@
 use chrono::Utc;
 use coldstart_core::{
     BlueprintContent, BlueprintEntityId, ContextOmission, ContextReference, ContextReferenceKind,
-    InfoRequestStatus, PlanRevision, ProjectFact, TaskContext, TaskReferenceContent, TaskSpec,
-    VerificationSnapshot, WorkItem, estimate_tokens, sha256_hex,
+    InfoRequestStatus, PlanRevision, ProjectFact, ReviewContextView, ReviewScope, ReviewSnapshot,
+    TaskContext, TaskReferenceContent, TaskSpec, VerificationSnapshot, WorkItem, estimate_tokens,
+    sha256_hex,
 };
 
 use crate::{
     AppError,
     context::OpenProject,
     integration::{CapabilityStatusView, load_capabilities_for_context},
+    review::read_review_snapshot_standard,
 };
 
 #[derive(Debug)]
@@ -26,6 +28,7 @@ pub(crate) fn compile_task_context(
     task: &TaskSpec,
     work_items: &[WorkItem],
     verification: Option<VerificationSnapshot>,
+    review: Option<&ReviewSnapshot>,
 ) -> Result<TaskContext, AppError> {
     let blueprint = project
         .database
@@ -53,6 +56,7 @@ pub(crate) fn compile_task_context(
         work_items,
         repository,
         verification: verification.as_ref(),
+        review,
         capabilities: &capabilities,
         facts: &facts,
         info_requests: &info_requests,
@@ -98,6 +102,7 @@ pub(crate) fn compile_task_context(
         included,
         omitted,
         verification,
+        review: review.map(ReviewContextView::from_snapshot),
         generated_at: Utc::now(),
     })
 }
@@ -108,6 +113,7 @@ pub(crate) fn compile_reference(
     task: &TaskSpec,
     reference_id: &str,
     work_items: &[WorkItem],
+    review: Option<&ReviewSnapshot>,
 ) -> Result<Option<TaskReferenceContent>, AppError> {
     let blueprint = project
         .database
@@ -139,6 +145,20 @@ pub(crate) fn compile_reference(
         return Ok(Some(TaskReferenceContent {
             reference_id: reference_id.to_owned(),
             title: format!("依赖任务 {}", reference_id),
+            content_hash: sha256_hex(content.as_bytes()),
+            content,
+        }));
+    }
+    if let Some(standard) = review.and_then(|snapshot| {
+        snapshot
+            .standards
+            .iter()
+            .find(|standard| format!("review-standard:{}", standard.standard_id) == reference_id)
+    }) {
+        let content = read_review_snapshot_standard(project, standard)?;
+        return Ok(Some(TaskReferenceContent {
+            reference_id: reference_id.to_owned(),
+            title: format!("评审规范：{}", standard.name),
             content_hash: sha256_hex(content.as_bytes()),
             content,
         }));
@@ -198,6 +218,7 @@ struct ContextSectionInputs<'a> {
     work_items: &'a [WorkItem],
     repository: Option<Section>,
     verification: Option<&'a VerificationSnapshot>,
+    review: Option<&'a ReviewSnapshot>,
     capabilities: &'a [CapabilityStatusView],
     facts: &'a [ProjectFact],
     info_requests: &'a [coldstart_core::InfoRequest],
@@ -210,6 +231,7 @@ fn build_sections(inputs: ContextSectionInputs<'_>) -> Vec<Section> {
         work_items,
         repository,
         verification,
+        review,
         capabilities,
         facts,
         info_requests,
@@ -244,6 +266,29 @@ fn build_sections(inputs: ContextSectionInputs<'_>) -> Vec<Section> {
                 commands
             ),
         });
+    }
+    if let Some(review) = review {
+        for standard in &review.standards {
+            let scope = match &standard.scope {
+                ReviewScope::Project => "项目通用".to_owned(),
+                ReviewScope::Repository(repository_key) => {
+                    format!("仓库 {repository_key}")
+                }
+            };
+            sections.push(Section {
+                priority: 85,
+                id: format!("review-standard:{}", standard.standard_id),
+                kind: ContextReferenceKind::ReviewStandard,
+                title: format!("评审规范：{}", standard.name),
+                content: format!(
+                    "- 适用范围：{scope}\n- 修订：{}\n- 内容哈希：{}\n- 字符数：{}\n\n完整规范正文不自动注入上下文；调用 read_task_reference，并传入 referenceId=`review-standard:{}` 读取。提交后的 AI Review 会使用同一规范修订检查真实 Git diff。",
+                    standard.revision_id,
+                    standard.content_hash,
+                    standard.character_count,
+                    standard.standard_id
+                ),
+            });
+        }
     }
     if !capabilities.is_empty() {
         let lines = capabilities

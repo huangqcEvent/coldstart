@@ -51,6 +51,8 @@ uuid_id!(LeaseId);
 uuid_id!(PlanRevisionId);
 uuid_id!(ProjectFactId);
 uuid_id!(RepositoryId);
+uuid_id!(ReviewStandardId);
+uuid_id!(ReviewStandardRevisionId);
 uuid_id!(TaskSpecId);
 uuid_id!(WorkItemId);
 uuid_id!(WorkReportId);

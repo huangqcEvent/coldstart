@@ -1,9 +1,11 @@
 use std::path::Path;
 
-use coldstart_adapters::{GitAdapter, GitAuth, GitCommitVerification, GitError};
+use coldstart_adapters::{GitAdapter, GitAuth, GitCommitVerification, GitError, ReviewDiff};
 
 pub trait PlanGitGateway: Send + Sync {
     fn fetch(&self, repository: &Path, auth: &GitAuth) -> Result<(), GitError>;
+
+    fn resolve_commit(&self, repository: &Path, reference: &str) -> Result<String, GitError>;
 
     fn validate_remote(
         &self,
@@ -39,6 +41,13 @@ pub trait PlanGitGateway: Send + Sync {
         commit_sha: &str,
     ) -> Result<(), GitError>;
 
+    fn extract_review_diff(
+        &self,
+        repository: &Path,
+        base_commit: &str,
+        head_commit: &str,
+    ) -> Result<ReviewDiff, GitError>;
+
     fn push_branch(
         &self,
         repository: &Path,
@@ -51,6 +60,10 @@ pub trait PlanGitGateway: Send + Sync {
 impl PlanGitGateway for GitAdapter {
     fn fetch(&self, repository: &Path, auth: &GitAuth) -> Result<(), GitError> {
         GitAdapter::fetch(self, repository, auth)
+    }
+
+    fn resolve_commit(&self, repository: &Path, reference: &str) -> Result<String, GitError> {
+        GitAdapter::resolve_commit(self, repository, reference)
     }
 
     fn validate_remote(
@@ -100,6 +113,15 @@ impl PlanGitGateway for GitAdapter {
         commit_sha: &str,
     ) -> Result<(), GitError> {
         GitAdapter::ensure_verification_checkout(self, repository, branch, commit_sha)
+    }
+
+    fn extract_review_diff(
+        &self,
+        repository: &Path,
+        base_commit: &str,
+        head_commit: &str,
+    ) -> Result<ReviewDiff, GitError> {
+        GitAdapter::extract_review_diff(self, repository, base_commit, head_commit)
     }
 
     fn push_branch(

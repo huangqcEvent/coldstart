@@ -21,6 +21,7 @@ import { PlanView } from './components/PlanView';
 import { ProjectOverview } from './components/ProjectOverview';
 import { ReleaseCenterView } from './components/ReleaseCenterView';
 import { RequirementsView } from './components/RequirementsView';
+import { ReviewView } from './components/ReviewView';
 import { WelcomeView } from './components/WelcomeView';
 
 function normalizeCommandError(error: unknown): CommandError {
@@ -315,7 +316,7 @@ export default function App() {
       <main className="workspace">
         <div className="workspace__topline" aria-hidden="true">
           <span>LOCAL-FIRST PROJECT SYSTEM</span>
-          <span>PHASE 07 / COMMAND VERIFICATION</span>
+          <span>PHASE 08 / AI REVIEW GATE</span>
         </div>
 
         {error ? <ErrorBanner error={error} onDismiss={() => setError(null)} /> : null}
@@ -390,11 +391,21 @@ export default function App() {
               onRefresh={handlePlanRefresh}
               onNavigateBlueprint={() => setView('blueprint')}
               onNavigateInbox={() => setView('inbox')}
+              onNavigateReview={() => setView('review')}
             />
           ) : null}
 
           {workspace && view === 'integration' ? (
             <IntegrationView path={workspace.status.rootPath} />
+          ) : null}
+
+          {workspace && view === 'review' ? (
+            <ReviewView
+              path={workspace.status.rootPath}
+              onPlanChanged={async () => {
+                await handlePlanRefresh();
+              }}
+            />
           ) : null}
 
           {workspace && view === 'release' ? (

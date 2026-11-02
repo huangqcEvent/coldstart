@@ -5,12 +5,14 @@ use coldstart_app::{
     CreatePrivateRepositoryInput, DeviceFlowView, GitHubDevicePollView, GitHubSessionView,
     IntegrationService, IntegrationWorkspace, PlanService, ProjectService, ProjectStatus,
     ProjectWorkspace, RepositoryDraft, RepositoryValidationView, RequirementsService,
-    SaveCredentialInput,
+    ReviewService, ReviewStandardContent, ReviewStandardImport, ReviewStandardManualInput,
+    ReviewStandardRevisionInput, ReviewStandardView, ReviewWorkspace, SaveCredentialInput,
 };
 use coldstart_core::{
     BlueprintContent, BlueprintEntityId, BlueprintRevisionId, CapabilityStatus, CredentialId,
     InfoRequestId, PlanContent, PlanPublishPreview, PlanRevisionId, RepositoryVerificationCommand,
-    WorkItemId,
+    ReviewConfiguration, ReviewConfigurationInput, ReviewStandardId, WorkItemId, WorkReportId,
+    WorkReportRecord,
 };
 use tauri::State;
 
@@ -591,6 +593,214 @@ pub async fn create_github_private_repository(
     .map_err(join_error)?
 }
 
+pub fn load_review_workspace_sync(path: String) -> Result<ReviewWorkspace, CommandError> {
+    ReviewService::new()
+        .load_workspace(PathBuf::from(path))
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn load_review_workspace(path: String) -> Result<ReviewWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || load_review_workspace_sync(path))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn save_review_configuration_sync(
+    path: String,
+    input: ReviewConfigurationInput,
+) -> Result<ReviewConfiguration, CommandError> {
+    ReviewService::new()
+        .save_configuration(PathBuf::from(path), input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn save_review_configuration(
+    path: String,
+    input: ReviewConfigurationInput,
+) -> Result<ReviewConfiguration, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || save_review_configuration_sync(path, input))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn import_review_standard_sync(
+    path: String,
+    input: ReviewStandardImport,
+) -> Result<ReviewStandardView, CommandError> {
+    ReviewService::new()
+        .import_standard(PathBuf::from(path), input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn import_review_standard(
+    path: String,
+    input: ReviewStandardImport,
+) -> Result<ReviewStandardView, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || import_review_standard_sync(path, input))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn create_review_standard_sync(
+    path: String,
+    input: ReviewStandardManualInput,
+) -> Result<ReviewStandardView, CommandError> {
+    ReviewService::new()
+        .create_manual_standard(PathBuf::from(path), input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn create_review_standard(
+    path: String,
+    input: ReviewStandardManualInput,
+) -> Result<ReviewStandardView, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || create_review_standard_sync(path, input))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn revise_review_standard_sync(
+    path: String,
+    standard_id: String,
+    input: ReviewStandardRevisionInput,
+) -> Result<ReviewStandardView, CommandError> {
+    let standard_id = parse_review_standard_id(&standard_id)?;
+    ReviewService::new()
+        .revise_standard(PathBuf::from(path), standard_id, input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn revise_review_standard(
+    path: String,
+    standard_id: String,
+    input: ReviewStandardRevisionInput,
+) -> Result<ReviewStandardView, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        revise_review_standard_sync(path, standard_id, input)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn set_review_standard_enabled_sync(
+    path: String,
+    standard_id: String,
+    enabled: bool,
+) -> Result<ReviewWorkspace, CommandError> {
+    let standard_id = parse_review_standard_id(&standard_id)?;
+    ReviewService::new()
+        .set_standard_enabled(PathBuf::from(path), standard_id, enabled)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn set_review_standard_enabled(
+    path: String,
+    standard_id: String,
+    enabled: bool,
+) -> Result<ReviewWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        set_review_standard_enabled_sync(path, standard_id, enabled)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn reorder_review_standards_sync(
+    path: String,
+    ordered_ids: Vec<String>,
+) -> Result<ReviewWorkspace, CommandError> {
+    let ordered_ids = ordered_ids
+        .iter()
+        .map(|value| parse_review_standard_id(value))
+        .collect::<Result<Vec<_>, _>>()?;
+    ReviewService::new()
+        .reorder_standards(PathBuf::from(path), ordered_ids)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn reorder_review_standards(
+    path: String,
+    ordered_ids: Vec<String>,
+) -> Result<ReviewWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || reorder_review_standards_sync(path, ordered_ids))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn delete_review_standard_sync(
+    path: String,
+    standard_id: String,
+) -> Result<ReviewWorkspace, CommandError> {
+    let standard_id = parse_review_standard_id(&standard_id)?;
+    ReviewService::new()
+        .delete_standard(PathBuf::from(path), standard_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn delete_review_standard(
+    path: String,
+    standard_id: String,
+) -> Result<ReviewWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || delete_review_standard_sync(path, standard_id))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn read_review_standard_sync(
+    path: String,
+    standard_id: String,
+) -> Result<ReviewStandardContent, CommandError> {
+    let standard_id = parse_review_standard_id(&standard_id)?;
+    ReviewService::new()
+        .read_standard(PathBuf::from(path), standard_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn read_review_standard(
+    path: String,
+    standard_id: String,
+) -> Result<ReviewStandardContent, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || read_review_standard_sync(path, standard_id))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn waive_work_review_sync(
+    path: String,
+    work_item_id: String,
+    report_id: String,
+    reason: String,
+) -> Result<WorkReportRecord, CommandError> {
+    let work_item_id = parse_work_item_id(&work_item_id)?;
+    let report_id = parse_work_report_id(&report_id)?;
+    PlanService::new()
+        .waive_review(PathBuf::from(path), work_item_id, report_id, reason)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn waive_work_review(
+    path: String,
+    work_item_id: String,
+    report_id: String,
+    reason: String,
+) -> Result<WorkReportRecord, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        waive_work_review_sync(path, work_item_id, report_id, reason)
+    })
+    .await
+    .map_err(join_error)?
+}
+
 fn parse_revision_id(value: &str) -> Result<BlueprintRevisionId, CommandError> {
     value.parse().map_err(|_| CommandError {
         code: "invalid_id".to_owned(),
@@ -630,6 +840,20 @@ fn parse_capability_id(value: &str) -> Result<BlueprintEntityId, CommandError> {
     value.parse().map_err(|_| CommandError {
         code: "invalid_id".to_owned(),
         message: "能力 ID 无效".to_owned(),
+    })
+}
+
+fn parse_review_standard_id(value: &str) -> Result<ReviewStandardId, CommandError> {
+    value.parse().map_err(|_| CommandError {
+        code: "invalid_id".to_owned(),
+        message: "评审规范 ID 无效".to_owned(),
+    })
+}
+
+fn parse_work_report_id(value: &str) -> Result<WorkReportId, CommandError> {
+    value.parse().map_err(|_| CommandError {
+        code: "invalid_id".to_owned(),
+        message: "工作报告 ID 无效".to_owned(),
     })
 }
 
@@ -800,5 +1024,59 @@ mod tests {
                 .expect_err("empty answer must fail");
 
         assert_eq!(error.code, "info_request_answer_empty");
+    }
+
+    #[test]
+    fn review_commands_manage_manual_standards_without_hidden_inputs() {
+        let temp = TempDir::new().expect("temporary directory must exist");
+        let home = path_string(&temp.path().join("demo"));
+        create_project_sync("Review Project".to_owned(), home.clone())
+            .expect("project must be created");
+
+        let initial = load_review_workspace_sync(home.clone()).expect("workspace must load");
+        assert!(initial.configuration.is_none());
+        assert!(initial.standards.is_empty());
+
+        let standard = create_review_standard_sync(
+            home.clone(),
+            ReviewStandardManualInput {
+                name: "Team Rust Standards".to_owned(),
+                scope: coldstart_core::ReviewScope::Repository("server".to_owned()),
+                text: "# Rust\n\n- Return stable errors\n- Test failure paths\n".to_owned(),
+            },
+        )
+        .expect("manual standard must be created");
+        assert_eq!(standard.name, "Team Rust Standards");
+        assert!(standard.enabled);
+
+        let content = read_review_standard_sync(home.clone(), standard.id.to_string())
+            .expect("standard content must be readable");
+        assert_eq!(content.revision_id, standard.current_revision_id);
+        assert!(content.text.contains("Test failure paths"));
+
+        let disabled =
+            set_review_standard_enabled_sync(home.clone(), standard.id.to_string(), false)
+                .expect("standard must be disabled");
+        assert!(!disabled.standards[0].enabled);
+
+        let reordered = reorder_review_standards_sync(home.clone(), vec![standard.id.to_string()])
+            .expect("standard order must save");
+        assert_eq!(reordered.standards.len(), 1);
+
+        let deleted = delete_review_standard_sync(home, standard.id.to_string())
+            .expect("standard must be soft deleted");
+        assert!(deleted.standards.is_empty());
+    }
+
+    #[test]
+    fn review_command_ids_are_validated_before_storage() {
+        let temp = TempDir::new().expect("temporary directory must exist");
+        let home = path_string(&temp.path().join("demo"));
+        create_project_sync("Review Project".to_owned(), home.clone())
+            .expect("project must be created");
+
+        let error = read_review_standard_sync(home, "not-an-id".to_owned())
+            .expect_err("invalid standard id must fail");
+        assert_eq!(error.code, "invalid_id");
     }
 }

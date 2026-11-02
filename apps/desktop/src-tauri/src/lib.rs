@@ -31,7 +31,17 @@ pub fn run() {
             commands::import_github_session,
             commands::start_github_device_flow,
             commands::poll_github_device_flow,
-            commands::create_github_private_repository
+            commands::create_github_private_repository,
+            commands::load_review_workspace,
+            commands::save_review_configuration,
+            commands::import_review_standard,
+            commands::create_review_standard,
+            commands::revise_review_standard,
+            commands::set_review_standard_enabled,
+            commands::reorder_review_standards,
+            commands::delete_review_standard,
+            commands::read_review_standard,
+            commands::waive_work_review
         ])
         .run(tauri::generate_context!())
         .expect("failed to run ColdStart desktop");

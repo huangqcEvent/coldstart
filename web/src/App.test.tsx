@@ -7,6 +7,7 @@ import * as integrationApi from './api/integrationApi';
 import * as planApi from './api/planApi';
 import * as projectApi from './api/projectApi';
 import * as requirementsApi from './api/requirementsApi';
+import * as reviewApi from './api/reviewApi';
 import type {
   BlueprintContent,
   BlueprintRevision,
@@ -24,6 +25,10 @@ import type {
   ProjectWorkspace,
   Repository,
   RepositoryVerificationCommand,
+  ReviewConfiguration,
+  ReviewHistoryView,
+  ReviewStandardView,
+  ReviewWorkspace,
   TaskSpec,
   WorkItemView,
   WorkReportRecord,
@@ -67,6 +72,20 @@ vi.mock('./api/integrationApi', () => ({
   startGitHubDeviceFlow: vi.fn(),
   pollGitHubDeviceFlow: vi.fn(),
   createGitHubPrivateRepository: vi.fn(),
+}));
+
+vi.mock('./api/reviewApi', () => ({
+  readReviewWorkspace: vi.fn(),
+  saveReviewConfiguration: vi.fn(),
+  importReviewStandard: vi.fn(),
+  createReviewStandard: vi.fn(),
+  reviseReviewStandard: vi.fn(),
+  setReviewStandardEnabled: vi.fn(),
+  reorderReviewStandards: vi.fn(),
+  deleteReviewStandard: vi.fn(),
+  readReviewStandard: vi.fn(),
+  waiveWorkReview: vi.fn(),
+  pickReviewStandardFile: vi.fn(),
 }));
 
 const projectPath = String.raw`D:\coldstart-projects\permafrost`;
@@ -467,6 +486,90 @@ const infoRequest: InfoRequest = {
   createdAt: '2026-10-30T09:01:00Z',
 };
 
+const reviewConfiguration: ReviewConfiguration = {
+  projectId: status.projectId,
+  enabled: true,
+  baseUrl: 'https://api.example.test/v1',
+  model: 'review-model',
+  credentialId: credential.id,
+  blockingSeverities: ['critical', 'high'],
+  consentFingerprint: 'f'.repeat(64),
+  updatedAt: '2026-11-02T09:00:00Z',
+};
+
+const reviewStandard: ReviewStandardView = {
+  id: '12121212-1212-4212-8212-121212121212',
+  name: 'Web 团队规范',
+  scope: { kind: 'repository', repositoryKey: 'web' },
+  enabled: true,
+  position: 0,
+  currentRevisionId: '13131313-1313-4313-8313-131313131313',
+  revisionNumber: 2,
+  source: 'upload',
+  fileName: 'web-standard.md',
+  format: 'markdown',
+  characterCount: 1280,
+  contentHash: 'a'.repeat(64),
+  createdAt: '2026-11-02T08:00:00Z',
+  updatedAt: '2026-11-02T08:30:00Z',
+};
+
+function makeReviewHistory(
+  statusValue: ReviewHistoryView['reviewStatus'],
+  overrides: Partial<ReviewHistoryView> = {},
+): ReviewHistoryView {
+  return {
+    reportId: '14141414-1414-4414-8414-141414141414',
+    workItemId: '55555555-5555-4555-8555-555555555555',
+    taskKey: 'slice:order:web',
+    reviewStatus: statusValue,
+    review: statusValue === 'interrupted'
+      ? null
+      : {
+          snapshotHash: 'b'.repeat(64),
+          status: statusValue,
+          summary: statusValue === 'blocked'
+            ? '发现一个高风险错误处理问题。'
+            : '评审失败，模型响应无法解析。',
+          findings: statusValue === 'blocked'
+            ? [
+                {
+                  severity: 'high',
+                  category: 'correctness',
+                  file: 'src/order.ts',
+                  line: 42,
+                  message: '未处理订单失败分支。',
+                  recommendation: '补充错误返回并增加测试。',
+                  standard: 'Web 团队规范',
+                },
+              ]
+            : [],
+          model: 'review-model',
+          failure: statusValue === 'failed'
+            ? { code: 'review_response_invalid', message: '模型响应格式非法' }
+            : null,
+          startedAt: '2026-11-02T09:10:00Z',
+          finishedAt: '2026-11-02T09:10:05Z',
+          durationMs: 5000,
+        },
+    waiver: null,
+    createdAt: '2026-11-02T09:10:06Z',
+    ...overrides,
+  };
+}
+
+function makeReviewWorkspace(
+  overrides: Partial<ReviewWorkspace> = {},
+): ReviewWorkspace {
+  return {
+    projectId: status.projectId,
+    configuration: reviewConfiguration,
+    standards: [reviewStandard],
+    recentReviews: [],
+    ...overrides,
+  };
+}
+
 function makeWorkspace(overrides: Partial<ProjectWorkspace> = {}): ProjectWorkspace {
   return {
     status,
@@ -509,6 +612,18 @@ async function openIntegrationView(
   return user;
 }
 
+async function openReviewView(
+  reviewWorkspace = makeReviewWorkspace(),
+  integration = makeIntegrationWorkspace(),
+) {
+  vi.mocked(reviewApi.readReviewWorkspace).mockResolvedValue(reviewWorkspace);
+  vi.mocked(integrationApi.readIntegrationWorkspace).mockResolvedValue(integration);
+  const user = await openProject();
+  await user.click(screen.getByRole('button', { name: 'AI 评审' }));
+  await screen.findByRole('heading', { name: 'AI 评审' });
+  return user;
+}
+
 beforeEach(() => {
   vi.mocked(projectApi.createProject).mockReset();
   vi.mocked(projectApi.readProjectStatus).mockReset();
@@ -526,6 +641,17 @@ beforeEach(() => {
   vi.mocked(planApi.previewPlanPublish).mockReset();
   vi.mocked(planApi.publishPlan).mockReset();
   vi.mocked(planApi.completeHumanWork).mockReset();
+  vi.mocked(reviewApi.readReviewWorkspace).mockReset();
+  vi.mocked(reviewApi.saveReviewConfiguration).mockReset();
+  vi.mocked(reviewApi.importReviewStandard).mockReset();
+  vi.mocked(reviewApi.createReviewStandard).mockReset();
+  vi.mocked(reviewApi.reviseReviewStandard).mockReset();
+  vi.mocked(reviewApi.setReviewStandardEnabled).mockReset();
+  vi.mocked(reviewApi.reorderReviewStandards).mockReset();
+  vi.mocked(reviewApi.deleteReviewStandard).mockReset();
+  vi.mocked(reviewApi.readReviewStandard).mockReset();
+  vi.mocked(reviewApi.waiveWorkReview).mockReset();
+  vi.mocked(reviewApi.pickReviewStandardFile).mockReset();
   vi.mocked(integrationApi.readIntegrationWorkspace).mockReset();
   vi.mocked(integrationApi.validateRepository).mockReset();
   vi.mocked(integrationApi.saveRepository).mockReset();
@@ -545,9 +671,9 @@ describe('ColdStart project workspace', () => {
     render(<App />);
 
     expect(screen.getByText('COLDSTART / 冷启动')).toBeInTheDocument();
-    expect(screen.getByText('PHASE 07 / COMMAND VERIFICATION')).toBeInTheDocument();
+    expect(screen.getByText('PHASE 08 / AI REVIEW GATE')).toBeInTheDocument();
     expect(
-      within(screen.getByLabelText('当前阶段')).getByText('PHASE 07'),
+      within(screen.getByLabelText('当前阶段')).getByText('PHASE 08'),
     ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '冷启动' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '项目总览' })).toBeEnabled();
@@ -1101,6 +1227,9 @@ describe('ColdStart project workspace', () => {
           },
         ],
       },
+      reviewStatus: 'not_required',
+      review: null,
+      reviewWaiver: null,
       createdAt: '2026-10-30T12:10:02Z',
     };
     const publishedPlan = makePlanRevision({
@@ -1279,6 +1408,149 @@ describe('ColdStart project workspace', () => {
     await user.click(screen.getByRole('button', { name: '进入人工 Inbox' }));
     expect(
       await screen.findByRole('heading', { name: '人工 Inbox' }),
+    ).toBeInTheDocument();
+  });
+
+  it('saves an enabled AI Review configuration only after explicit consent', async () => {
+    const user = await openReviewView(
+      makeReviewWorkspace({ configuration: null, standards: [] }),
+    );
+    vi.mocked(reviewApi.saveReviewConfiguration).mockResolvedValue(reviewConfiguration);
+    vi.mocked(reviewApi.readReviewWorkspace).mockResolvedValue(
+      makeReviewWorkspace({ configuration: reviewConfiguration, standards: [] }),
+    );
+
+    await user.click(screen.getByLabelText('启用 AI Review'));
+    await user.clear(screen.getByLabelText('Review 模型 Base URL'));
+    await user.type(
+      screen.getByLabelText('Review 模型 Base URL'),
+      'https://api.example.test/v1',
+    );
+    await user.type(screen.getByLabelText('Review 模型名称'), 'review-model');
+    await user.selectOptions(
+      screen.getByLabelText('Review 模型凭据'),
+      credential.id,
+    );
+    await user.click(screen.getByLabelText('确认 AI Review 隐私边界'));
+    await user.click(screen.getByRole('button', { name: '保存 Review 配置' }));
+
+    await waitFor(() =>
+      expect(reviewApi.saveReviewConfiguration).toHaveBeenCalledWith(projectPath, {
+        enabled: true,
+        baseUrl: 'https://api.example.test/v1',
+        model: 'review-model',
+        credentialId: credential.id,
+        blockingSeverities: ['critical', 'high'],
+        consentConfirmed: true,
+      }),
+    );
+    expect(
+      await screen.findByText('AI Review 配置已保存；新配置只影响下一次领取。'),
+    ).toBeInTheDocument();
+  });
+
+  it('requires consent again after changing the review endpoint or model', async () => {
+    const user = await openReviewView();
+    const consent = screen.getByLabelText('确认 AI Review 隐私边界');
+
+    await user.click(consent);
+    expect(consent).toBeChecked();
+
+    await user.type(screen.getByLabelText('Review 模型 Base URL'), '/v2');
+    expect(consent).not.toBeChecked();
+
+    await user.click(consent);
+    expect(consent).toBeChecked();
+
+    await user.type(screen.getByLabelText('Review 模型名称'), '-next');
+    expect(consent).not.toBeChecked();
+  });
+
+  it('imports a repository-scoped review standard from a file', async () => {
+    const user = await openReviewView(makeReviewWorkspace({ standards: [] }));
+    const standardPath = String.raw`D:\docs\web-standard.md`;
+    vi.mocked(reviewApi.pickReviewStandardFile).mockResolvedValue(standardPath);
+    vi.mocked(reviewApi.importReviewStandard).mockResolvedValue(reviewStandard);
+    vi.mocked(reviewApi.readReviewWorkspace).mockResolvedValue(makeReviewWorkspace());
+
+    await user.click(screen.getByRole('button', { name: '上传规范' }));
+    await user.click(screen.getByRole('button', { name: '选择文件' }));
+    await waitFor(() =>
+      expect(screen.getByLabelText('评审规范名称')).toHaveValue('web-standard'),
+    );
+    await user.selectOptions(
+      screen.getByLabelText('评审规范适用范围'),
+      'repository:web',
+    );
+    await user.click(screen.getByRole('button', { name: '导入并保存' }));
+
+    await waitFor(() =>
+      expect(reviewApi.importReviewStandard).toHaveBeenCalledWith(projectPath, {
+        name: 'web-standard',
+        scope: { kind: 'repository', repositoryKey: 'web' },
+        path: standardPath,
+      }),
+    );
+    expect(await screen.findByText('Web 团队规范')).toBeInTheDocument();
+  });
+
+  it('offers a two-step audit waiver only for blocked reviews', async () => {
+    const blocked = makeReviewHistory('blocked');
+    const failed = makeReviewHistory('failed', {
+      reportId: '15151515-1515-4515-8515-151515151515',
+      taskKey: 'slice:order:failed',
+    });
+    const user = await openReviewView(
+      makeReviewWorkspace({ recentReviews: [blocked, failed] }),
+    );
+
+    expect(
+      screen.getAllByRole('button', { name: '人工豁免…' }),
+    ).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: '人工豁免…' }));
+    await user.type(
+      screen.getByLabelText('人工豁免理由'),
+      '该错误分支由框架统一兜底，已有集成测试覆盖。',
+    );
+    await user.click(screen.getByRole('button', { name: '继续确认' }));
+    expect(reviewApi.waiveWorkReview).not.toHaveBeenCalled();
+
+    vi.mocked(reviewApi.waiveWorkReview).mockResolvedValue(
+      {} as WorkReportRecord,
+    );
+    vi.mocked(reviewApi.readReviewWorkspace).mockResolvedValue(
+      makeReviewWorkspace({
+        recentReviews: [
+          {
+            ...blocked,
+            reviewStatus: 'waived',
+            waiver: {
+              reason: '该错误分支由框架统一兜底，已有集成测试覆盖。',
+              waivedBy: 'tester',
+              waivedAt: '2026-11-02T09:20:00Z',
+              findingsHash: 'c'.repeat(64),
+              standardsHash: 'd'.repeat(64),
+            },
+          },
+          failed,
+        ],
+      }),
+    );
+    vi.mocked(planApi.readPlanWorkspace).mockResolvedValue(makeWorkspace());
+
+    await user.click(screen.getByRole('button', { name: '确认豁免并推送' }));
+
+    await waitFor(() =>
+      expect(reviewApi.waiveWorkReview).toHaveBeenCalledWith(
+        projectPath,
+        blocked.workItemId,
+        blocked.reportId,
+        '该错误分支由框架统一兜底，已有集成测试覆盖。',
+      ),
+    );
+    expect(planApi.readPlanWorkspace).toHaveBeenCalledWith(projectPath);
+    expect(
+      await screen.findByText('人工豁免已记录；任务完成并进入推送流程。'),
     ).toBeInTheDocument();
   });
 });

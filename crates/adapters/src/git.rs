@@ -9,7 +9,10 @@ use coldstart_core::validate_branch_name;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::GitHubToken;
+use crate::{
+    GitHubToken,
+    review::{ReviewDiff, ReviewDiffFile},
+};
 
 const MAX_GIT_ERROR_CHARS: usize = 1_200;
 
@@ -144,6 +147,119 @@ impl GitAdapter {
     pub fn fetch(&self, repository: &Path, auth: &GitAuth) -> Result<(), GitError> {
         self.run_with_auth(repository, &["fetch", "origin", "--prune"], auth, "fetch")?;
         Ok(())
+    }
+
+    pub fn resolve_commit(&self, repository: &Path, reference: &str) -> Result<String, GitError> {
+        validate_base_ref(reference)?;
+        let commit_reference = format!("{reference}^{{commit}}");
+        let output = self
+            .run_allow_failure(
+                repository,
+                &["rev-parse", "--verify", "--quiet", &commit_reference],
+                "resolve commit",
+            )?
+            .filter(|output| output.status.success())
+            .ok_or_else(|| GitError::BaseRefNotFound(reference.to_owned()))?;
+        let commit = output_text(&output);
+        validate_commit_sha(&commit)?;
+        Ok(commit)
+    }
+
+    pub fn extract_review_diff(
+        &self,
+        repository: &Path,
+        base_commit: &str,
+        head_commit: &str,
+    ) -> Result<ReviewDiff, GitError> {
+        validate_commit_sha(base_commit)?;
+        validate_commit_sha(head_commit)?;
+        let revision_range = format!("{base_commit}..{head_commit}");
+        let numstat = self.run(
+            repository,
+            &[
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--no-renames",
+                "--numstat",
+                "-z",
+                revision_range.as_str(),
+            ],
+            "extract review numstat",
+        )?;
+        let stats = parse_review_numstat(&numstat.stdout)?;
+        if stats.len() > coldstart_core::MAX_REVIEW_FILES {
+            return Err(GitError::ReviewInputTooLarge {
+                resource: "changed files",
+                actual: stats.len(),
+                limit: coldstart_core::MAX_REVIEW_FILES,
+            });
+        }
+        let name_status = self.run(
+            repository,
+            &[
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--no-renames",
+                "--name-status",
+                "-z",
+                revision_range.as_str(),
+            ],
+            "extract review file status",
+        )?;
+        let statuses = parse_review_name_status(&name_status.stdout)?;
+        let files = stats
+            .into_iter()
+            .map(|stat| ReviewDiffFile {
+                status: statuses
+                    .iter()
+                    .find(|(path, _)| path == &stat.path)
+                    .map(|(_, status)| status.clone())
+                    .unwrap_or_else(|| "M".to_owned()),
+                path: stat.path,
+                added: stat.added,
+                deleted: stat.deleted,
+                binary: stat.binary,
+            })
+            .collect::<Vec<_>>();
+        let patch_output = self.run(
+            repository,
+            &[
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-color",
+                "--no-renames",
+                "--unified=3",
+                revision_range.as_str(),
+            ],
+            "extract review diff",
+        )?;
+        let patch = String::from_utf8_lossy(&patch_output.stdout).into_owned();
+        let character_count = patch.chars().count();
+        if character_count > coldstart_core::MAX_REVIEW_DIFF_CHARS {
+            return Err(GitError::ReviewInputTooLarge {
+                resource: "diff characters",
+                actual: character_count,
+                limit: coldstart_core::MAX_REVIEW_DIFF_CHARS,
+            });
+        }
+        let binary_files = files
+            .iter()
+            .filter(|file| file.binary)
+            .map(|file| file.path.clone())
+            .collect();
+        Ok(ReviewDiff {
+            base_commit: base_commit.to_owned(),
+            head_commit: head_commit.to_owned(),
+            files,
+            binary_files,
+            patch,
+            character_count,
+        })
     }
 
     pub fn ensure_clean(&self, repository: &Path) -> Result<(), GitError> {
@@ -449,6 +565,59 @@ fn parse_status_paths(status: &str) -> Vec<String> {
         .collect()
 }
 
+struct ReviewNumstat {
+    path: String,
+    added: u64,
+    deleted: u64,
+    binary: bool,
+}
+
+fn parse_review_numstat(bytes: &[u8]) -> Result<Vec<ReviewNumstat>, GitError> {
+    let mut stats = Vec::new();
+    for record in bytes
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+    {
+        let record = String::from_utf8_lossy(record);
+        let mut fields = record.splitn(3, '\t');
+        let added = fields.next().unwrap_or_default();
+        let deleted = fields.next().unwrap_or_default();
+        let path = fields.next().unwrap_or_default().trim();
+        if path.is_empty() {
+            return Err(GitError::ReviewDiffInvalid(
+                "git numstat record did not contain a path".to_owned(),
+            ));
+        }
+        let binary = added == "-" && deleted == "-";
+        stats.push(ReviewNumstat {
+            path: path.to_owned(),
+            added: added.parse::<u64>().unwrap_or(0),
+            deleted: deleted.parse::<u64>().unwrap_or(0),
+            binary,
+        });
+    }
+    Ok(stats)
+}
+
+fn parse_review_name_status(bytes: &[u8]) -> Result<Vec<(String, String)>, GitError> {
+    let fields = bytes
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty())
+        .map(|field| String::from_utf8_lossy(field).into_owned())
+        .collect::<Vec<_>>();
+    if fields.len() % 2 != 0 {
+        return Err(GitError::ReviewDiffInvalid(
+            "git name-status output had an incomplete record".to_owned(),
+        ));
+    }
+    Ok(fields
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| (pair[1].clone(), pair[0].clone()))
+        .collect())
+}
+
 fn normalize_remote(value: &str) -> String {
     let value = value.trim().replace('\\', "/");
     let value = value.trim_end_matches('/');
@@ -573,6 +742,14 @@ pub enum GitError {
     },
     #[error("verification commands modified tracked files: {0:?}")]
     VerificationTrackedChanges(Vec<String>),
+    #[error("review diff is invalid: {0}")]
+    ReviewDiffInvalid(String),
+    #[error("review input {resource} exceeds the limit: {actual} > {limit}")]
+    ReviewInputTooLarge {
+        resource: &'static str,
+        actual: usize,
+        limit: usize,
+    },
     #[error("git {operation} failed: {stderr}")]
     CommandFailed {
         operation: &'static str,
@@ -599,6 +776,8 @@ impl GitError {
             Self::VerificationBranchMismatch { .. } => "git_verification_branch_mismatch",
             Self::VerificationHeadMismatch { .. } => "git_verification_head_mismatch",
             Self::VerificationTrackedChanges(_) => "git_verification_tracked_changes",
+            Self::ReviewDiffInvalid(_) => "review_diff_invalid",
+            Self::ReviewInputTooLarge { .. } => "review_input_too_large",
         }
     }
 }

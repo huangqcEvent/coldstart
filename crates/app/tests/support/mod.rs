@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::{
     collections::VecDeque,
     path::Path,
@@ -8,8 +10,9 @@ use std::{
 };
 
 use coldstart_adapters::{
-    GitAuth, GitCommitVerification, GitError, MemorySecretStore, VerificationCommandExecution,
-    VerificationCommandExecutor,
+    GitAuth, GitCommitVerification, GitError, MemorySecretStore, ReviewDiff, ReviewDiffFile,
+    ReviewModel, ReviewModelError, ReviewModelOutput, ReviewModelRequest,
+    VerificationCommandExecution, VerificationCommandExecutor,
 };
 use coldstart_app::{PlanGitGateway, PlanService};
 use coldstart_core::{
@@ -22,6 +25,7 @@ pub struct FakePlanGit {
     changed_files: Mutex<Vec<String>>,
     checkout_errors: Mutex<VecDeque<String>>,
     push_error: Mutex<Option<String>>,
+    review_diff: Mutex<Option<ReviewDiff>>,
     push_calls: AtomicUsize,
     verify_calls: AtomicUsize,
 }
@@ -50,11 +54,19 @@ impl FakePlanGit {
     pub fn verify_calls(&self) -> usize {
         self.verify_calls.load(Ordering::SeqCst)
     }
+
+    pub fn set_review_diff(&self, diff: ReviewDiff) {
+        *self.review_diff.lock().expect("review diff lock") = Some(diff);
+    }
 }
 
 impl PlanGitGateway for FakePlanGit {
     fn fetch(&self, _repository: &Path, _auth: &GitAuth) -> Result<(), GitError> {
         Ok(())
+    }
+
+    fn resolve_commit(&self, _repository: &Path, _reference: &str) -> Result<String, GitError> {
+        Ok("a".repeat(40))
     }
 
     fn validate_remote(
@@ -113,6 +125,43 @@ impl PlanGitGateway for FakePlanGit {
             Some(message) => Err(GitError::VerificationTrackedChanges(vec![message])),
             None => Ok(()),
         }
+    }
+
+    fn extract_review_diff(
+        &self,
+        _repository: &Path,
+        base_commit: &str,
+        head_commit: &str,
+    ) -> Result<ReviewDiff, GitError> {
+        if let Some(diff) = self.review_diff.lock().expect("review diff lock").clone() {
+            return Ok(diff);
+        }
+        let changed_files = self
+            .changed_files
+            .lock()
+            .expect("changed files lock")
+            .clone();
+        let patch = changed_files
+            .iter()
+            .map(|path| format!("diff --git a/{path} b/{path}\n+review fixture\n"))
+            .collect::<String>();
+        Ok(ReviewDiff {
+            base_commit: base_commit.to_owned(),
+            head_commit: head_commit.to_owned(),
+            files: changed_files
+                .into_iter()
+                .map(|path| ReviewDiffFile {
+                    path,
+                    status: "M".to_owned(),
+                    added: 1,
+                    deleted: 0,
+                    binary: false,
+                })
+                .collect(),
+            binary_files: Vec::new(),
+            character_count: patch.chars().count(),
+            patch,
+        })
     }
 
     fn push_branch(
@@ -227,6 +276,53 @@ pub fn service_with_secrets(
     executor: Arc<ScriptedExecutor>,
 ) -> PlanService {
     PlanService::with_gateways(secrets, git, executor)
+}
+
+pub struct ScriptedReviewModel {
+    responses: Mutex<VecDeque<Result<ReviewModelOutput, ReviewModelError>>>,
+    calls: AtomicUsize,
+}
+
+impl ScriptedReviewModel {
+    pub fn new(responses: Vec<Result<ReviewModelOutput, ReviewModelError>>) -> Self {
+        Self {
+            responses: Mutex::new(responses.into()),
+            calls: AtomicUsize::new(0),
+        }
+    }
+
+    pub fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
+    }
+}
+
+impl ReviewModel for ScriptedReviewModel {
+    fn review(&self, _request: &ReviewModelRequest) -> Result<ReviewModelOutput, ReviewModelError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        self.responses
+            .lock()
+            .expect("review responses lock")
+            .pop_front()
+            .unwrap_or(Err(ReviewModelError::Request(
+                "no scripted review response".to_owned(),
+            )))
+    }
+}
+
+pub fn service_with_review_model(
+    secrets: Arc<MemorySecretStore>,
+    git: Arc<FakePlanGit>,
+    executor: Arc<ScriptedExecutor>,
+    review_model: Arc<ScriptedReviewModel>,
+) -> PlanService {
+    PlanService::with_review_model(secrets, git, executor, review_model)
+}
+
+pub fn review_output(findings: Vec<coldstart_core::ReviewFinding>) -> ReviewModelOutput {
+    ReviewModelOutput {
+        summary: "Review 完成".to_owned(),
+        findings,
+    }
 }
 
 pub fn configure_repository(

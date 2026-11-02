@@ -3,7 +3,9 @@ use rmcp::model::CallToolResult;
 use serde_json::{Value, json};
 
 pub(crate) fn app_error_result(error: AppError) -> CallToolResult {
-    let details = error.verification_details();
+    let details = error
+        .review_details()
+        .or_else(|| error.verification_details());
     tool_error_result(error.code(), error.to_string(), details)
 }
 

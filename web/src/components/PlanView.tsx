@@ -10,6 +10,7 @@ import type {
   WorkItemStatus,
   WorkItemView,
 } from '../api/types';
+import { ReviewFindingList } from './ReviewFindingList';
 
 interface PlanViewProps {
   workspace: ProjectWorkspace;
@@ -22,6 +23,7 @@ interface PlanViewProps {
   onRefresh: () => Promise<ProjectWorkspace | null>;
   onNavigateBlueprint: () => void;
   onNavigateInbox: () => void;
+  onNavigateReview: () => void;
 }
 
 const statusLabels: Record<WorkItemStatus, string> = {
@@ -78,6 +80,16 @@ const verificationFailureLabels = {
   git_invariant: 'Git 不变量被破坏',
   infrastructure: '验证基础设施失败',
   interrupted: '租约过期或进程中断',
+} as const;
+
+const reviewStatusLabels = {
+  not_required: '无需评审',
+  running: '评审中',
+  passed: '已通过',
+  blocked: '已阻断',
+  failed: '评审失败',
+  waived: '人工豁免',
+  interrupted: '已中断',
 } as const;
 
 function formatDateTime(value: string) {
@@ -313,10 +325,12 @@ function PlanTaskCard({
   item,
   blockers,
   onNavigateInbox,
+  onNavigateReview,
 }: {
   item: WorkItemView;
   blockers: ProjectWorkspace['plan']['blockers'];
   onNavigateInbox: () => void;
+  onNavigateReview: () => void;
 }) {
   const taskBlockers = blockers.filter(
     (blocker) => blocker.workItemId === item.workItem.id,
@@ -330,6 +344,8 @@ function PlanTaskCard({
   const failedCommand = verification?.commands.find(
     (command) => command.name === verification.failureCommand,
   );
+  const review = item.latestReport?.review ?? null;
+  const reviewStatus = item.latestReport?.reviewStatus ?? 'not_required';
 
   return (
     <article className={`plan-task plan-task--${item.workItem.status}`}>
@@ -448,6 +464,37 @@ function PlanTaskCard({
               </small>
             </div>
           ) : null}
+          {reviewStatus !== 'not_required' ? (
+            <div className={`plan-task__review plan-task__review--${reviewStatus}`}>
+              <div className="plan-task__verification-head">
+                <strong>AI 评审 · {reviewStatusLabels[reviewStatus]}</strong>
+                {review?.model ? <span>{review.model}</span> : null}
+              </div>
+              {review?.summary ? <p>{review.summary}</p> : null}
+              {review?.failure ? (
+                <p className="integration-error">
+                  <code>{review.failure.code}</code> {review.failure.message}
+                </p>
+              ) : null}
+              {review && review.findings.length > 0 ? (
+                <ReviewFindingList findings={review.findings} />
+              ) : null}
+              {item.latestReport?.reviewWaiver ? (
+                <p>
+                  人工豁免：{item.latestReport.reviewWaiver.reason}
+                </p>
+              ) : null}
+              {['blocked', 'failed', 'interrupted'].includes(reviewStatus) ? (
+                <button
+                  className="button button--secondary button--compact"
+                  type="button"
+                  onClick={onNavigateReview}
+                >
+                  前往 AI 评审处理
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           {item.latestReport.rejectionReasons.length > 0 ? (
             <ul>
               {item.latestReport.rejectionReasons.map((reason) => (
@@ -511,6 +558,7 @@ export function PlanView({
   onRefresh,
   onNavigateBlueprint,
   onNavigateInbox,
+  onNavigateReview,
 }: PlanViewProps) {
   const plan = workspace.plan;
   const activeRevision = plan.draft ?? plan.published;
@@ -931,6 +979,7 @@ export function PlanView({
                       item={item}
                       blockers={plan.blockers}
                       onNavigateInbox={onNavigateInbox}
+                      onNavigateReview={onNavigateReview}
                       key={item.workItem.id}
                     />
                   ))}
