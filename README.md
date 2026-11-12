@@ -2,7 +2,7 @@
 
 > Vibe Coding 之前，先把项目冷启动。
 
-ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review 和开发计划组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文和提交完成报告。
+ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review、开发计划和项目记忆组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文和提交完成报告。
 
 ColdStart 本身不生成业务代码，也不替你启动 Agent。它解决的是编码之前与编码之后最容易失真的问题：现在到底要做什么、依赖是否满足、密钥和提审材料是否就绪、Agent 是否真的完成了任务，以及本次改动是否值得进入主分支。
 
@@ -65,6 +65,7 @@ ColdStart 不会自动通读整个仓库并替你还原完整架构。历史项�
   -> 从真实 diff 执行 AI Review
   -> passed / waived 后完成任务并推送任务分支
   -> 解锁后继任务
+  -> 在项目记忆中复盘每次变更与门禁结果
 ```
 
 人工只在必须提供信息或承担风险时介入，例如补充阻塞信息、确认外部资质、授权三方能力、确认重规划、处理 Review 误报或执行不可逆操作。
@@ -212,6 +213,16 @@ Codex 通过 MCP 主动领取下一个可执行任务，读取编译后的上下
 
 完成后 ColdStart 执行普通推送。推送失败不会回滚已完成任务，而是写入 Git 同步风险记录。禁止强推、删除远程分支和写入保护分支。
 
+### 9. 复盘项目记忆
+
+“项目记忆”把 SQLite 事件日志整理成只读时间线，覆盖需求导入、蓝图发布、计划发布、任务领取、心跳、阻塞、验证、AI Review、仓库与凭据配置、Git 同步等变更。
+
+- 默认显示最近 100 条有效变更，隐藏高频任务心跳；可手动打开心跳。
+- 按五个阶段筛选，并按标题、摘要、事件类型或对象搜索已加载事件。
+- 使用游标向前加载更早的事件，不重复、不打乱从新到旧的顺序。
+- 显示全部事件数、有效变更数、心跳数与各阶段计数。
+- 只展示安全摘要，不返回原始 payload、仓库凭据 URL、租约 ID 或 Secret 引用。
+
 ## 接入历史项目的建议步骤
 
 ### 同一产品继续迭代
@@ -233,6 +244,24 @@ Codex 通过 MCP 主动领取下一个可执行任务，读取编译后的上下
 6. 为每个仓库配置真实可运行的验证命令，再发布本轮计划。
 
 对于历史项目，最重要的不是让模型重写过去，而是明确“这次改什么、不能碰什么、如何验证、谁来提供必要信息”。
+
+## 项目记忆与变更审计
+
+项目记忆不是第二套业务状态，而是对已有 `events` 表的产品化读取。它让用户和后续维护者能够回答：
+
+- 蓝图与计划分别是哪个版本、什么时候发布的？
+- Codex 领取后经历了开始、心跳、阻塞、报告、验证和 Review 的什么顺序？
+- 仓库、验证命令、凭据和三方能力是什么时候配置的？
+- 某次任务为什么没有完成，门禁最后停在哪一步？
+
+安全边界：
+
+- 只读，不提供编辑、删除、回滚或重放。
+- 严格按 `project_id` 隔离，不会读取其他项目事件。
+- 应用层对全部事件类型做显式中文投影；前端不接触原始 `payload_json`。
+- `work_heartbeat` 默认在 SQL 查询层排除，避免占满第一页。
+- `RepositorySaved` 不展示远程 URL；任务心跳与领取事件不展示租约 ID；凭据只展示提供方、环境与安全对象引用。
+- 分页大小限制为 1 到 500，默认 100；游标必须为正整数。
 
 ## AI Review 与代码规范库
 
@@ -457,6 +486,7 @@ your-project/
 - 不自动部署、打包、提审、发布小程序、合并分支或创建 Release Tag。
 - Review 依赖外部 OpenAI 兼容模型；模型服务故障会失败关闭而不是跳过。
 - AI Review 不能证明代码没有漏洞，也不能替代人工安全审计。
+- 项目记忆目前只在桌面端提供只读查看，尚未作为 MCP 工具暴露给 Codex。
 - 安装包未签名。
 
 ## 常见故障
@@ -536,8 +566,10 @@ pnpm --dir apps/desktop build:installer
 
 - [产品与系统架构规格](docs/superpowers/specs/2026-10-30-coldstart-design.md)
 - [AI Review 与规范库设计](docs/superpowers/specs/2026-11-02-coldstart-ai-review-design.md)
+- [项目记忆与变更审计设计](docs/superpowers/specs/2026-11-12-coldstart-project-memory-design.md)
 - [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
 - [AI Review 实施计划](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
+- [项目记忆实施计划](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
 - [第一阶段：Rust 核心与 CLI](docs/superpowers/plans/2026-10-30-coldstart-01-core-foundation.md)
 - [第二阶段：Tauri Desktop Shell](docs/superpowers/plans/2026-10-30-coldstart-02-desktop-shell.md)
 - [第三阶段：需求与蓝图](docs/superpowers/plans/2026-10-30-coldstart-03-requirements-blueprint.md)

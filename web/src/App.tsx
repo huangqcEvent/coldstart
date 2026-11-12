@@ -19,6 +19,7 @@ import { InboxView } from './components/InboxView';
 import { IntegrationView } from './components/IntegrationView';
 import { PlanView } from './components/PlanView';
 import { ProjectOverview } from './components/ProjectOverview';
+import { ProjectMemoryView } from './components/ProjectMemoryView';
 import { ReleaseCenterView } from './components/ReleaseCenterView';
 import { RequirementsView } from './components/RequirementsView';
 import { ReviewView } from './components/ReviewView';
@@ -316,7 +317,7 @@ export default function App() {
       <main className="workspace">
         <div className="workspace__topline" aria-hidden="true">
           <span>LOCAL-FIRST PROJECT SYSTEM</span>
-          <span>PHASE 08 / AI REVIEW GATE</span>
+          <span>PHASE 09 / PROJECT MEMORY</span>
         </div>
 
         {error ? <ErrorBanner error={error} onDismiss={() => setError(null)} /> : null}
@@ -413,6 +414,10 @@ export default function App() {
               path={workspace.status.rootPath}
               onEnterInbox={() => setView('inbox')}
             />
+          ) : null}
+
+          {workspace && view === 'memory' ? (
+            <ProjectMemoryView path={workspace.status.rootPath} />
           ) : null}
         </div>
       </main>

@@ -3,6 +3,7 @@ mod context_compiler;
 mod error;
 mod git_gateway;
 mod integration;
+mod memory;
 mod plan;
 mod plan_workspace;
 mod project_home;
@@ -18,6 +19,11 @@ pub use integration::{
     CapabilityStatusView, CreatePrivateRepositoryInput, DeviceFlowView, GitHubDevicePollView,
     GitHubSessionView, IntegrationService, IntegrationWorkspace, ReleaseCenterView,
     RepositoryDraft, RepositoryValidationView, RepositoryVerificationView, SaveCredentialInput,
+};
+pub use memory::{
+    DEFAULT_MEMORY_PAGE_LIMIT, MAX_MEMORY_PAGE_LIMIT, MemoryPhase, MemoryPhaseCount,
+    MemoryReferenceType, ProjectMemoryItem, ProjectMemoryPage, ProjectMemoryReference,
+    ProjectMemoryService,
 };
 pub use plan::{ClaimRequest, PlanService};
 pub use plan_workspace::{McpConnectionInfo, PlanWorkspace, WorkItemView};

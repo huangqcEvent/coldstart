@@ -3,10 +3,11 @@ use std::{path::PathBuf, sync::Arc};
 use coldstart_adapters::{ModelConfig, OpenAiCompatibleModel};
 use coldstart_app::{
     CreatePrivateRepositoryInput, DeviceFlowView, GitHubDevicePollView, GitHubSessionView,
-    IntegrationService, IntegrationWorkspace, PlanService, ProjectService, ProjectStatus,
-    ProjectWorkspace, RepositoryDraft, RepositoryValidationView, RequirementsService,
-    ReviewService, ReviewStandardContent, ReviewStandardImport, ReviewStandardManualInput,
-    ReviewStandardRevisionInput, ReviewStandardView, ReviewWorkspace, SaveCredentialInput,
+    IntegrationService, IntegrationWorkspace, PlanService, ProjectMemoryPage, ProjectMemoryService,
+    ProjectService, ProjectStatus, ProjectWorkspace, RepositoryDraft, RepositoryValidationView,
+    RequirementsService, ReviewService, ReviewStandardContent, ReviewStandardImport,
+    ReviewStandardManualInput, ReviewStandardRevisionInput, ReviewStandardView, ReviewWorkspace,
+    SaveCredentialInput,
 };
 use coldstart_core::{
     BlueprintContent, BlueprintEntityId, BlueprintRevisionId, CapabilityStatus, CredentialId,
@@ -61,6 +62,36 @@ pub async fn read_requirements_workspace(path: String) -> Result<ProjectWorkspac
     tauri::async_runtime::spawn_blocking(move || read_requirements_workspace_sync(path))
         .await
         .map_err(join_error)?
+}
+
+pub fn read_project_memory_sync(
+    path: String,
+    before_cursor: Option<i64>,
+    limit: Option<u32>,
+    include_heartbeats: bool,
+) -> Result<ProjectMemoryPage, CommandError> {
+    ProjectMemoryService::new()
+        .read(
+            PathBuf::from(path),
+            before_cursor,
+            limit,
+            include_heartbeats,
+        )
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn read_project_memory(
+    path: String,
+    before_cursor: Option<i64>,
+    limit: Option<u32>,
+    include_heartbeats: bool,
+) -> Result<ProjectMemoryPage, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        read_project_memory_sync(path, before_cursor, limit, include_heartbeats)
+    })
+    .await
+    .map_err(join_error)?
 }
 
 pub fn import_requirement_document_sync(
@@ -1078,5 +1109,40 @@ mod tests {
         let error = read_review_standard_sync(home, "not-an-id".to_owned())
             .expect_err("invalid standard id must fail");
         assert_eq!(error.code, "invalid_id");
+    }
+
+    #[test]
+    fn project_memory_command_returns_safe_paginated_events() {
+        let temp = TempDir::new().expect("temporary directory must exist");
+        let home = path_string(&temp.path().join("demo"));
+        create_project_sync("Memory Project".to_owned(), home.clone())
+            .expect("project must be created");
+
+        let page = read_project_memory_sync(home.clone(), None, Some(50), false)
+            .expect("memory page must load");
+        let serialized = serde_json::to_string(&page).expect("memory page must serialize");
+
+        assert_eq!(page.total_count, 1);
+        assert_eq!(page.visible_count, 1);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].event_type, "project_initialized");
+        assert!(!serialized.contains("payloadJson"));
+        assert!(!serialized.contains("payload_json"));
+    }
+
+    #[test]
+    fn project_memory_command_rejects_invalid_page_bounds() {
+        let temp = TempDir::new().expect("temporary directory must exist");
+        let home = path_string(&temp.path().join("demo"));
+        create_project_sync("Memory Project".to_owned(), home.clone())
+            .expect("project must be created");
+
+        let limit_error = read_project_memory_sync(home.clone(), None, Some(0), false)
+            .expect_err("zero limit must fail");
+        let cursor_error = read_project_memory_sync(home, Some(0), Some(100), false)
+            .expect_err("zero cursor must fail");
+
+        assert_eq!(limit_error.code, "invalid_memory_limit");
+        assert_eq!(cursor_error.code, "invalid_memory_cursor");
     }
 }

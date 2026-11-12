@@ -50,6 +50,14 @@ pub enum StorageError {
     ProjectNotFound(ProjectId),
     #[error("event {0} already exists")]
     EventAlreadyExists(Uuid),
+    #[error(
+        "event {event_id} stored type {stored_type} does not match payload type {payload_type}"
+    )]
+    EventTypeMismatch {
+        event_id: Uuid,
+        stored_type: String,
+        payload_type: String,
+    },
     #[error("artifact {0} does not exist")]
     ArtifactNotFound(ArtifactId),
     #[error("blueprint revision {0} does not exist")]

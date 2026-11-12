@@ -29,7 +29,7 @@ export function WelcomeView({ onCreate, onOpen }: WelcomeViewProps) {
 
       <div className="welcome__panel" aria-label="当前阶段">
         <div className="welcome__panel-head">
-          <span>PHASE 08</span>
+          <span>PHASE 09</span>
           <span className="status-dot">READY</span>
         </div>
         <div className="welcome__orbit" aria-hidden="true">
@@ -38,8 +38,8 @@ export function WelcomeView({ onCreate, onOpen }: WelcomeViewProps) {
           <span className="welcome__orbit-ring welcome__orbit-ring--two" />
         </div>
         <div className="welcome__panel-copy">
-          <p>AI 评审批次门禁</p>
-          <span>真实 Git diff 通过模型评审后，任务才允许完成与推送</span>
+          <p>项目记忆与变更审计</p>
+          <span>需求、计划、任务、验证与 Review 的每次变化，都留下可追溯的本地时间线</span>
         </div>
       </div>
     </section>

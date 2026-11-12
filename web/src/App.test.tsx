@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from './App';
 import * as integrationApi from './api/integrationApi';
+import * as memoryApi from './api/memoryApi';
 import * as planApi from './api/planApi';
 import * as projectApi from './api/projectApi';
 import * as requirementsApi from './api/requirementsApi';
@@ -21,6 +22,8 @@ import type {
   PlanPublishPreview,
   PlanRevision,
   PlanWorkspace,
+  ProjectMemoryItem,
+  ProjectMemoryPage,
   ProjectStatus,
   ProjectWorkspace,
   Repository,
@@ -86,6 +89,10 @@ vi.mock('./api/reviewApi', () => ({
   readReviewStandard: vi.fn(),
   waiveWorkReview: vi.fn(),
   pickReviewStandardFile: vi.fn(),
+}));
+
+vi.mock('./api/memoryApi', () => ({
+  readProjectMemory: vi.fn(),
 }));
 
 const projectPath = String.raw`D:\coldstart-projects\permafrost`;
@@ -584,6 +591,66 @@ function makeWorkspace(overrides: Partial<ProjectWorkspace> = {}): ProjectWorksp
   };
 }
 
+const memoryBlueprint: ProjectMemoryItem = {
+  eventId: '15151515-1515-4515-8515-151515151515',
+  occurredAt: '2026-11-12T09:02:00Z',
+  phase: 'requirements_blueprint',
+  eventType: 'blueprint_published',
+  title: '蓝图已发布',
+  summary: 'v2 成为当前有效的项目基线',
+  reference: {
+    referenceType: 'blueprint_revision',
+    id: '16161616-1616-4616-8616-161616161616',
+    label: '蓝图 v2',
+  },
+  isHeartbeat: false,
+};
+
+const memoryPlan: ProjectMemoryItem = {
+  eventId: '17171717-1717-4717-8717-171717171717',
+  occurredAt: '2026-11-12T09:01:00Z',
+  phase: 'plan_execution',
+  eventType: 'plan_published',
+  title: '开发计划已发布',
+  summary: 'v1 · 4 个任务进入可领取状态',
+  reference: {
+    referenceType: 'plan_revision',
+    id: '18181818-1818-4818-8818-181818181818',
+    label: '计划 v1',
+  },
+  isHeartbeat: false,
+};
+
+const memoryHeartbeat: ProjectMemoryItem = {
+  eventId: '19191919-1919-4919-8919-191919191919',
+  occurredAt: '2026-11-12T09:00:00Z',
+  phase: 'plan_execution',
+  eventType: 'work_heartbeat',
+  title: '任务心跳已刷新',
+  summary: '执行者仍在工作',
+  reference: null,
+  isHeartbeat: true,
+};
+
+function makeMemoryPage(overrides: Partial<ProjectMemoryPage> = {}): ProjectMemoryPage {
+  return {
+    projectId: status.projectId,
+    totalCount: 3,
+    visibleCount: 2,
+    heartbeatCount: 1,
+    phaseCounts: [
+      { phase: 'requirements_blueprint', count: 1 },
+      { phase: 'plan_execution', count: 1 },
+      { phase: 'verification_review', count: 0 },
+      { phase: 'repository_capability', count: 0 },
+      { phase: 'system_configuration', count: 0 },
+    ],
+    items: [memoryBlueprint, memoryPlan],
+    nextCursor: null,
+    ...overrides,
+  };
+}
+
 const workspaceWithSource = makeWorkspace({
   status: { ...status, eventCount: 2 },
   sources: [source],
@@ -652,6 +719,7 @@ beforeEach(() => {
   vi.mocked(reviewApi.readReviewStandard).mockReset();
   vi.mocked(reviewApi.waiveWorkReview).mockReset();
   vi.mocked(reviewApi.pickReviewStandardFile).mockReset();
+  vi.mocked(memoryApi.readProjectMemory).mockReset();
   vi.mocked(integrationApi.readIntegrationWorkspace).mockReset();
   vi.mocked(integrationApi.validateRepository).mockReset();
   vi.mocked(integrationApi.saveRepository).mockReset();
@@ -671,15 +739,118 @@ describe('ColdStart project workspace', () => {
     render(<App />);
 
     expect(screen.getByText('COLDSTART / 冷启动')).toBeInTheDocument();
-    expect(screen.getByText('PHASE 08 / AI REVIEW GATE')).toBeInTheDocument();
+    expect(screen.getByText('PHASE 09 / PROJECT MEMORY')).toBeInTheDocument();
     expect(
-      within(screen.getByLabelText('当前阶段')).getByText('PHASE 08'),
+      within(screen.getByLabelText('当前阶段')).getByText('PHASE 09'),
     ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '冷启动' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '项目总览' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '需求导入' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '蓝图编排' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '人工 Inbox' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '项目记忆' })).toBeDisabled();
+  });
+
+  it('shows a filterable project memory timeline and reloads heartbeats on demand', async () => {
+    vi.mocked(memoryApi.readProjectMemory).mockImplementation(
+      async (_path, options) =>
+        makeMemoryPage(
+          options.includeHeartbeats
+            ? {
+                items: [memoryHeartbeat, memoryBlueprint, memoryPlan],
+                totalCount: 3,
+                visibleCount: 2,
+                heartbeatCount: 1,
+              }
+            : {},
+        ),
+    );
+    const user = await openProject();
+    await user.click(screen.getByRole('button', { name: '项目记忆' }));
+
+    expect(
+      await screen.findByRole('heading', { name: '项目记忆' }),
+    ).toBeInTheDocument();
+    expect(memoryApi.readProjectMemory).toHaveBeenCalledWith(projectPath, {
+      beforeCursor: null,
+      limit: 100,
+      includeHeartbeats: false,
+    });
+    expect(screen.getByText('蓝图已发布')).toBeInTheDocument();
+    expect(screen.getByText('开发计划已发布')).toBeInTheDocument();
+    expect(screen.queryByText('任务心跳已刷新')).not.toBeInTheDocument();
+    expect(screen.getByText('只读审计')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /计划与执行/ }));
+    expect(screen.queryByText('蓝图已发布')).not.toBeInTheDocument();
+    expect(screen.getByText('开发计划已发布')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /全部/ }));
+    await user.type(screen.getByLabelText('搜索项目记忆'), '不存在的变更');
+    expect(screen.getByText('当前筛选没有匹配结果')).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText('搜索项目记忆'));
+    await user.click(screen.getByLabelText('显示系统心跳'));
+    expect(await screen.findByText('任务心跳已刷新')).toBeInTheDocument();
+    expect(memoryApi.readProjectMemory).toHaveBeenLastCalledWith(projectPath, {
+      beforeCursor: null,
+      limit: 100,
+      includeHeartbeats: true,
+    });
+  });
+
+  it('loads older project memory pages with the cursor and de-duplicates items', async () => {
+    const artifact = {
+      ...memoryBlueprint,
+      eventId: '20202020-2020-4020-8020-202020202020',
+      occurredAt: '2026-11-12T08:00:00Z',
+      phase: 'requirements_blueprint' as const,
+      eventType: 'artifact_imported',
+      title: '需求文档已导入',
+      summary: 'requirements.md · 内容指纹 abcdef123456',
+      reference: {
+        referenceType: 'artifact' as const,
+        id: sourceId,
+        label: 'requirements.md',
+      },
+    };
+    vi.mocked(memoryApi.readProjectMemory)
+      .mockResolvedValueOnce(makeMemoryPage({ items: [memoryPlan], nextCursor: 20 }))
+      .mockResolvedValueOnce(
+        makeMemoryPage({ items: [memoryPlan, artifact], nextCursor: null }),
+      );
+    const user = await openProject();
+    await user.click(screen.getByRole('button', { name: '项目记忆' }));
+    await screen.findByText('开发计划已发布');
+
+    await user.click(screen.getByRole('button', { name: '加载更多历史事件' }));
+
+    expect(await screen.findByText('需求文档已导入')).toBeInTheDocument();
+    expect(screen.getAllByText('开发计划已发布')).toHaveLength(1);
+    expect(memoryApi.readProjectMemory).toHaveBeenLastCalledWith(projectPath, {
+      beforeCursor: 20,
+      limit: 100,
+      includeHeartbeats: false,
+    });
+    expect(
+      screen.queryByRole('button', { name: '加载更多历史事件' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows a truthful empty state when a project has no memory events', async () => {
+    vi.mocked(memoryApi.readProjectMemory).mockResolvedValue(
+      makeMemoryPage({
+        totalCount: 0,
+        visibleCount: 0,
+        heartbeatCount: 0,
+        phaseCounts: [],
+        items: [],
+      }),
+    );
+    const user = await openProject();
+    await user.click(screen.getByRole('button', { name: '项目记忆' }));
+
+    expect(await screen.findByText('项目尚未产生事件')).toBeInTheDocument();
   });
 
   it('creates a project and loads its full workspace', async () => {

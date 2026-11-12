@@ -159,6 +159,10 @@ pub enum AppError {
     },
     #[error("invalid AI Review waiver: {0}")]
     ReviewWaiverInvalid(String),
+    #[error("project memory page limit must be between {min} and {max}; found {limit}")]
+    InvalidMemoryLimit { limit: u32, min: u32, max: u32 },
+    #[error("project memory cursor must be greater than zero; found {0}")]
+    InvalidMemoryCursor(i64),
 }
 
 impl AppError {
@@ -269,6 +273,8 @@ impl AppError {
             Self::ReviewInterrupted { .. } => "review_interrupted",
             Self::ReviewModelFailure { code, .. } => code,
             Self::ReviewWaiverInvalid(_) => "review_waiver_invalid",
+            Self::InvalidMemoryLimit { .. } => "invalid_memory_limit",
+            Self::InvalidMemoryCursor(_) => "invalid_memory_cursor",
         }
     }
 

@@ -6,7 +6,8 @@ export type WorkspaceView =
   | 'inbox'
   | 'integration'
   | 'review'
-  | 'release';
+  | 'release'
+  | 'memory';
 
 interface AppSidebarProps {
   view: WorkspaceView;
@@ -27,6 +28,7 @@ const workspaceItems: Array<{
   { view: 'integration', label: '仓库与能力', index: '06' },
   { view: 'review', label: 'AI 评审', index: '07' },
   { view: 'release', label: '发布中心', index: '08' },
+  { view: 'memory', label: '项目记忆', index: '09' },
 ];
 
 export function AppSidebar({ view, hasProject, onNavigate }: AppSidebarProps) {

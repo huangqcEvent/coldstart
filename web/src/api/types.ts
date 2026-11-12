@@ -452,6 +452,58 @@ export interface PlanWorkspace {
   mcp: McpConnectionInfo;
 }
 
+export type MemoryPhase =
+  | 'requirements_blueprint'
+  | 'plan_execution'
+  | 'verification_review'
+  | 'repository_capability'
+  | 'system_configuration';
+
+export type MemoryReferenceType =
+  | 'artifact'
+  | 'blueprint_revision'
+  | 'info_request'
+  | 'plan_revision'
+  | 'work_item'
+  | 'work_report'
+  | 'repository'
+  | 'credential'
+  | 'capability'
+  | 'git_sync'
+  | 'project_setting';
+
+export interface ProjectMemoryReference {
+  referenceType: MemoryReferenceType;
+  id: string;
+  label: string;
+}
+
+export interface ProjectMemoryItem {
+  eventId: string;
+  occurredAt: string;
+  phase: MemoryPhase;
+  eventType: string;
+  title: string;
+  summary: string;
+  reference: ProjectMemoryReference | null;
+  isHeartbeat: boolean;
+}
+
+export interface MemoryPhaseCount {
+  phase: MemoryPhase;
+  count: number;
+}
+
+export interface ProjectMemoryPage {
+  projectId: string;
+  totalCount: number;
+  visibleCount: number;
+  heartbeatCount: number;
+  phaseCounts: MemoryPhaseCount[];
+  items: ProjectMemoryItem[];
+  nextCursor: number | null;
+}
+
 export interface ProjectWorkspace {
   status: ProjectStatus;
   sources: ArtifactMetadata[];
