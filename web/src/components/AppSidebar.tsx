@@ -134,19 +134,18 @@ export function AppSidebar({ view, hasProject, onNavigate }: AppSidebarProps) {
     <aside className="sidebar" aria-label="应用导航">
       <div className="sidebar__brand">
         <span className="sidebar__mark" aria-hidden="true">
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.9"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M12 2v20M4.2 6.5l15.6 11M19.8 6.5l-15.6 11" />
-            <path d="m9 4 3 2 3-2M9 20l3-2 3 2M4.8 9.5l.2 3.6-2.8 2.3M22 8.6l-2.8 2.3.2 3.6M4.8 14.5l2.8 2.3-.2 3.6M19.2 9.5l-2.8 2.3.2 3.6" />
-          </svg>
+          <img
+            className="sidebar__mark-image sidebar__mark-image--on-dark"
+            src="/brand/coldstart-mark-on-dark.png"
+            alt=""
+            draggable={false}
+          />
+          <img
+            className="sidebar__mark-image sidebar__mark-image--on-light"
+            src="/brand/coldstart-mark-on-light.png"
+            alt=""
+            draggable={false}
+          />
         </span>
         <div className="sidebar__brand-copy">
           <strong>ColdStart</strong>
