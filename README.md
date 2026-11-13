@@ -2,7 +2,7 @@
 
 > Vibe Coding 之前，先把项目冷启动。
 
-ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review、GitHub 草稿 PR、只读验收同步、冲突定位与部署状态、GitHub Project 协作概览、开发计划和项目记忆组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文和提交完成报告。
+ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review、GitHub 草稿 PR、只读验收同步、冲突定位与部署状态、GitHub Project 协作概览、多仓库交付总览、开发计划和项目记忆组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文和提交完成报告。
 
 ColdStart 本身不生成业务代码，也不替你启动 Agent。它解决的是编码之前与编码之后最容易失真的问题：现在到底要做什么、依赖是否满足、密钥和提审材料是否就绪、Agent 是否真的完成了任务，以及本次改动是否值得进入主分支。
 
@@ -71,6 +71,7 @@ ColdStart 不会自动通读整个仓库并替你还原完整架构。历史项�
   -> 只读查看 PR 头提交的部署记录与最新状态
   -> 在 GitHub 人工审查并决定是否合并
   -> 解锁后继任务
+  -> 在项目总览只读汇总各仓库任务、验证、推送与 PR 状态
   -> 在项目记忆中复盘每次变更与门禁结果
 ```
 
@@ -256,7 +257,20 @@ Checks、Review 和评论只读取第一页，每类最多展示 100 项；部�
 
 ColdStart 不自动合并、不关闭 PR、不转正式 PR、不写评论、不重跑 Checks、不创建 Commit Status、不自动解决冲突或更新目标分支，也不创建、审批、取消、重试或回滚部署，不创建 Release Tag。PR、合并状态、Checks、评论、冲突文件和部署状态同步只能在桌面端人工触发，不属于 MCP 工具。
 
-### 10. 复盘项目记忆
+### 10. 查看多仓库交付总览
+
+“项目总览”中的多仓库交付总览会把当前已发布计划、仓库验证配置、最近 Git 同步、PR/Checks、合并冲突与 AI Review 快照按仓库集中展示：
+
+- 总体展示有效任务完成度、可领取、执行中、需关注仓库和开放 PR 数量。
+- 每个仓库展示任务计数、验证命令数量、最近任务分支推送、最近相关 PR、Checks、合并状态、Review 和下一步建议。
+- 仓库固定按 `server`、`admin`、`web`、`app`、`mini_program` 排序；未映射的仓库不会伪造空卡片。
+- 编码任务没有仓库键或引用了未配置仓库时，会显示“未关联任务”提示，避免静默遗漏。
+- 同一仓库优先展示最近开放 PR；没有开放 PR 时展示最近一次 PR 记录。
+- 点击“刷新状态”会重新读取项目工作区和交付总览；“重新读取”只刷新交付总览。
+
+该视图只读取 ColdStart 已经保存在本地的数据，不发起 GitHub 或 Git 网络请求，不写 SQLite、不产生项目事件，也不改变任务、租约、PR 或 Review 状态。PR 的外部状态仍需先到“AI 评审”页手动刷新；总览展示的是最近一次成功保存的本地快照，不后台轮询，也不通过 MCP 暴露给 Agent。
+
+### 11. 复盘项目记忆
 
 “项目记忆”把 SQLite 事件日志整理成只读时间线，覆盖需求导入、蓝图发布、计划发布、任务领取、心跳、阻塞、验证、AI Review、仓库与凭据配置、Git 同步等变更。
 
@@ -516,6 +530,7 @@ claim_next_work
 - PR 刷新只通过只读请求同步状态、合并就绪、Checks、Review、行内评论和当前 head 提交的部署状态，不执行合并、关闭、评论、重跑、Checks 写入或部署操作。
 - GitHub Issue 导入只能由桌面端人工触发，可只读开放、已关闭或全部 Issue；不创建、编辑、关闭、评论或分配 Issue。
 - GitHub Project 只能由桌面端人工触发只读概览；不写 Project、字段或条目，不导入需求或计划，也不增加 MCP 工具。
+- 多仓库交付总览只聚合本地已保存事实；不读取 Secret、不新增网络请求、不写项目状态，也不自动领取、合并、重跑、部署、打包、提审或发布。
 
 ### 执行安全
 
@@ -560,6 +575,7 @@ your-project/
 - 在 GitHub 标记 PR 冲突时，使用本地 `merge-tree` 只读定位冲突路径；本地缺少提交时降级为不可用。部署状态只读取当前 PR 头提交，不读取 Actions 日志或部署 payload，也不会根据失败的 Checks 或部署自动修复、重跑、部署或合并。
 - GitHub Issue 导入只支持 GitHub.com 上与已映射仓库关联的开放、已关闭或全部 Issue，每种状态最多读取 50 条；关键词、标签和导入状态筛选只作用于当前快照，不调用 Search API、不自动翻页、不导入评论、附件、Projects 或 Milestones，也不会自动刷新或生成蓝图。
 - GitHub Project 概览只支持 GitHub.com，手动读取最多 5 个项目、每个项目 30 个条目和 10 个单选项字段；不支持视图、评论、过滤自动化，不自动翻页、不后台轮询，也不会把条目导入 ColdStart。
+- 多仓库交付总览是本地只读快照，不联网、不后台轮询、不跨项目聚合；GitHub PR、Checks、Review 与部署变化需要先在“AI 评审”页手动刷新，再刷新总览。
 - Review 依赖外部 OpenAI 兼容模型；模型服务故障会失败关闭而不是跳过。
 - AI Review 不能证明代码没有漏洞，也不能替代人工安全审计。
 - MCP 项目简报只基于当前已发布计划；更早计划的历史需要通过项目记忆分页查看。
@@ -689,6 +705,7 @@ pnpm --dir apps/desktop build:installer
 - [GitHub Issue 需求收集与导入设计](docs/superpowers/specs/2026-11-13-coldstart-github-issue-intake-design.md)
 - [GitHub Issue 收件箱筛选增强设计](docs/superpowers/specs/2026-11-13-coldstart-issue-inbox-filters-design.md)
 - [GitHub Project 只读概览设计](docs/superpowers/specs/2026-11-13-coldstart-github-projects-design.md)
+- [多仓库交付总览设计](docs/superpowers/specs/2026-11-13-coldstart-delivery-overview-design.md)
 - [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
 - [AI Review 实施计划](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
 - [项目记忆实施计划](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
@@ -720,7 +737,9 @@ pnpm --dir apps/desktop build:installer
 - [第十八阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-issue-inbox-filters/progress.md)
 - [第十九阶段：GitHub Project 只读概览](docs/superpowers/plans/2026-11-13-coldstart-github-projects.md)
 - [第十九阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-github-projects/progress.md)
+- [第二十阶段：多仓库交付总览](docs/superpowers/plans/2026-11-13-coldstart-delivery-overview.md)
+- [第二十阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-delivery-overview/progress.md)
 
 ## 技术形态
 
-Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub Issue 导入、Project 只读 GraphQL、草稿 PR、验收同步、合并就绪、冲突定位与部署状态、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。
+Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub Issue 导入、Project 只读 GraphQL、草稿 PR、验收同步、合并就绪、冲突定位与部署状态、多仓库交付聚合、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。

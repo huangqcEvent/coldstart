@@ -1,5 +1,6 @@
 mod context;
 mod context_compiler;
+mod delivery_overview;
 mod error;
 mod git_gateway;
 mod github_access;
@@ -18,6 +19,10 @@ mod service;
 mod status;
 mod workspace;
 
+pub use delivery_overview::{
+    DeliveryChecksView, DeliveryGitSyncView, DeliveryOverviewService, DeliveryOverviewView,
+    DeliveryPullRequestView, DeliveryRepositoryState, DeliveryTaskCounts, RepositoryDeliveryView,
+};
 pub use error::AppError;
 pub use git_gateway::PlanGitGateway;
 pub use handoff::{

@@ -1,4 +1,12 @@
-import type { ProjectWorkspace } from '../api/types';
+import { useCallback, useEffect, useState } from 'react';
+
+import * as deliveryApi from '../api/deliveryApi';
+import type {
+  CommandError,
+  DeliveryOverviewView,
+  ProjectWorkspace,
+} from '../api/types';
+import { DeliveryOverview } from './DeliveryOverview';
 
 interface ProjectOverviewProps {
   workspace: ProjectWorkspace;
@@ -6,6 +14,18 @@ interface ProjectOverviewProps {
   onRefresh: () => void;
   onEnterRequirements: () => void;
   onEnterPlan: () => void;
+  onEnterIntegration: () => void;
+}
+
+function normalizeCommandError(error: unknown): CommandError {
+  if (typeof error === 'object' && error !== null) {
+    const candidate = error as Record<string, unknown>;
+    if (typeof candidate.code === 'string' && typeof candidate.message === 'string') {
+      return { code: candidate.code, message: candidate.message };
+    }
+  }
+
+  return { code: 'unknown', message: String(error) };
 }
 
 export function ProjectOverview({
@@ -14,7 +34,30 @@ export function ProjectOverview({
   onRefresh,
   onEnterRequirements,
   onEnterPlan,
+  onEnterIntegration,
 }: ProjectOverviewProps) {
+  const [deliveryOverview, setDeliveryOverview] = useState<DeliveryOverviewView | null>(null);
+  const [deliveryLoading, setDeliveryLoading] = useState(true);
+  const [deliveryError, setDeliveryError] = useState<CommandError | null>(null);
+
+  const loadDelivery = useCallback(async () => {
+    setDeliveryLoading(true);
+    setDeliveryError(null);
+    try {
+      const loaded = await deliveryApi.readDeliveryOverview(workspace.status.rootPath);
+      setDeliveryOverview(loaded);
+    } catch (error) {
+      setDeliveryOverview(null);
+      setDeliveryError(normalizeCommandError(error));
+    } finally {
+      setDeliveryLoading(false);
+    }
+  }, [workspace.status.rootPath]);
+
+  useEffect(() => {
+    void loadDelivery();
+  }, [loadDelivery]);
+
   const openInbox = workspace.inbox.filter(
     (request) => request.status === 'open',
   ).length;
@@ -67,8 +110,11 @@ export function ProjectOverview({
           <button
             className="button button--secondary"
             type="button"
-            onClick={onRefresh}
-            disabled={busy}
+            onClick={() => {
+              onRefresh();
+              void loadDelivery();
+            }}
+            disabled={busy || deliveryLoading}
           >
             刷新状态
           </button>
@@ -131,6 +177,14 @@ export function ProjectOverview({
           <dd>{workspace.facts.length} 条已确认信息</dd>
         </div>
       </dl>
+
+      <DeliveryOverview
+        overview={deliveryOverview}
+        loading={deliveryLoading}
+        error={deliveryError}
+        onRetry={() => void loadDelivery()}
+        onEnterIntegration={onEnterIntegration}
+      />
 
       <div className="project-view__footer">
         <span className="signal-line" aria-hidden="true" />

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from './App';
+import * as deliveryApi from './api/deliveryApi';
 import * as githubProjectApi from './api/githubProjectApi';
 import * as integrationApi from './api/integrationApi';
 import * as issueApi from './api/issueApi';
@@ -16,6 +17,8 @@ import type {
   BlueprintRevision,
   CapabilityStatusView,
   CredentialMetadata,
+  DeliveryOverviewView,
+  DeliveryPullRequestView,
   DocumentAnchor,
   GitHubIssueListView,
   GitHubProjectOverviewView,
@@ -33,6 +36,7 @@ import type {
   PullRequestInsights,
   PullRequestRecord,
   Repository,
+  RepositoryDeliveryView,
   RepositoryVerificationCommand,
   ReviewConfiguration,
   ReviewHistoryView,
@@ -48,6 +52,10 @@ vi.mock('./api/projectApi', () => ({
   readProjectStatus: vi.fn(),
   readProjectWorkspace: vi.fn(),
   pickProjectHome: vi.fn(),
+}));
+
+vi.mock('./api/deliveryApi', () => ({
+  readDeliveryOverview: vi.fn(),
 }));
 
 vi.mock('./api/requirementsApi', () => ({
@@ -688,6 +696,47 @@ function makeWorkspace(overrides: Partial<ProjectWorkspace> = {}): ProjectWorksp
   };
 }
 
+function makeDeliveryRepository(
+  overrides: Partial<RepositoryDeliveryView> = {},
+): RepositoryDeliveryView {
+  return {
+    repositoryKey: 'web',
+    repositoryName: 'Web 前台',
+    remoteUrl: 'https://github.com/example/web.git',
+    defaultBranch: 'main',
+    state: 'ready',
+    tasks: {
+      total: 3,
+      done: 1,
+      ready: 1,
+      active: 0,
+      blocked: 0,
+      failed: 0,
+      submitted: 0,
+      reopened: 0,
+      cancelled: 0,
+      draft: 0,
+    },
+    verificationCommandCount: 1,
+    latestGitSync: null,
+    pullRequest: null,
+    nextAction: 'Codex 可主动领取 1 个任务',
+    ...overrides,
+  };
+}
+
+function makeDeliveryOverview(
+  overrides: Partial<DeliveryOverviewView> = {},
+): DeliveryOverviewView {
+  return {
+    projectId: status.projectId,
+    planRevisionNumber: null,
+    repositories: [],
+    unassignedAgentTaskCount: 0,
+    ...overrides,
+  };
+}
+
 const memoryBlueprint: ProjectMemoryItem = {
   eventId: '15151515-1515-4515-8515-151515151515',
   occurredAt: '2026-11-12T09:02:00Z',
@@ -796,6 +845,7 @@ beforeEach(() => {
   vi.mocked(projectApi.readProjectStatus).mockReset();
   vi.mocked(projectApi.readProjectWorkspace).mockReset();
   vi.mocked(projectApi.pickProjectHome).mockReset();
+  vi.mocked(deliveryApi.readDeliveryOverview).mockReset();
   vi.mocked(requirementsApi.importRequirementDocument).mockReset();
   vi.mocked(requirementsApi.generateBlueprint).mockReset();
   vi.mocked(requirementsApi.saveBlueprintDraft).mockReset();
@@ -839,6 +889,9 @@ beforeEach(() => {
   vi.mocked(githubProjectApi.listGitHubProjects).mockReset();
   vi.mocked(integrationApi.readIntegrationWorkspace).mockResolvedValue(
     makeIntegrationWorkspace(),
+  );
+  vi.mocked(deliveryApi.readDeliveryOverview).mockResolvedValue(
+    makeDeliveryOverview(),
   );
 });
 
@@ -1020,6 +1073,103 @@ describe('ColdStart project workspace', () => {
     expect(screen.getByRole('button', { name: '蓝图编排' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '人工 Inbox' })).toBeEnabled();
     expect(screen.getByText(/permafrost/)).toBeInTheDocument();
+  });
+
+  it('loads a read-only multi-repository delivery overview', async () => {
+    const pullRequest: DeliveryPullRequestView = {
+      number: 21,
+      title: '完成订单页面',
+      htmlUrl: pullRequestUrl,
+      state: 'open',
+      draft: true,
+      checks: {
+        state: 'failure',
+        total: 2,
+        failed: 1,
+        pending: 0,
+      },
+      mergeability: 'unstable',
+      conflictPathCount: 0,
+      changesRequestedReviewCount: 0,
+      reviewStatus: 'blocked',
+      syncedAt: '2026-11-13T08:05:00Z',
+    };
+    vi.mocked(deliveryApi.readDeliveryOverview).mockResolvedValue(
+      makeDeliveryOverview({
+        planRevisionNumber: 4,
+        repositories: [
+          makeDeliveryRepository({
+            state: 'attention',
+            tasks: {
+              total: 3,
+              done: 1,
+              ready: 1,
+              active: 0,
+              blocked: 1,
+              failed: 0,
+              submitted: 0,
+              reopened: 0,
+              cancelled: 0,
+              draft: 0,
+            },
+            pullRequest,
+            nextAction: '检查 PR #21 的 1 个失败 Checks',
+          }),
+        ],
+      }),
+    );
+
+    await openProject();
+
+    expect(
+      await screen.findByRole('heading', { name: '多仓库交付总览' }),
+    ).toBeInTheDocument();
+    expect(deliveryApi.readDeliveryOverview).toHaveBeenCalledWith(projectPath);
+    expect(screen.getByText('1/3 · 33%')).toBeInTheDocument();
+    expect(screen.getByText('检查 PR #21 的 1 个失败 Checks')).toBeInTheDocument();
+    expect(screen.getAllByText('需关注').length).toBeGreaterThan(0);
+    const pullRequestLink = screen.getByRole('link', {
+      name: 'PR #21 · Checks 失败',
+    });
+    expect(pullRequestLink).toHaveAttribute('href', pullRequestUrl);
+    expect(pullRequestLink).toHaveAttribute('target', '_blank');
+    expect(screen.getByText('计划 v4')).toBeInTheDocument();
+  });
+
+  it('offers repository configuration when the delivery overview is empty', async () => {
+    const user = await openProject();
+
+    expect(await screen.findByText('尚未映射仓库')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '前往仓库与能力' }));
+
+    expect(
+      await screen.findByRole('heading', { name: '仓库与能力' }),
+    ).toBeInTheDocument();
+    expect(integrationApi.readIntegrationWorkspace).toHaveBeenCalledWith(projectPath);
+  });
+
+  it('clears stale delivery cards when the overview refresh fails', async () => {
+    vi.mocked(deliveryApi.readDeliveryOverview).mockResolvedValue(
+      makeDeliveryOverview({
+        planRevisionNumber: 1,
+        repositories: [makeDeliveryRepository()],
+      }),
+    );
+    const user = await openProject();
+    expect(await screen.findByText('Codex 可主动领取 1 个任务')).toBeInTheDocument();
+
+    vi.mocked(deliveryApi.readDeliveryOverview).mockRejectedValue({
+      code: 'delivery_overview_failed',
+      message: '无法读取交付总览',
+    });
+    await user.click(screen.getByRole('button', { name: '刷新状态' }));
+
+    expect(await screen.findByText('交付总览读取失败')).toBeInTheDocument();
+    expect(screen.getByText('无法读取交付总览')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Codex 可主动领取 1 个任务'),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '重新读取' })).toBeInTheDocument();
   });
 
   it('imports a requirement document and refreshes the event count', async () => {

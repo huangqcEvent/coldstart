@@ -9,6 +9,7 @@ pub fn run() {
             commands::create_project,
             commands::read_project_status,
             commands::read_requirements_workspace,
+            commands::load_delivery_overview,
             commands::read_project_memory,
             commands::import_requirement_document,
             commands::generate_blueprint,

@@ -661,6 +661,75 @@ export interface IntegrationWorkspace {
   release: ReleaseCenter;
 }
 
+export type DeliveryRepositoryState =
+  | 'attention'
+  | 'active'
+  | 'ready'
+  | 'complete'
+  | 'idle';
+
+export interface DeliveryTaskCounts {
+  total: number;
+  done: number;
+  ready: number;
+  active: number;
+  blocked: number;
+  failed: number;
+  submitted: number;
+  reopened: number;
+  cancelled: number;
+  draft: number;
+}
+
+export interface DeliveryGitSyncView {
+  status: GitSyncStatus;
+  branch: string;
+  commitSha: string;
+  errorMessage: string | null;
+  createdAt: string;
+}
+
+export interface DeliveryChecksView {
+  state: PullRequestChecksState;
+  total: number;
+  failed: number;
+  pending: number;
+}
+
+export interface DeliveryPullRequestView {
+  number: number;
+  title: string;
+  htmlUrl: string;
+  state: PullRequestState;
+  draft: boolean;
+  checks: DeliveryChecksView | null;
+  mergeability: PullRequestMergeability | null;
+  conflictPathCount: number;
+  changesRequestedReviewCount: number;
+  reviewStatus: ReviewStatus | null;
+  syncedAt: string | null;
+}
+
+export interface RepositoryDeliveryView {
+  repositoryKey: string;
+  repositoryName: string;
+  remoteUrl: string;
+  defaultBranch: string;
+  state: DeliveryRepositoryState;
+  tasks: DeliveryTaskCounts;
+  verificationCommandCount: number;
+  latestGitSync: DeliveryGitSyncView | null;
+  pullRequest: DeliveryPullRequestView | null;
+  nextAction: string;
+}
+
+export interface DeliveryOverviewView {
+  projectId: string;
+  planRevisionNumber: number | null;
+  repositories: RepositoryDeliveryView[];
+  unassignedAgentTaskCount: number;
+}
+
 export type GitHubIssueState = 'open' | 'closed';
 export type GitHubIssueListState = 'open' | 'closed' | 'all';
 

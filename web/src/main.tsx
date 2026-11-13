@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App';
 import './styles.css';
 import './theme.css';
+import './delivery.css';
 import { initializeTheme } from './theme';
 
 initializeTheme();

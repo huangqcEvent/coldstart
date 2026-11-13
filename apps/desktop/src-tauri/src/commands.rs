@@ -2,13 +2,13 @@ use std::{path::PathBuf, sync::Arc};
 
 use coldstart_adapters::{GitHubIssueListState, ModelConfig, OpenAiCompatibleModel};
 use coldstart_app::{
-    CreatePrivateRepositoryInput, DeviceFlowView, GitHubDevicePollView, GitHubIssueListView,
-    GitHubIssueService, GitHubProjectOverviewView, GitHubProjectService, GitHubSessionView,
-    IntegrationService, IntegrationWorkspace, PlanService, ProjectMemoryPage, ProjectMemoryService,
-    ProjectService, ProjectStatus, ProjectWorkspace, PullRequestService, RepositoryDraft,
-    RepositoryValidationView, RequirementsService, ReviewService, ReviewStandardContent,
-    ReviewStandardImport, ReviewStandardManualInput, ReviewStandardRevisionInput,
-    ReviewStandardView, ReviewWorkspace, SaveCredentialInput,
+    CreatePrivateRepositoryInput, DeliveryOverviewService, DeliveryOverviewView, DeviceFlowView,
+    GitHubDevicePollView, GitHubIssueListView, GitHubIssueService, GitHubProjectOverviewView,
+    GitHubProjectService, GitHubSessionView, IntegrationService, IntegrationWorkspace, PlanService,
+    ProjectMemoryPage, ProjectMemoryService, ProjectService, ProjectStatus, ProjectWorkspace,
+    PullRequestService, RepositoryDraft, RepositoryValidationView, RequirementsService,
+    ReviewService, ReviewStandardContent, ReviewStandardImport, ReviewStandardManualInput,
+    ReviewStandardRevisionInput, ReviewStandardView, ReviewWorkspace, SaveCredentialInput,
 };
 use coldstart_core::{
     BlueprintContent, BlueprintEntityId, BlueprintRevisionId, CapabilityStatus, CredentialId,
@@ -61,6 +61,19 @@ pub fn read_requirements_workspace_sync(path: String) -> Result<ProjectWorkspace
 #[tauri::command]
 pub async fn read_requirements_workspace(path: String) -> Result<ProjectWorkspace, CommandError> {
     tauri::async_runtime::spawn_blocking(move || read_requirements_workspace_sync(path))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn load_delivery_overview_sync(path: String) -> Result<DeliveryOverviewView, CommandError> {
+    DeliveryOverviewService::new()
+        .load(PathBuf::from(path))
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn load_delivery_overview(path: String) -> Result<DeliveryOverviewView, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || load_delivery_overview_sync(path))
         .await
         .map_err(join_error)?
 }

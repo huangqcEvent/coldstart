@@ -376,6 +376,7 @@ export default function App() {
               onRefresh={() => void handleRefresh()}
               onEnterRequirements={() => setView('requirements')}
               onEnterPlan={() => setView('plan')}
+              onEnterIntegration={() => setView('integration')}
             />
           ) : null}
 
