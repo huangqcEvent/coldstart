@@ -1,3 +1,8 @@
+//! MCP stdout/stdin 启动器。
+//!
+//! 解析项目目录参数、初始化应用服务并启动 stdio 传输。诊断信息写入 stderr，
+//! stdout 只承载协议消息，避免污染 JSON-RPC。
+
 use std::{error::Error, ffi::OsStr, io, path::PathBuf};
 
 use coldstart_mcp::ColdStartMcp;

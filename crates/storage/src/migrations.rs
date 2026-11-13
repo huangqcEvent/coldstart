@@ -1,3 +1,8 @@
+//! SQLite 架构迁移。
+//!
+//! 迁移按版本递增执行，每一步必须在事务中完成并保留既有业务数据；新增列或表时
+//! 同步更新版本断言和真实历史库升级验收。
+
 use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::StorageError;

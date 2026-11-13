@@ -1,3 +1,8 @@
+/**
+ * AI Review 配置、规范与历史 API。
+ *
+ * 前端只提交人工配置和豁免动作，不接触模型密钥；Review 结果与失败原因由 Rust 端持久化。
+ */
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 

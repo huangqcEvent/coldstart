@@ -1,3 +1,8 @@
+//! 项目级只读上下文读取。
+//!
+//! 组合项目、蓝图、计划与能力视图，供桌面端和 MCP 共享同一事实来源；该模块不写
+//! 数据库、不刷新租约，也不改变任务状态。
+
 use coldstart_core::Project;
 use coldstart_storage::Database;
 

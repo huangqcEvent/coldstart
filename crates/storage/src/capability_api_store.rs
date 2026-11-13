@@ -1,3 +1,8 @@
+//! 能力 API 端点的 SQLite 持久化。
+//!
+//! 只保存端点白名单和凭据引用，不保存 Secret；保存与删除操作同时写入项目事件，
+//! 供桌面端和任务上下文读取一致快照。
+
 use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
@@ -9,6 +14,7 @@ use rusqlite::{OptionalExtension, Row, TransactionBehavior, params};
 use crate::{Database, StorageError, database::project_exists};
 
 impl Database {
+    /// 原子保存能力 API 端点并校验项目、能力、环境和唯一约束，同时记录配置事件。
     pub fn save_capability_api_endpoint(
         &mut self,
         endpoint: &CapabilityApiEndpoint,

@@ -1,3 +1,8 @@
+//! ColdStart 命令行初始化与状态检查。
+//!
+//! CLI 只提供项目初始化、状态读取和必要的目录校验，不承担桌面编排或 MCP 服务；
+//! 成功与失败均通过稳定退出码和结构化 JSON 表达。
+
 use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};

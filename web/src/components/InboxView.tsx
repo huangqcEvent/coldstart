@@ -1,3 +1,8 @@
+/**
+ * 人工 Inbox 页面。
+ *
+ * 集中展示待确认信息与人工任务，提交后刷新工作区；前端不自动回答业务问题。
+ */
 import { useId, useState } from 'react';
 
 import type {

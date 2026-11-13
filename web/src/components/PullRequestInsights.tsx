@@ -1,3 +1,9 @@
+/**
+ * Pull Request 验收快照面板。
+ *
+ * 展示 Checks、Review、合并就绪、冲突与部署状态，并提供人工刷新和草稿 PR 操作；
+ * 不自动合并、关闭或重跑外部任务。
+ */
 import type {
   PullRequestCheck,
   PullRequestDeployment,

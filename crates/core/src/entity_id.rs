@@ -1,3 +1,8 @@
+//! 强类型实体 ID。
+//!
+//! 不同领域实体使用不同 ID 类型，防止跨实体误用；构造和派生时统一校验字符集、
+//! 大小写和空白，确保数据库、事件与 MCP 协议使用同一标识格式。
+
 use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};

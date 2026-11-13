@@ -1,3 +1,8 @@
+//! 应用层错误映射。
+//!
+//! 将领域、存储、Git 和外部服务错误统一映射为稳定错误码，同时保留可用于 UI 的
+//! 中文说明；禁止把 Secret、完整响应或内部路径拼入可展示错误。
+
 use std::{io, path::PathBuf};
 
 use coldstart_adapters::{DocumentError, GitError, GitHubError, ModelError, SecretStoreError};

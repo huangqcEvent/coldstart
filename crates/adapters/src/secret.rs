@@ -1,3 +1,8 @@
+//! Windows Credential Manager 凭据适配器。
+//!
+//! 凭据按项目与环境命名，读写只在 Rust 内存中短暂存在；对外只暴露是否存在和
+//! 引用标识，不回显 Secret，也不把凭据写入日志或项目目录。
+
 use std::{collections::BTreeMap, fmt, sync::Mutex};
 
 use thiserror::Error;

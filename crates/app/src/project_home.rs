@@ -1,3 +1,8 @@
+//! 项目目录初始化、打开与清单管理。
+//!
+//! 负责创建可移植项目目录、写入清单和数据库、发现 MCP 二进制；初始化失败时需要
+//! 清理本次创建的全部文件，避免留下半初始化目录。
+
 use std::{
     ffi::OsString,
     fs,
@@ -34,6 +39,7 @@ impl ProjectHome {
         Self { root: root.into() }
     }
 
+    /// 创建项目清单、数据库和能力目录；失败时回滚本次初始化产生的文件。
     pub fn initialize(&self, name: &str) -> Result<Project, AppError> {
         if self.root.exists() && !self.root.is_dir() {
             return Err(AppError::NotADirectory(self.root.clone()));
@@ -95,6 +101,7 @@ impl ProjectHome {
         self.root.join(STATE_DIRECTORY).join("artifacts")
     }
 
+    /// 读取并校验项目清单，拒绝 schema、项目 ID 或目录不一致。
     pub fn load_manifest(&self) -> Result<ProjectManifest, AppError> {
         let path = self.manifest_path();
         let bytes = match fs::read(&path) {

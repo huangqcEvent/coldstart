@@ -1,3 +1,8 @@
+//! GitHub REST 与 GraphQL 客户端。
+//!
+//! 统一处理 Token、超时、有限重试、响应限长和错误脱敏。所有写操作都要求显式
+//! 输入，PR、Issue、Project 和 Deployment 读取只返回有界的安全字段。
+
 use std::{fmt, process::Command, time::Duration};
 
 use coldstart_core::{
@@ -131,6 +136,7 @@ pub struct GitHubRepositoryCoordinates {
 }
 
 impl GitHubRepositoryCoordinates {
+    /// 从受支持的 GitHub 远程 URL 解析仓库坐标，拒绝非 GitHub 或含凭据的地址。
     pub fn from_remote_url(value: &str) -> Result<Self, GitHubError> {
         let value = value.trim();
         let (host, path) = if let Some(rest) = value.strip_prefix("git@") {
@@ -421,6 +427,7 @@ impl GitHubClient {
         })
     }
 
+    /// 启动 GitHub Device Flow，限制响应结构和超时，不返回设备码等敏感中间值。
     pub fn start_device_flow(
         &self,
         client_id: &str,
@@ -463,6 +470,7 @@ impl GitHubClient {
         })
     }
 
+    /// 轮询 Device Flow 授权状态，区分等待、慢响应、拒绝和成功并脱敏错误。
     pub fn poll_device_flow(
         &self,
         client_id: &str,
@@ -527,6 +535,7 @@ impl GitHubClient {
         Ok(connection)
     }
 
+    /// 创建显式私有仓库并校验名称、描述与 API 响应，不隐式覆盖已有仓库。
     pub fn create_private_repository(
         &self,
         token: &GitHubToken,
@@ -586,6 +595,7 @@ impl GitHubClient {
         parse_pull_request_response(&response.body)
     }
 
+    /// 读取 PR 详情并构造有界快照，拒绝非 HTTPS 链接和超限外部文本。
     pub fn pull_request(
         &self,
         token: &GitHubToken,
@@ -714,6 +724,7 @@ impl GitHubClient {
         parse_deployments_response(&response.body, head_sha.trim())
     }
 
+    /// 读取指定提交的部署历史与最新状态，并校验提交边界和字段长度。
     pub fn deployment_status(
         &self,
         token: &GitHubToken,

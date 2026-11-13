@@ -1,3 +1,9 @@
+/**
+ * 蓝图结构化编辑器。
+ *
+ * 把范围、模块、技术栈、能力和来源引用拆成受控表单；新增/删除行保持本地顺序，
+ * 保存和发布仍由父视图调用后端校验。
+ */
 import type {
   ArtifactMetadata,
   BlueprintContent,

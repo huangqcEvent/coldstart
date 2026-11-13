@@ -1,3 +1,8 @@
+//! 本地需求文档解析。
+//!
+//! 支持 Markdown、纯文本、PDF 和 DOCX，并为可引用片段生成稳定锚点；读取前先
+//! 校验扩展名与大小，避免把二进制或超限内容送入模型。
+
 use std::{
     fs,
     io::{Cursor, Read},
@@ -60,6 +65,7 @@ impl DocumentError {
     }
 }
 
+/// 根据扩展名选择解析器，校验文件大小并生成可溯源锚点；不支持或空文档显式失败。
 pub fn extract_document(path: &Path) -> Result<ExtractedDocument, DocumentError> {
     let format = path
         .extension()

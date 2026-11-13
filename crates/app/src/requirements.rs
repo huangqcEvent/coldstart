@@ -1,3 +1,8 @@
+//! 需求导入、蓝图生成与人工确认。
+//!
+//! 负责导入不可变来源、构造模型上下文、校验来源锚点和保存蓝图修订；模型输出
+//! 不能绕过人工发布，也不能引用未导入材料。
+
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
@@ -53,6 +58,7 @@ impl<M: BlueprintModel> RequirementsService<M> {
         )
     }
 
+    /// 从已导入来源生成蓝图候选，校验模型结构和来源锚点，不自动发布。
     pub fn generate_blueprint(
         &self,
         project_home: PathBuf,

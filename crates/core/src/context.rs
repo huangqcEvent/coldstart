@@ -1,3 +1,8 @@
+//! Agent 上下文预算与裁剪规则。
+//!
+//! 上下文编译会优先保留任务契约、仓库、能力和验证边界，再按预算裁剪参考材料；
+//! 被省略的内容必须显式列出，避免 Agent 把局部上下文误认为完整事实。
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 

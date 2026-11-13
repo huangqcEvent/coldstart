@@ -1,3 +1,8 @@
+/**
+ * 项目记忆 API。
+ *
+ * 分页读取 Rust 端投影的安全时间线，查询条件和阶段筛选不会改变项目事件。
+ */
 import { invoke } from '@tauri-apps/api/core';
 
 import type { ProjectMemoryPage } from './types';

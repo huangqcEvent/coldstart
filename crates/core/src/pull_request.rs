@@ -1,3 +1,8 @@
+//! GitHub Pull Request 验收快照模型。
+//!
+//! 快照只保存与人工验收相关的有界字段，包括 Checks、Review、冲突、合并就绪和
+//! 部署状态；所有外部文本都会校验长度与字符边界，不能影响本地状态机。
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -61,6 +66,7 @@ pub enum PullRequestMergeability {
 }
 
 impl PullRequestMergeability {
+    /// 将 GitHub 的 mergeable/state 原始信号归一为稳定的合并就绪状态。
     pub fn from_signals(mergeable: Option<bool>, state: Option<&str>) -> Self {
         match state
             .map(str::trim)
@@ -158,6 +164,7 @@ impl PullRequestConflictDetails {
         }
     }
 
+    /// 校验冲突文件数量、路径长度和文本边界。
     pub fn validate(&self) -> Result<(), PullRequestValidationError> {
         if self.state == PullRequestConflictState::Detected {
             if self.paths.len() > MAX_PULL_REQUEST_CONFLICT_PATHS {
@@ -296,6 +303,7 @@ impl PullRequestDeploymentDetails {
         }
     }
 
+    /// 校验部署记录数量、环境和描述字段的安全边界。
     pub fn validate(&self) -> Result<(), PullRequestValidationError> {
         if self.state == PullRequestDeploymentsState::Available {
             if self.deployments.is_empty() {
@@ -471,6 +479,7 @@ pub struct PullRequestReviewComment {
 }
 
 impl PullRequestReviewComment {
+    /// 校验行内评论的路径、作者、正文和链接长度，防止无界外部内容。
     pub fn validate(&self) -> Result<(), PullRequestValidationError> {
         validate_required_insight_text(
             "review comment author",
@@ -584,6 +593,7 @@ impl PullRequestInsights {
         Ok(self)
     }
 
+    /// 校验 PR 验收快照中 Checks、Review、部署与冲突数据的一致性。
     pub fn validate(&self) -> Result<(), PullRequestValidationError> {
         self.conflict_details.validate()?;
         self.deployment_details.validate()?;
@@ -629,6 +639,7 @@ impl PullRequestInsights {
         }
     }
 
+    /// 根据 Checks 汇总判定成功、失败、等待或未配置状态。
     pub fn checks_state(&self) -> PullRequestChecksState {
         let summary = self.check_summary();
         if summary.total == 0 {
@@ -698,6 +709,7 @@ impl PullRequestRecord {
         Ok(record)
     }
 
+    /// 幂等更新 PR 状态与草稿标记，并返回是否发生了可见变化。
     pub fn update_state(
         &mut self,
         state: PullRequestState,
@@ -713,6 +725,7 @@ impl PullRequestRecord {
         Ok(true)
     }
 
+    /// 校验 PR 记录的编号、分支名、标题、URL 和状态字段。
     pub fn validate(&self) -> Result<(), PullRequestValidationError> {
         if self.number == 0 {
             return Err(PullRequestValidationError::InvalidNumber);

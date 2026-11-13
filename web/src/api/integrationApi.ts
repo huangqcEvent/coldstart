@@ -1,3 +1,8 @@
+/**
+ * 仓库、凭据、能力与能力 API 白名单 API。
+ *
+ * Secret 只提交给 Rust 端写入系统凭据库，读取结果只包含引用和状态，不回显明文。
+ */
 import { invoke } from '@tauri-apps/api/core';
 
 import type {

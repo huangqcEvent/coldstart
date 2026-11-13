@@ -1,3 +1,8 @@
+/**
+ * 无项目时的欢迎页。
+ *
+ * 提供打开已有项目与创建新项目的入口，并说明本地优先、MCP 主动领取和人工把关边界。
+ */
 interface WelcomeViewProps {
   onCreate: () => void;
   onOpen: () => void;

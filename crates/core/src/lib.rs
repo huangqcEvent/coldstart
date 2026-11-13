@@ -1,3 +1,8 @@
+//! ColdStart 领域核心。
+//!
+//! 本 crate 只包含与 UI、数据库驱动和外部服务无关的领域模型与校验规则；
+//! 上层应用负责编排，适配器负责 I/O，避免领域逻辑被传输细节污染。
+
 mod artifact;
 mod blueprint;
 mod capability_api;

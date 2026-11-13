@@ -1,3 +1,8 @@
+//! 项目简报、任务接力与上下文交接。
+//!
+//! 为 Agent 提供有界、可恢复的项目与任务视图，包括最近完成、阻塞、事实和记忆；
+//! 输出不包含本地路径、远程 URL、凭据引用、租约令牌或原始 Secret。
+
 use std::{collections::BTreeSet, path::PathBuf};
 
 use chrono::{DateTime, Duration, Utc};

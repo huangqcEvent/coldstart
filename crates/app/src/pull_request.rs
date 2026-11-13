@@ -1,3 +1,8 @@
+//! GitHub 草稿 PR 与验收快照编排。
+//!
+//! 只有在任务报告、验证和 Review 门禁通过后才允许创建草稿 PR；刷新只读同步
+//! Checks、Review、合并、冲突和部署状态，不自动合并或关闭 PR。
+
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
 use chrono::{DateTime, Utc};
@@ -50,6 +55,7 @@ impl PullRequestService {
         }
     }
 
+    /// 在任务门禁通过后创建幂等 GitHub 草稿 PR，并保存外部编号与分支边界。
     pub fn create_draft(
         &self,
         project_home: PathBuf,
@@ -177,6 +183,7 @@ impl PullRequestService {
         Ok(record)
     }
 
+    /// 人工刷新 PR 的 Checks、Review、合并、冲突和部署快照；失败时保留上次成功快照。
     pub fn refresh(
         &self,
         project_home: PathBuf,

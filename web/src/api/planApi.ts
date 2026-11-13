@@ -1,3 +1,8 @@
+/**
+ * 计划与任务操作 API。
+ *
+ * 只负责把用户明确动作传给 Rust 服务；领取、报告、验证与 Review 状态机不在前端复制。
+ */
 import { invoke } from '@tauri-apps/api/core';
 
 import type { PlanContent, PlanPublishPreview, ProjectWorkspace } from './types';

@@ -1,3 +1,8 @@
+//! 计划看板工作区与 MCP 连接信息。
+//!
+//! 组合当前计划、任务、验证快照和 MCP 二进制位置，供桌面端展示与复制配置；
+//! 该视图不启动 MCP，也不主动调用 Agent。
+
 use std::{collections::BTreeMap, path::Path};
 
 use coldstart_core::{

@@ -1,3 +1,8 @@
+//! 计划执行所需的 Git 网关抽象。
+//!
+//! 应用层通过该接口完成分支创建、提交校验、差异读取和推送，测试可替换为内存实现；
+//! 真实实现仍由适配器落实认证与命令安全约束。
+
 use std::path::Path;
 
 use coldstart_adapters::{GitAdapter, GitAuth, GitCommitVerification, GitError, ReviewDiff};

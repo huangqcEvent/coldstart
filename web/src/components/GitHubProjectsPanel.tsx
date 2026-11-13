@@ -1,3 +1,9 @@
+/**
+ * GitHub Project v2 只读概览面板。
+ *
+ * 由用户点击后读取仓库关联项目与有限条目；不写入 Project、字段或条目，也不改变
+ * 本地计划状态。
+ */
 import { useEffect, useId, useState } from 'react';
 
 import * as githubProjectApi from '../api/githubProjectApi';

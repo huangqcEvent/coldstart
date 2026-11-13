@@ -1,3 +1,8 @@
+//! 受限能力 API 的 HTTPS 客户端。
+//!
+//! 客户端禁止重定向、限制请求和响应大小、仅允许 HTTPS，并在测试中显式开启本地
+//! HTTP；错误与调试输出不得泄露鉴权头或 Secret。
+
 use std::{fmt, io::Read, time::Duration};
 
 use coldstart_core::{

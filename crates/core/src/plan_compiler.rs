@@ -1,3 +1,8 @@
+//! 蓝图到计划草案的编译规则。
+//!
+//! 编译结果只是待人工确认的建议任务，不直接执行或发布。平台到仓库键的映射、
+//! 依赖闭包和路径范围在此收敛为稳定契约。
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use thiserror::Error;
@@ -23,6 +28,7 @@ pub enum PlanCompileError {
     UnknownModuleDependency(BlueprintEntityId),
 }
 
+/// 从蓝图能力与平台声明生成去重、可依赖的候选任务集合，但不发布计划。
 pub fn compile_plan(
     _project_id: &ProjectId,
     blueprint: &BlueprintContent,

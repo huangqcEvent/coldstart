@@ -1,3 +1,8 @@
+//! AI Review 配置、规范与结果编排。
+//!
+//! 在领取任务时冻结 Review 配置和规范版本，在任务完成前对真实 diff 执行评审；
+//! 失败关闭、人工豁免和规范变更都保留审计记录。
+
 use std::{
     collections::BTreeMap,
     fs,
@@ -109,6 +114,7 @@ impl ReviewService {
         build_review_workspace(&project)
     }
 
+    /// 保存 Review 模型配置与授权同意指纹，端点变更会要求重新确认。
     pub fn save_configuration(
         &self,
         project_home: PathBuf,

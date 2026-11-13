@@ -1,3 +1,8 @@
+//! 计划生命周期与任务执行编排。
+//!
+//! 覆盖蓝图编译、计划预览/发布、任务领取、报告、验证、Review、推送和人工操作。
+//! 每次状态推进都复用存储事务与适配器门禁，禁止跳过验收直接完成。
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
@@ -162,6 +167,7 @@ impl PlanService {
         self.publish_confirmed(project_home, revision_id, false)
     }
 
+    /// 在预览确认后发布计划，冻结任务契约并迁移可继承状态。
     pub fn publish_confirmed(
         &self,
         project_home: PathBuf,
@@ -201,6 +207,7 @@ impl PlanService {
         build_plan_workspace(&project)
     }
 
+    /// 领取下一个可执行任务，校验仓库清洁、冻结验证与 Review 配置并创建租约。
     pub fn claim_next(
         &self,
         project_home: PathBuf,
@@ -359,6 +366,7 @@ impl PlanService {
         )?)
     }
 
+    /// 校验报告、执行验证与 Review 门禁，成功后才完成或推送任务分支。
     pub fn submit_report(
         &self,
         project_home: PathBuf,
@@ -481,6 +489,7 @@ impl PlanService {
         Ok(record)
     }
 
+    /// 对 blocked Review 执行人工豁免并继续交付，保留审计证据。
     pub fn waive_review(
         &self,
         project_home: PathBuf,

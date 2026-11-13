@@ -1,3 +1,8 @@
+//! 仓库、凭据元数据与能力状态的持久化。
+//!
+//! 外部服务的 Token 和 Secret 只以系统凭据库引用形式保存；仓库映射、同步策略
+//! 与能力环境在事务内维护，保证工作区读取看到一致配置。
+
 use std::{path::PathBuf, str::FromStr};
 
 use chrono::{DateTime, Utc};
@@ -14,6 +19,7 @@ use crate::{
 };
 
 impl Database {
+    /// 保存仓库映射并校验键、路径和凭据引用，保持已有身份。
     pub fn save_repository(&mut self, repository: &Repository) -> Result<(), StorageError> {
         repository.validate()?;
         let protected_branches_json = serde_json::to_string(&repository.protected_branches)?;
@@ -137,6 +143,7 @@ impl Database {
         row.map(StoredRepositoryRow::into_repository).transpose()
     }
 
+    /// 保存凭据元数据，仅存储系统凭据库引用和展示所需字段。
     pub fn save_credential(&mut self, credential: &CredentialMetadata) -> Result<(), StorageError> {
         credential.validate()?;
         let transaction = self
@@ -399,6 +406,7 @@ impl Database {
             .optional()?)
     }
 
+    /// 记录任务分支提交与推送结果，不改变任务完成状态。
     pub fn record_git_sync(&mut self, sync: &GitSyncRecord) -> Result<(), StorageError> {
         if sync.branch.trim().is_empty() || sync.commit_sha.trim().is_empty() {
             return Err(StorageError::EmptyGitSyncFields);

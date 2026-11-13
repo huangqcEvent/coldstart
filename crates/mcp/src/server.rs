@@ -1,3 +1,8 @@
+//! MCP 工具契约与调用分发。
+//!
+//! 当前暴露 12 个受限工具，覆盖简报、记忆、领取、上下文、心跳、报告、阻塞、
+//! 能力调用和完成交接。工具只接受显式参数，不启动 Codex，也不扩大 Secret 面。
+
 use std::path::PathBuf;
 
 use coldstart_app::{
@@ -100,6 +105,7 @@ impl ColdStartMcp {
         .await
     }
 
+    /// 返回当前租约任务与前序工作的接力摘要，校验租约且不改变状态。
     #[tool(
         description = "Read safe cross-task handoff details for a work item authorized by the lease token."
     )]
@@ -117,6 +123,7 @@ impl ColdStartMcp {
         })
         .await
     }
+    /// 读取项目能力与凭据可用状态，只返回安全元数据。
     #[tool(
         description = "Read a capability's configured status for one environment. Returns only a credential reference, never a secret."
     )]
@@ -139,6 +146,7 @@ impl ColdStartMcp {
         .await
     }
 
+    /// 在有效租约和能力授权范围内调用三方 API，由本机注入 Secret 并返回脱敏结果。
     #[tool(
         description = "Call a configured third-party capability API within the active work lease. Secrets are injected locally and never returned."
     )]
@@ -215,6 +223,7 @@ impl ColdStartMcp {
         .await
     }
 
+    /// 读取当前租约任务的编译上下文，校验令牌和契约版本。
     #[tool(
         description = "Return the budgeted task context for a work item authorized by the lease token."
     )]
@@ -233,6 +242,7 @@ impl ColdStartMcp {
         .await
     }
 
+    /// 读取任务允许引用的来源片段，拒绝白名单之外的制品或锚点。
     #[tool(
         description = "Read one additional whitelisted task reference without exposing unrestricted project data."
     )]
@@ -256,6 +266,7 @@ impl ColdStartMcp {
         .await
     }
 
+    /// 延长有效租约；过期、旧契约或错误令牌返回稳定错误。
     #[tool(description = "Renew the active work lease and record agent activity.")]
     pub async fn heartbeat_work(
         &self,
@@ -270,6 +281,7 @@ impl ColdStartMcp {
             .await
     }
 
+    /// 将 Agent 阻塞原因登记到当前租约任务，不自动完成任务或解除租约。
     #[tool(description = "Report a blocker and the minimum human input needed to continue.")]
     pub async fn report_work_blocker(
         &self,
@@ -293,6 +305,7 @@ impl ColdStartMcp {
         .await
     }
 
+    /// 提交结构化完成报告并触发独立验证、Review 和推送门禁。
     #[tool(
         description = "Submit a structured work report. The report must include contractHash and a unique idempotencyKey."
     )]
@@ -312,6 +325,7 @@ impl ColdStartMcp {
         .await
     }
 
+    /// 主动释放当前租约并把任务恢复为可领取状态，保留审计事件。
     #[tool(description = "Release an active work lease when the task cannot continue.")]
     pub async fn release_work(
         &self,

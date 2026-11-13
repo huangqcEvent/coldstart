@@ -1,3 +1,8 @@
+//! 项目工作区聚合视图。
+//!
+//! 把需求、蓝图、计划、仓库、能力、Review 和历史状态组合成桌面端可渲染的只读
+//! 快照；不包含 Secret、租约令牌或未脱敏的外部响应。
+
 use std::collections::BTreeMap;
 
 use coldstart_core::{

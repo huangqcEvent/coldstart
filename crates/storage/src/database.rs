@@ -1,3 +1,8 @@
+//! SQLite 连接、架构迁移与事务入口。
+//!
+//! 数据库以单一项目为边界，所有写入通过显式事务提交；打开数据库时先完成架构
+//! 升级并校验项目身份，避免部分迁移或跨项目复用造成状态污染。
+
 use std::{
     collections::BTreeSet,
     fs,
@@ -275,6 +280,7 @@ impl Database {
         }))
     }
 
+    /// 在事务连接上追加不可变项目事件，调用方负责与领域状态变更一起提交。
     pub fn append_event(&mut self, event: &DomainEvent) -> Result<(), StorageError> {
         let transaction = self
             .connection
@@ -379,6 +385,7 @@ impl Database {
         Ok(serde_json::from_str(&anchors_json)?)
     }
 
+    /// 保存蓝图修订、来源锚点和发布状态，确保旧修订仍可追溯。
     pub fn create_blueprint_revision(
         &mut self,
         project_id: &ProjectId,
@@ -596,6 +603,7 @@ impl Database {
         Ok(requests)
     }
 
+    /// 回答待确认信息并生成项目事实，保持请求状态与事件一致。
     pub fn resolve_info_request(
         &mut self,
         project_id: &ProjectId,

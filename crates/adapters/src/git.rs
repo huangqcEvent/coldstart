@@ -1,3 +1,8 @@
+//! Git 工作区适配器。
+//!
+//! 负责仓库检查、分支切换、差异提取、提交校验和冲突定位。命令通过参数数组执行，
+//! 禁止 shell 拼接；认证信息只通过受控环境传递且不得出现在错误消息中。
+
 use std::{
     collections::BTreeSet,
     fmt, io,
@@ -173,6 +178,7 @@ impl GitAdapter {
         Ok(commit)
     }
 
+    /// 从基准提交到报告提交提取有界真实 diff，排除二进制、超限和外部 diff 配置。
     pub fn extract_review_diff(
         &self,
         repository: &Path,
@@ -270,6 +276,7 @@ impl GitAdapter {
         })
     }
 
+    /// 在不执行真实合并的前提下定位冲突路径，并验证目标分支与本地 HEAD 边界。
     pub fn find_merge_conflicts(
         &self,
         repository: &Path,
@@ -409,6 +416,7 @@ impl GitAdapter {
         }
     }
 
+    /// 确保验证检出点满足分支、提交和工作区清洁约束，避免在错误版本执行命令。
     pub fn ensure_verification_checkout(
         &self,
         repository: &Path,
@@ -481,6 +489,7 @@ impl GitAdapter {
         Ok(())
     }
 
+    /// 校验报告提交是任务分支 HEAD，且改动路径完全落在任务允许范围内。
     #[allow(clippy::too_many_arguments)]
     pub fn verify_report_commit(
         &self,

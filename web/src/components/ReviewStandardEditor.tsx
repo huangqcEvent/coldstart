@@ -1,3 +1,9 @@
+/**
+ * Review 代码规范编辑器。
+ *
+ * 负责规范范围、内容和启用状态的前端编辑；保存时生成新修订，删除采用软删除，
+ * 已领取任务的规范快照不受影响。
+ */
 import { useEffect, useState } from 'react';
 
 import * as reviewApi from '../api/reviewApi';

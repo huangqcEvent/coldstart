@@ -1,3 +1,8 @@
+//! 多仓库交付总览聚合。
+//!
+//! 直接读取本地已保存的计划、任务、验证、Git 同步、PR 和 Review 快照，按仓库
+//! 汇总风险与下一步建议；不发起网络请求、不写事件，也不改变外部状态。
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,

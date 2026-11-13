@@ -1,3 +1,8 @@
+//! MCP 工具输入输出 DTO。
+//!
+//! DTO 定义协议字段与默认值，并严格拒绝未知或越界输入；返回结构只包含任务所需的
+//! 最小投影，不携带本地敏感路径、租约令牌或 Secret。
+
 use coldstart_core::{AcceptanceResult, CommandRun, ReportOutcome, WorkReportInput};
 use schemars::JsonSchema;
 use serde::Deserialize;

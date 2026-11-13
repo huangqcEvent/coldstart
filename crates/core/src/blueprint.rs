@@ -1,3 +1,8 @@
+//! 项目蓝图领域模型。
+//!
+//! 蓝图汇总范围、模块、技术栈、三方能力和待确认问题。所有由模型生成的
+//! 内容在进入持久化前都必须经过来源引用、结构化字段和范围边界校验。
+
 use std::collections::{HashMap, HashSet};
 
 use chrono::{DateTime, Utc};
@@ -137,6 +142,7 @@ pub struct BlueprintContent {
 }
 
 impl BlueprintContent {
+    /// 将模型提案转换为受来源锚点约束的蓝图修订，拒绝越界、重复或未溯源的字段。
     pub fn from_proposal(
         project_id: &ProjectId,
         proposal: BlueprintProposal,
@@ -343,6 +349,7 @@ impl BlueprintContent {
         })
     }
 
+    /// 汇总蓝图内所有来源引用，供锚点校验和发布前完整性检查复用。
     pub fn source_references(&self) -> Vec<&SourceReference> {
         let mut references = Vec::new();
         references.extend(&self.product_goal.sources);
@@ -671,6 +678,7 @@ pub enum BlueprintValidationError {
     },
 }
 
+/// 校验蓝图范围、模块、技术栈、能力与来源引用的结构完整性。
 pub fn validate_blueprint_structure(
     content: &BlueprintContent,
 ) -> Result<(), BlueprintValidationError> {

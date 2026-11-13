@@ -1,3 +1,8 @@
+/**
+ * 统一错误提示条。
+ *
+ * 展示后端稳定错误码和可安全公开的消息，由父级决定是否清除或重试。
+ */
 import type { CommandError } from '../api/types';
 
 interface ErrorBannerProps {

@@ -1,3 +1,8 @@
+//! 项目事件的只读投影与分页读取。
+//!
+//! 事件本身只追加、不修改；这里负责把事件载荷转换为项目记忆所需的安全视图，
+//! 并对分页、筛选和展示字段做边界控制。
+
 use chrono::{DateTime, Utc};
 use coldstart_core::{DomainEvent, DomainEventKind, ProjectId};
 use rusqlite::params;
@@ -24,6 +29,7 @@ pub struct EventTypeCount {
 }
 
 impl Database {
+    /// 按项目、阶段和时间分页读取事件，并投影为安全时间线项。
     pub fn list_events(
         &self,
         project_id: &ProjectId,

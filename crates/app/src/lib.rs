@@ -1,3 +1,8 @@
+//! ColdStart 应用编排层。
+//!
+//! 负责组合领域规则、存储和适配器，向桌面端与 MCP 暴露稳定服务接口；所有外部
+//! 不可逆动作都必须经过显式授权和既有状态机。
+
 mod capability_api;
 mod context;
 mod context_compiler;

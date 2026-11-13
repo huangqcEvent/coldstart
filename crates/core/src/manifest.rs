@@ -1,3 +1,8 @@
+//! 项目清单文件模型。
+//!
+//! `coldstart.project.json` 是项目目录的可移植身份文件；读取时会校验 schema、
+//! 项目 ID 与数据库身份，防止移动目录或复用旧清单导致状态错配。
+
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -27,6 +32,7 @@ impl ProjectManifest {
         }
     }
 
+    /// 校验项目清单的 schema 版本、项目 ID、根路径和可移植目录一致性。
     pub fn validate(&self) -> Result<(), ManifestError> {
         if self.schema_version != PROJECT_MANIFEST_SCHEMA_VERSION {
             return Err(ManifestError::UnsupportedSchema {

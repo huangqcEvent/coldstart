@@ -1,3 +1,8 @@
+//! 仓库验证命令与单次验证运行的持久化。
+//!
+//! 验证开始、成功、失败和租约消耗由同一状态机驱动；命令快照与执行结果分离，
+//! 确保重试使用冻结配置而不是读取后的新配置。
+
 use chrono::Duration;
 use chrono::{DateTime, Utc};
 use coldstart_core::{
@@ -31,6 +36,7 @@ pub enum BeginVerification {
 }
 
 impl Database {
+    /// 原子替换仓库验证命令并重建有序快照，保留命令 ID 与边界。
     pub fn replace_repository_verification_commands(
         &mut self,
         project_id: &ProjectId,
@@ -93,6 +99,7 @@ impl Database {
         commands_for_repository(connection, &repository_id)
     }
 
+    /// 冻结当前验证命令并启动受控运行，推进工作项验证状态。
     pub fn begin_work_verification(
         &mut self,
         work_item_id: &WorkItemId,
@@ -231,6 +238,7 @@ impl Database {
         })))
     }
 
+    /// 记录验证成功、输出摘要与租约消费，并解锁后续 Review。
     pub fn finish_work_verification_success(
         &mut self,
         project_id: &ProjectId,
@@ -333,6 +341,7 @@ impl Database {
         Ok(record)
     }
 
+    /// 记录验证失败并保留租约供修复重试，不误推进完成状态。
     pub fn finish_work_verification_failure(
         &mut self,
         project_id: &ProjectId,

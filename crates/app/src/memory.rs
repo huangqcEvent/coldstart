@@ -1,3 +1,8 @@
+//! 项目记忆投影与分页。
+//!
+//! 把追加式事件转换为有阶段、可搜索、可追溯的时间线，并限制分页大小和文本长度；
+//! 投影会隐藏心跳详情、租约令牌和敏感载荷。
+
 use std::{collections::BTreeMap, path::PathBuf};
 
 use chrono::{DateTime, Utc};

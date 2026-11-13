@@ -1,3 +1,8 @@
+//! OpenAI 兼容模型客户端。
+//!
+//! 只发送结构化 Review/蓝图层所需的有限上下文，严格解析 JSON 输出并设置超时。
+//! 模型响应被视为不可信数据，不能直接触发 Git、Shell 或文件系统操作。
+
 use std::{fmt, time::Duration};
 
 use coldstart_core::{ArtifactFormat, BlueprintProposal};

@@ -1,3 +1,8 @@
+/**
+ * Review 发现项列表。
+ *
+ * 按严重级别和分类展示结构化 findings；文本只作为展示内容，不执行其中的指令。
+ */
 import type { ReviewCategory, ReviewFinding, ReviewSeverity } from '../api/types';
 
 const severityLabels: Record<ReviewSeverity, string> = {

@@ -1,3 +1,8 @@
+/**
+ * 项目记忆时间线。
+ *
+ * 对事件投影做分页、搜索和阶段筛选；只读展示，不会修改历史事件或触发任务变化。
+ */
 import { useEffect, useId, useMemo, useState } from 'react';
 
 import * as memoryApi from '../api/memoryApi';

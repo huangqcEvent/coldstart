@@ -1,3 +1,8 @@
+//! 项目审计事件模型。
+//!
+//! 事件记录不可变领域事实，供项目记忆、时间线和重启恢复使用。事件载荷必须可
+//! 序列化且不含 Secret；读取方只按事件类型投影，不直接修改历史。
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

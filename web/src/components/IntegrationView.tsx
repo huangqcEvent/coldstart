@@ -1,3 +1,9 @@
+/**
+ * 仓库、凭据、能力与能力 API 白名单配置页。
+ *
+ * 表单允许人工编辑并显式保存，Secret 输入只提交不读回；能力 API 端点保存后由
+ * 任务上下文和 MCP 在授权范围内使用。
+ */
 import { useEffect, useState } from 'react';
 
 import * as integrationApi from '../api/integrationApi';

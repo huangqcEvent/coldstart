@@ -1,3 +1,8 @@
+//! Tauri 命令边界。
+//!
+//! 这些命令只负责参数转换、调用应用服务并序列化结果，业务规则留在 app 层。
+//! 同步命令用于短操作，异步命令避免阻塞 UI；任何 Secret 都不回传前端。
+
 use std::{path::PathBuf, sync::Arc};
 
 use coldstart_adapters::{GitHubIssueListState, ModelConfig, OpenAiCompatibleModel};

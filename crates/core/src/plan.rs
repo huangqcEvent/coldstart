@@ -1,3 +1,8 @@
+//! 计划、任务契约与工作状态模型。
+//!
+//! 计划发布后形成不可变修订；任务契约冻结目标、路径、依赖和验收标准。状态迁移、
+//! 报告校验和契约哈希都集中在这里，避免 MCP 与桌面端各自解释状态机。
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
@@ -466,6 +471,7 @@ pub enum PlanValidationError {
     BlockingCycle(String),
 }
 
+/// 校验计划任务的唯一键、依赖闭包、允许路径和必填契约字段。
 pub fn validate_plan(tasks: &[TaskSpec]) -> Result<(), PlanValidationError> {
     if tasks.is_empty() {
         return Err(PlanValidationError::EmptyPlan);
@@ -642,6 +648,7 @@ pub enum ReportValidationError {
     EmptyChangedFiles,
 }
 
+/// 校验 Agent 报告与任务契约、提交范围和验证结果的绑定关系。
 pub fn validate_work_report(
     task: &TaskSpec,
     report: &WorkReportInput,
@@ -747,6 +754,7 @@ pub fn is_safe_task_key(value: &str) -> bool {
         })
 }
 
+/// 判断路径是否为仓库内规范相对路径，拒绝绝对路径、穿越、反斜杠和控制字符。
 pub fn is_safe_relative_path(value: &str) -> bool {
     let value = value.trim();
     if value.is_empty() || value.contains('\0') {

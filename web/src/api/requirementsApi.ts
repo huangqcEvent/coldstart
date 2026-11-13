@@ -1,3 +1,8 @@
+/**
+ * 需求导入与蓝图 API。
+ *
+ * 文档选择、来源导入、蓝图生成和信息请求回答均通过桌面命令完成，结果以不可变修订返回。
+ */
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 

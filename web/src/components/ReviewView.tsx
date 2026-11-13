@@ -1,3 +1,9 @@
+/**
+ * AI Review 配置、历史与人工豁免页面。
+ *
+ * 管理模型端点、项目/仓库规范和 Review 历史；只有 blocked 结果允许人工豁免，
+ * 模型密钥由 Rust 端保存在系统凭据库。
+ */
 import { useEffect, useState } from 'react';
 
 import * as integrationApi from '../api/integrationApi';

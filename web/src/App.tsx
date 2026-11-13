@@ -1,3 +1,9 @@
+/**
+ * 桌面主界面与工作区状态协调器。
+ *
+ * 负责项目打开/创建、工作区刷新、导航和全局错误展示；业务状态由 Tauri 命令返回，
+ * 前端不自行推断任务或外部服务状态。
+ */
 import { useState } from 'react';
 
 import * as planApi from './api/planApi';
@@ -63,6 +69,7 @@ function LoadingView({ label }: { label: string }) {
   );
 }
 
+/** 协调项目加载、创建、刷新、导航和全局错误状态。 */
 export default function App() {
   const [workspace, setWorkspace] = useState<ProjectWorkspace | null>(null);
   const [view, setView] = useState<WorkspaceView>('overview');

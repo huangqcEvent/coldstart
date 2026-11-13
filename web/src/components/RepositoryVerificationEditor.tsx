@@ -1,3 +1,9 @@
+/**
+ * 仓库验证命令编辑器。
+ *
+ * 编辑有序命令、工作目录和超时，并提示命令不得内联 Secret 或依赖 shell 拼接；
+ * 保存后由 Rust 端重新校验。
+ */
 import { open } from '@tauri-apps/plugin-dialog';
 import { useEffect, useRef, useState } from 'react';
 

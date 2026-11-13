@@ -1,3 +1,8 @@
+//! 能力 API 白名单与受限请求模型。
+//!
+//! 这里只描述“允许调用什么”，不保存 Secret，也不执行网络请求。端点必须绑定
+//! 项目、能力、环境和允许的方法/路径；URL 解析只允许 HTTPS 且拒绝跳转语义。
+
 use std::{collections::BTreeSet, fmt};
 
 use chrono::{DateTime, Utc};
@@ -133,6 +138,7 @@ impl CapabilityApiEndpoint {
         Ok(())
     }
 
+    /// 校验端点名称、HTTPS 地址、路径前缀、方法与鉴权头是否符合白名单契约。
     pub fn validate(&self) -> Result<(), CapabilityApiValidationError> {
         let name = self.name.trim();
         if name.is_empty() {
@@ -182,6 +188,7 @@ impl CapabilityApiEndpoint {
         self.validate_request_path(path)
     }
 
+    /// 解析最终请求 URL，拒绝查询串、片段、编码穿越和跨 Host 拼接。
     pub fn resolve_url(
         &self,
         path: &str,

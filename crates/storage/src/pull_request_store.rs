@@ -1,3 +1,8 @@
+//! Pull Request 与验收快照的持久化。
+//!
+//! 外部 GitHub 状态先由适配器读取并构造有界快照，再整体写入；失败刷新不得把
+//! 半套 Checks、Review 或部署数据当成完整验收结果。
+
 use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
@@ -14,6 +19,7 @@ use crate::{
 };
 
 impl Database {
+    /// 保存 PR 创建或状态快照及审计事件，保持任务关联和外部编号一致。
     pub fn save_pull_request(&mut self, record: &PullRequestRecord) -> Result<(), StorageError> {
         record.validate()?;
         let transaction = self

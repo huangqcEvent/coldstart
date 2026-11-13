@@ -1,3 +1,8 @@
+/**
+ * 发布中心页面。
+ *
+ * 展示当前任务交付状态和人工验收入口；MVP 不自动部署、打包、提审或创建 Release Tag。
+ */
 import { useEffect, useState } from 'react';
 
 import * as integrationApi from '../api/integrationApi';

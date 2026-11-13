@@ -1,3 +1,8 @@
+//! AI Review 配置、规范与结构化结果模型。
+//!
+//! Review 结果只包含受控分类、严重级别和发现项，不携带任意执行指令。模型端点
+//! 变更会使既有同意失效，规范快照必须在领取任务时冻结。
+
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
@@ -178,6 +183,7 @@ impl ReviewConfiguration {
         Ok(configuration)
     }
 
+    /// 校验 Review 模型端点、同意指纹、阻断级别和范围配置。
     pub fn validate(&self) -> Result<(), ReviewValidationError> {
         normalize_blocking_severities(self.blocking_severities.clone())?;
         if !self.enabled {
@@ -339,6 +345,7 @@ impl ReviewSnapshot {
         Ok(snapshot)
     }
 
+    /// 校验冻结的 Review 快照版本、仓库键、模型同意状态和规范集合。
     pub fn validate(&self) -> Result<(), ReviewValidationError> {
         if self.schema_version != REVIEW_SNAPSHOT_SCHEMA_VERSION {
             return Err(ReviewValidationError::UnsupportedSnapshotVersion(
@@ -477,6 +484,7 @@ pub fn validate_review_summary(value: &str) -> Result<String, ReviewValidationEr
     Ok(value.to_owned())
 }
 
+/// 校验结构化 findings 的数量、分类、路径、行号和文本边界。
 pub fn validate_review_findings(
     findings: Vec<ReviewFinding>,
     changed_files: &[String],

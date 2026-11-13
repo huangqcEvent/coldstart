@@ -1,3 +1,8 @@
+//! 计划、租约、任务报告和工作状态的持久化。
+//!
+//! 领取、心跳、报告、验证和 Review 都通过事务推进状态机，并在同一事务内写事件；
+//! 只读租约校验不得刷新心跳或改变任务状态。
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt::Display,
@@ -37,6 +42,7 @@ pub struct NewWorkBlocker {
 }
 
 impl Database {
+    /// 创建不可变计划修订，保存任务契约、依赖和发布预览状态。
     pub fn create_plan_revision(
         &mut self,
         project_id: &ProjectId,
@@ -191,6 +197,7 @@ impl Database {
         Ok(preview)
     }
 
+    /// 确认并发布计划修订，迁移前序任务状态并写入审计事件。
     pub fn publish_plan_revision(
         &mut self,
         project_id: &ProjectId,
@@ -742,6 +749,7 @@ impl Database {
         Ok(authorization)
     }
 
+    /// 只读校验租约、工作项与当前契约，不刷新心跳、不推进状态、不写事件。
     pub fn authorize_work_readonly(
         &mut self,
         work_item_id: &WorkItemId,
@@ -964,6 +972,7 @@ impl Database {
         })
     }
 
+    /// 接收并校验任务报告，记录 Git 范围与验收结果；重复提交保持幂等。
     pub fn submit_work_report(
         &mut self,
         work_item_id: &WorkItemId,
@@ -1085,6 +1094,7 @@ impl Database {
         Ok(record)
     }
 
+    /// 完成人工任务并解锁满足依赖的后续工作，在同一事务写入事件。
     pub fn complete_human_work(
         &mut self,
         project_id: &ProjectId,

@@ -1,3 +1,8 @@
+//! Review 配置、规范修订和人工豁免的持久化。
+//!
+//! 配置与规范按修订保存，领取任务时冻结快照；Review 结果、失败原因和豁免都需
+//! 保留可审计历史，不能通过覆盖旧行重写过去。
+
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Duration, Utc};
@@ -47,6 +52,7 @@ pub enum BeginReview {
 }
 
 impl Database {
+    /// 保存 Review 模型配置与同意指纹，配置变化会要求重新确认。
     pub fn save_review_configuration(
         &mut self,
         configuration: &ReviewConfiguration,
@@ -114,6 +120,7 @@ impl Database {
             .transpose()
     }
 
+    /// 创建代码规范修订，记录来源、范围、内容哈希与启用状态。
     pub fn create_review_standard_revision(
         &mut self,
         project_id: &ProjectId,
@@ -278,6 +285,7 @@ impl Database {
         Ok(standard)
     }
 
+    /// 原子重排规范顺序并校验集合完整性，避免顺序冲突。
     pub fn reorder_review_standards(
         &mut self,
         project_id: &ProjectId,
@@ -415,6 +423,7 @@ impl Database {
         Ok(standards)
     }
 
+    /// 在验证通过后启动 Review，冻结模型和规范快照并推进运行状态。
     pub fn begin_work_review(
         &mut self,
         project_id: &ProjectId,
@@ -454,6 +463,7 @@ impl Database {
         Ok(BeginReview::Started(PendingReview { report, snapshot }))
     }
 
+    /// 在同一事务中完成验证、启动 Review 并更新任务门禁。
     pub fn finish_work_verification_and_begin_review(
         &mut self,
         project_id: &ProjectId,
@@ -525,6 +535,7 @@ impl Database {
         Ok(BeginReview::Started(PendingReview { report, snapshot }))
     }
 
+    /// 记录 Review 通过，消费租约并按结果完成或进入后续交付。
     pub fn finish_work_review_success(
         &mut self,
         project_id: &ProjectId,
@@ -604,6 +615,7 @@ impl Database {
         Ok(record)
     }
 
+    /// 记录模型失败并保持可重试或阻断状态，不误判为评审通过。
     pub fn finish_work_review_failure(
         &mut self,
         project_id: &ProjectId,
@@ -719,6 +731,7 @@ impl Database {
         Ok(record)
     }
 
+    /// 对 blocked Review 应用一次人工豁免，并留下审计记录。
     pub fn waive_work_review(
         &mut self,
         project_id: &ProjectId,

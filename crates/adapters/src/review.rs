@@ -1,3 +1,8 @@
+//! AI Review 模型请求与响应解析。
+//!
+//! 请求包含真实 diff、任务验收标准和已启用规范，响应只接受受控分类、严重级别与
+//! findings；错误、超时和无效 JSON 都以失败关闭方式返回。
+
 use std::{fmt, time::Duration};
 
 use coldstart_core::{

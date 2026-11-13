@@ -1,3 +1,8 @@
+/**
+ * 项目总览入口页。
+ *
+ * 汇总当前项目、蓝图、计划、仓库与交付状态，并提供进入各工作区的快捷入口。
+ */
 import { useCallback, useEffect, useState } from 'react';
 
 import * as deliveryApi from '../api/deliveryApi';

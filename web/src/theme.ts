@@ -1,3 +1,8 @@
+/**
+ * 主题类型、持久化键与初始值解析。
+ *
+ * 主题仅用于本地界面展示；读取失败时回退到深色主题，不修改项目数据。
+ */
 export type Theme = 'dark' | 'light';
 
 const themeStorageKey = 'coldstart.theme';

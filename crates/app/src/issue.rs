@@ -1,3 +1,8 @@
+//! GitHub Issue 需求入口。
+//!
+//! 只读拉取开放或已关闭 Issue，过滤 Pull Request，人工选择后导入为不可变来源制品；
+//! 导入去重、文本边界和锚点生成由应用层完成。
+
 use std::{io::Write, path::PathBuf, sync::Arc};
 
 use chrono::{DateTime, Utc};
@@ -88,6 +93,7 @@ impl GitHubIssueService {
         })
     }
 
+    /// 将人工选择的 GitHub Issue 转为不可变需求来源，过滤 PR 并防止重复导入。
     pub fn import_issue(
         &self,
         project_home: PathBuf,

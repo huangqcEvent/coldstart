@@ -1,3 +1,8 @@
+/**
+ * 蓝图查看与编辑页面。
+ *
+ * 组合来源导入、手工编辑、信息请求和发布动作，并只在用户显式保存后刷新工作区。
+ */
 import { useEffect, useState } from 'react';
 
 import type { BlueprintContent, ProjectWorkspace } from '../api/types';

@@ -1,3 +1,9 @@
+/**
+ * 手工蓝图草稿工厂。
+ *
+ * 从现有蓝图或来源引用生成可编辑草稿，并保持 ID、锚点和默认值稳定；这里不负责
+ * 发布或校验，最终结构仍由 Rust 领域层验证。
+ */
 import type {
   ArtifactMetadata,
   BlueprintContent,
@@ -12,6 +18,7 @@ export function createEntityId(kind: string) {
   return `${kind}_${Date.now().toString(36)}${entitySequence.toString(36)}`;
 }
 
+/** 返回蓝图中的首个来源引用，供手工编辑初始化锚点。 */
 export function firstSourceReference(
   sources: ArtifactMetadata[],
   sourceAnchors: Record<string, DocumentAnchor[]>,

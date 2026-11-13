@@ -1,3 +1,8 @@
+//! GitHub 会话与凭据访问协调。
+//!
+//! 负责按项目读取 GitHub Token、构造客户端并在成功后保存会话元数据。Token 不回传
+//! 给前端或 MCP；授权失败时只返回稳定错误码和脱敏原因。
+
 use coldstart_adapters::{GitHubClient, GitHubRepositoryCoordinates, GitHubToken, SecretStore};
 use coldstart_core::{CredentialKind, Repository, RepositoryAuthMode};
 

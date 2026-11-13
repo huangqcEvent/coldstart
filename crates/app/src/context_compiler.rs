@@ -1,3 +1,8 @@
+//! Agent 任务上下文编译器。
+//!
+//! 把已发布计划、任务契约、仓库、能力、验证和 Review 快照投影为有预算的上下文，
+//! 明确列出省略项，并过滤租约令牌、Secret 与不应外发的授权事实。
+
 use chrono::Utc;
 use coldstart_core::{
     BlueprintContent, BlueprintEntityId, CapabilityApiEndpoint, ContextOmission, ContextReference,

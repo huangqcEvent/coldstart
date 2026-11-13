@@ -1,3 +1,8 @@
+//! GitHub Project v2 只读概览。
+//!
+//! 读取仓库关联的 Projects、有限条目和单选字段，供人工查看外部协作状态；不写
+//! Project、不导入条目，也不向 Agent 暴露 Project 数据。
+
 use std::{path::PathBuf, sync::Arc};
 
 use chrono::{DateTime, Utc};

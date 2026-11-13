@@ -1,3 +1,8 @@
+/**
+ * 浅色/深色主题切换。
+ *
+ * 读取并持久化本地主题偏好，只改变展示样式，不影响项目状态或 Rust 数据。
+ */
 import { useEffect, useState } from 'react';
 
 import { applyTheme, readStoredTheme, type Theme } from '../theme';

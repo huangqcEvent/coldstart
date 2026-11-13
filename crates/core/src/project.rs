@@ -1,3 +1,8 @@
+//! 项目聚合根。
+//!
+//! 项目 ID 与名称构成控制面身份，项目目录只负责承载清单、数据库和来源制品；
+//! 该模块不执行文件系统写入或数据库迁移。
+
 use std::{fmt, path::PathBuf, str::FromStr};
 
 use chrono::{DateTime, Utc};
@@ -46,6 +51,7 @@ pub struct Project {
 }
 
 impl Project {
+    /// 创建经过名称、根路径和项目身份校验的项目聚合。
     pub fn new(name: impl Into<String>, root_path: PathBuf) -> Result<Self, ProjectError> {
         let name = name.into().trim().to_owned();
 

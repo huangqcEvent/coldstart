@@ -1,3 +1,9 @@
+/**
+ * 计划看板与任务执行页面。
+ *
+ * 支持生成/编辑/预览/发布计划、查看任务契约、复制 MCP 配置和人工完成任务；
+ * 状态变化以 Rust 端返回值为准，不使用前端乐观状态。
+ */
 import { useEffect, useRef, useState } from 'react';
 
 import type {

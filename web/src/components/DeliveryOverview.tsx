@@ -1,3 +1,9 @@
+/**
+ * 多仓库交付总览界面。
+ *
+ * 按仓库展示任务、验证、Git、PR、Checks、Review 与风险建议；所有数据来自本地
+ * 聚合快照，刷新按钮不会触发后台轮询。
+ */
 import type {
   CommandError,
   DeliveryOverviewView,

@@ -1,3 +1,8 @@
+//! MCP 错误到 JSON-RPC/工具结果的映射。
+//!
+//! 只输出稳定错误码和可安全展示的原因，不把内部路径、租约令牌、请求头或 Secret
+//! 放入协议错误；工具业务失败与协议失败保持不同语义。
+
 use coldstart_app::AppError;
 use rmcp::model::CallToolResult;
 use serde_json::{Value, json};

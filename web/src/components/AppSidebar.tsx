@@ -1,3 +1,8 @@
+/**
+ * 主导航侧边栏。
+ *
+ * 只展示工作区入口与主题切换，不承载业务读写；导航状态由 App 统一管理。
+ */
 export type WorkspaceView =
   | 'overview'
   | 'requirements'

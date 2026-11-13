@@ -1,3 +1,8 @@
+//! ColdStart 外部 I/O 适配器。
+//!
+//! 适配器只负责 Git、GitHub、模型服务、文档解析、系统凭据和验证探针等边界；
+//! 领域规则和状态机仍留在 core/app，避免 I/O 细节渗入控制面。
+
 mod capability_api;
 mod document;
 mod git;

@@ -1,3 +1,8 @@
+//! 仓库、凭据、能力与验收配置编排。
+//!
+//! 统一校验仓库副本、远程 URL、验证命令、凭据环境和能力 API 白名单，再委托存储层
+//! 持久化；任何 Secret 只进入系统凭据库，配置视图只暴露引用。
+
 use std::{
     collections::BTreeMap,
     fmt,
@@ -284,6 +289,7 @@ impl IntegrationService {
         self.load_workspace(project_home)
     }
 
+    /// 删除凭据引用并解除端点绑定，同时写入脱敏配置事件。
     pub fn delete_credential(
         &self,
         project_home: PathBuf,
@@ -307,6 +313,7 @@ impl IntegrationService {
         self.load_workspace(project_home)
     }
 
+    /// 校验并更新三方能力状态、环境和说明，拒绝不安全或不可用配置。
     #[allow(clippy::too_many_arguments)]
     pub fn update_capability(
         &self,
@@ -375,6 +382,7 @@ impl IntegrationService {
         self.load_workspace(project_home)
     }
 
+    /// 读取项目能力与凭据可用性，仅返回引用和状态，不读取 Secret 明文。
     pub fn get_capability_status(
         &self,
         project_home: PathBuf,
@@ -392,6 +400,7 @@ impl IntegrationService {
             })
     }
 
+    /// 校验并保存能力 API 端点白名单，确保项目、能力、凭据和环境一致。
     pub fn save_capability_api_endpoint(
         &self,
         project_home: PathBuf,
@@ -498,6 +507,7 @@ impl IntegrationService {
         })
     }
 
+    /// 轮询 GitHub 设备授权并保存会话元数据，成功后不向前端返回 Token。
     pub fn poll_github_device_flow(
         &self,
         project_home: PathBuf,

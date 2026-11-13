@@ -1,3 +1,8 @@
+//! 能力 API 调用编排。
+//!
+//! 在调用外部服务前依次校验只读租约、任务能力引用、端点环境、方法/路径白名单
+//! 和凭据环境；Secret 只在本机请求阶段注入，失败不会推进任务或写项目事件。
+
 use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use chrono::Utc;
@@ -78,6 +83,7 @@ impl CapabilityApiService {
         Self { secrets, client }
     }
 
+    /// 执行能力 API 受限调用：验证租约、任务授权、端点与凭据，再注入 Secret 并脱敏响应。
     pub fn call(
         &self,
         project_home: PathBuf,

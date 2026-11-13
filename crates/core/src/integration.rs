@@ -1,3 +1,8 @@
+//! 仓库、凭据引用和三方能力配置模型。
+//!
+//! 该模块定义本地仓库键、远程 URL、分支、同步策略和能力环境等不变量；凭据只
+//! 保存引用与元数据，真实 Secret 始终由系统凭据库持有。
+
 use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
@@ -112,6 +117,7 @@ impl Repository {
         Ok(repository)
     }
 
+    /// 校验仓库键、路径、远程地址、分支和同步策略，返回首个不稳定字段。
     pub fn validate(&self) -> Result<(), IntegrationValidationError> {
         validate_repository_key(&self.key)?;
         if self.name.trim().is_empty() {
@@ -245,6 +251,7 @@ impl CredentialMetadata {
         Ok(credential)
     }
 
+    /// 校验凭据元数据的环境、类型和引用格式；Secret 不参与领域校验。
     pub fn validate(&self) -> Result<(), IntegrationValidationError> {
         if self.name.trim().is_empty() {
             return Err(IntegrationValidationError::EmptyCredentialName);
@@ -455,6 +462,7 @@ pub fn validate_repository_key(value: &str) -> Result<(), IntegrationValidationE
     }
 }
 
+/// 接受受支持的 HTTPS 或 SSH Git 远程格式，拒绝不安全协议和凭据内嵌。
 pub fn validate_remote_url(value: &str) -> Result<(), IntegrationValidationError> {
     let value = value.trim();
     if value.is_empty() {
@@ -472,6 +480,7 @@ pub fn validate_remote_url(value: &str) -> Result<(), IntegrationValidationError
     Ok(())
 }
 
+/// 校验 Git 分支名长度、字符集、前导符号和保留标记。
 pub fn validate_branch_name(value: &str) -> Result<(), IntegrationValidationError> {
     let value = value.trim();
     let valid = !value.is_empty()

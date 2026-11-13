@@ -1,3 +1,8 @@
+//! 验证命令与验收结果模型。
+//!
+//! 验证命令在工作区中由受控探针执行，禁止 shell 拼接和内联 Secret；结果只保留
+//! 退出码、限长输出和稳定状态，供任务完成门禁与 UI 展示。
+
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};

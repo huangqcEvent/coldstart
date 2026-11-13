@@ -1,3 +1,9 @@
+/**
+ * 需求来源与 GitHub Issue 入口页面。
+ *
+ * 支持导入本地文档、筛选/阅读 Issue 并触发人工导入；导入后来源保持不可变，
+ * 不会自动生成或发布蓝图。
+ */
 import { useEffect, useId, useMemo, useState } from 'react';
 
 import * as integrationApi from '../api/integrationApi';

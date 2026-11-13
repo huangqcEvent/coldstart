@@ -1,3 +1,9 @@
+/**
+ * Web 端与 Tauri 命令共享的 TypeScript 类型。
+ *
+ * 类型字段与 Rust serde DTO 保持 camelCase 契约；敏感值只允许以引用或状态出现，
+ * 不应在这里新增明文 Secret、Token 或租约令牌字段。
+ */
 export interface ProjectStatus {
   projectId: string;
   name: string;
