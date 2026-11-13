@@ -223,7 +223,7 @@ export function BlueprintEditor({
       <section className="editor-section editor-section--goal">
         <header className="editor-section__head">
           <div>
-            <p className="panel__eyebrow">01 / PRODUCT INTENT</p>
+            <p className="panel__eyebrow">产品意图</p>
             <h2>产品目标</h2>
             <p>用一句话说明系统要解决的问题与期望结果。</p>
           </div>

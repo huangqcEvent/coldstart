@@ -390,7 +390,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
     <section className="content-view review-view" aria-labelledby="review-view-title">
       <header className="content-view__header">
         <div>
-          <p className="eyebrow">PHASE 08 / REAL DIFF REVIEW</p>
+          <p className="eyebrow">代码评审 · 基于真实 diff</p>
           <h1 id="review-view-title">AI 评审</h1>
           <p className="content-view__lead">
             本地验证通过后，ColdStart 从真实 Git commit 提取 diff，对照任务验收标准和启用的代码规范做最终把关。Agent 的自报结果不能替代评审。
@@ -398,7 +398,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
         </div>
         <div className="revision-summary">
           <span className="integration-status integration-status--verified">完成门禁</span>
-          <code>VERIFY → REVIEW → PUSH</code>
+          <code>验证 → 评审 → 推送</code>
         </div>
       </header>
 
@@ -416,7 +416,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
 
       {loading ? (
         <section className="panel loading-view" role="status">
-          <p className="eyebrow">LOADING REVIEW POLICY</p>
+          <p className="eyebrow">正在加载评审配置</p>
           <h2>正在读取评审配置、规范库和历史</h2>
         </section>
       ) : null}
@@ -426,7 +426,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
           <section className="panel review-config-panel" aria-labelledby="review-config-title">
             <div className="panel__head">
               <div>
-                <p className="panel__eyebrow">MODEL GATE / FAIL CLOSED</p>
+                <p className="panel__eyebrow">模型门禁 · 失败关闭</p>
                 <h2 id="review-config-title">模型与阻断策略</h2>
               </div>
               <span
@@ -523,7 +523,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
             </div>
 
             <fieldset className="review-severity-options">
-              <legend>阻断完成的 finding 级别</legend>
+              <legend>阻断完成的问题级别</legend>
               {severityOptions.map((option) => (
                 <label key={option.value}>
                   <input
@@ -577,7 +577,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
           <section className="panel review-standards-panel" aria-labelledby="review-standards-title">
             <div className="panel__head">
               <div>
-                <p className="panel__eyebrow">STANDARDS / VERSIONED SNAPSHOT</p>
+                <p className="panel__eyebrow">代码规范 · 版本化快照</p>
                 <h2 id="review-standards-title">代码规范库</h2>
               </div>
               <span className="count-badge">{workspace.standards.length} / 20</span>
@@ -613,7 +613,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
             {workspace.standards.length === 0 ? (
               <div className="empty-state">
                 <strong>规范库还是空的</strong>
-                <p>可以上传团队现有规范，也可以直接维护 Markdown。没有规范时 Review 仍会使用任务验收标准。</p>
+                <p>可以上传团队现有规范，也可以直接维护 Markdown。没有规范时，AI 评审仍会使用任务验收标准。</p>
               </div>
             ) : (
               <div className="review-standard-list">
@@ -703,7 +703,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
           <section className="panel review-history-panel" aria-labelledby="review-history-title">
             <div className="panel__head">
               <div>
-                <p className="panel__eyebrow">AUDIT / LAST 50 REPORTS</p>
+                <p className="panel__eyebrow">最近评审记录</p>
                 <h2 id="review-history-title">评审历史</h2>
               </div>
               <span className="count-badge">{workspace.recentReviews.length}</span>
@@ -711,7 +711,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
 
             {workspace.recentReviews.length === 0 ? (
               <div className="empty-state">
-                <strong>还没有 Review 记录</strong>
+                <strong>还没有评审记录</strong>
                 <p>配置启用后，下一次 Codex 提交且本地验证通过时会在此生成评审结果。</p>
               </div>
             ) : (
@@ -738,7 +738,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
                           <span>
                             耗时 {item.review.durationMs?.toLocaleString() ?? '未知'} ms
                           </span>
-                          <span>{item.review.findings.length} 条 finding</span>
+                          <span>{item.review.findings.length} 个问题</span>
                         </div>
                         {item.review.failure ? (
                           <p className="review-history__failure">
@@ -804,7 +804,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
           >
             <div className="dialog__head">
               <div>
-                <p className="eyebrow">SOFT DELETE / AUDIT PRESERVED</p>
+                <p className="eyebrow">软删除 · 保留审计</p>
                 <h2 id="delete-standard-title">确认软删除规范</h2>
               </div>
             </div>
@@ -843,12 +843,12 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
           >
             <div className="dialog__head">
               <div>
-                <p className="eyebrow">HUMAN WAIVER / DESKTOP ONLY</p>
+                <p className="eyebrow">人工豁免 · 仅桌面端</p>
                 <h2 id="review-waiver-title">人工豁免 AI Review</h2>
               </div>
             </div>
             <p className="content-view__lead">
-              任务 <code>{waiverTarget.taskKey}</code> 的 Review 状态为 blocked。豁免只适用于误报或已确认可接受的风险；记录理由后，ColdStart 会完成任务并尝试推送普通任务分支。
+              任务 <code>{waiverTarget.taskKey}</code> 的评审状态为阻断。豁免只适用于误报或已确认可接受的风险；记录理由后，ColdStart 会完成任务并尝试推送普通任务分支。
             </p>
             {waiverStep === 'reason' ? (
               <>
@@ -887,7 +887,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
                 <div className="review-waiver-warning">
                   <strong>这是二次确认</strong>
                   <p>
-                    豁免后当前任务会被接受，并进入推送流程；findings、规范快照哈希、操作者和时间都会写入审计记录。该动作不可撤销。
+                    豁免后当前任务会被接受，并进入推送流程；问题记录、规范快照哈希、操作者和时间都会写入审计记录。该动作不可撤销。
                   </p>
                   <p>理由：{waiverReason.trim()}</p>
                 </div>

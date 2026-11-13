@@ -23,7 +23,20 @@ import { ProjectMemoryView } from './components/ProjectMemoryView';
 import { ReleaseCenterView } from './components/ReleaseCenterView';
 import { RequirementsView } from './components/RequirementsView';
 import { ReviewView } from './components/ReviewView';
+import { ThemeToggle } from './components/ThemeToggle';
 import { WelcomeView } from './components/WelcomeView';
+
+const viewLabels: Record<WorkspaceView, string> = {
+  overview: '项目总览',
+  requirements: '需求导入',
+  blueprint: '蓝图编排',
+  plan: '计划看板',
+  inbox: '人工 Inbox',
+  integration: '仓库与能力',
+  review: 'AI 评审',
+  release: '发布中心',
+  memory: '项目记忆',
+};
 
 function normalizeCommandError(error: unknown): CommandError {
   if (typeof error === 'object' && error !== null) {
@@ -42,7 +55,7 @@ function LoadingView({ label }: { label: string }) {
       <div className="loading-view__marker" aria-hidden="true">
         <span />
       </div>
-      <p className="eyebrow">SYNCING LOCAL WORKSPACE</p>
+      <p className="eyebrow">正在同步本地工作区</p>
       <h1>{label}</h1>
       <p>正在读取项目清单、来源文档与本地蓝图状态，请稍候。</p>
     </section>
@@ -315,9 +328,19 @@ export default function App() {
       <AppSidebar view={view} hasProject={workspace !== null} onNavigate={handleNavigate} />
 
       <main className="workspace">
-        <div className="workspace__topline" aria-hidden="true">
-          <span>LOCAL-FIRST PROJECT SYSTEM</span>
-          <span>PHASE 09 / PROJECT MEMORY</span>
+        <div className="workspace__topline">
+          <div className="workspace__route">
+            <span>ColdStart</span>
+            <span className="workspace__route-separator" aria-hidden="true">/</span>
+            <strong>{workspace ? viewLabels[view] : '欢迎'}</strong>
+          </div>
+          <div className="workspace__actions">
+            <ThemeToggle />
+            <span className="workspace__local-status">
+              <span className="workspace__status-dot" aria-hidden="true" />
+              本地数据
+            </span>
+          </div>
         </div>
 
         {error ? <ErrorBanner error={error} onDismiss={() => setError(null)} /> : null}

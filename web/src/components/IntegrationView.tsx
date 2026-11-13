@@ -413,7 +413,7 @@ export function IntegrationView({ path }: IntegrationViewProps) {
   if (loading) {
     return (
       <section className="content-view integration-view" aria-busy="true">
-        <p className="panel__eyebrow">PHASE 05 / GIT + CAPABILITIES</p>
+        <p className="panel__eyebrow">仓库与能力</p>
         <h1>仓库与能力</h1>
         <div className="empty-state">正在读取本地仓库、凭据与能力状态…</div>
       </section>
@@ -424,7 +424,7 @@ export function IntegrationView({ path }: IntegrationViewProps) {
     <section className="content-view integration-view" aria-busy={busy}>
       <header className="content-view__header">
         <div>
-          <p className="eyebrow">PHASE 05 / GIT + CAPABILITIES</p>
+          <p className="eyebrow">仓库与三方能力</p>
           <h1>仓库与能力</h1>
           <p className="content-view__lead">
             把逻辑仓库映射到本地 Git 工作区，把 Secret 写入 Windows Credential
@@ -466,7 +466,7 @@ export function IntegrationView({ path }: IntegrationViewProps) {
             <section className="panel" aria-labelledby="repositories-title">
               <div className="panel__head">
                 <div>
-                  <p className="panel__eyebrow">GIT MAPPING / 本地优先</p>
+                  <p className="panel__eyebrow">仓库映射</p>
                   <h2 id="repositories-title">代码仓库</h2>
                 </div>
                 <span className="count-badge">{workspace.repositories.length}</span>
@@ -685,7 +685,7 @@ export function IntegrationView({ path }: IntegrationViewProps) {
 
               <div className="integration-subsection">
                 <div>
-                  <p className="panel__eyebrow">GITHUB PRIVATE REPOSITORY</p>
+                  <p className="panel__eyebrow">GitHub 私有仓库</p>
                   <h3>创建 GitHub 私有仓库</h3>
                   <p className="field__hint">
                     只在桌面界面明确确认后调用 GitHub REST API，再更新本地 origin。MCP 不提供仓库 CRUD。
@@ -767,7 +767,7 @@ export function IntegrationView({ path }: IntegrationViewProps) {
             <section className="panel" aria-labelledby="credentials-title">
               <div className="panel__head">
                 <div>
-                  <p className="panel__eyebrow">SECRETS / WINDOWS CREDENTIAL MANAGER</p>
+                  <p className="panel__eyebrow">凭据 · Windows 凭据管理器</p>
                   <h2 id="credentials-title">系统凭据</h2>
                 </div>
                 <span className="count-badge">{workspace.credentials.length}</span>
@@ -927,7 +927,7 @@ export function IntegrationView({ path }: IntegrationViewProps) {
 
               <div className="integration-subsection">
                 <div>
-                  <p className="panel__eyebrow">GITHUB AUTHORIZATION</p>
+                  <p className="panel__eyebrow">GitHub 授权</p>
                   <h3>GitHub 账号</h3>
                   <p className="field__hint">
                     优先导入本机 gh 登录；也可用 OAuth Device Flow 在浏览器授权。Token 只保存到系统凭据库。
@@ -1001,7 +1001,7 @@ export function IntegrationView({ path }: IntegrationViewProps) {
           >
             <div className="panel__head">
               <div>
-                <p className="panel__eyebrow">CAPABILITY MATRIX / ENVIRONMENT AWARE</p>
+                <p className="panel__eyebrow">三方能力矩阵</p>
                 <h2 id="capabilities-title">三方能力状态</h2>
               </div>
               <span className="count-badge">{workspace.capabilities.length}</span>
@@ -1122,7 +1122,7 @@ export function IntegrationView({ path }: IntegrationViewProps) {
           >
             <div className="panel__head">
               <div>
-                <p className="panel__eyebrow">PUSH RISKS / OBSERVABLE ONLY</p>
+                <p className="panel__eyebrow">推送风险 · 只读观察</p>
                 <h2 id="git-syncs-title">Git 同步记录</h2>
               </div>
               <span className="count-badge">{workspace.gitSyncs.length}</span>
@@ -1180,7 +1180,7 @@ export function IntegrationView({ path }: IntegrationViewProps) {
           >
             <div className="dialog__head">
               <div>
-                <p className="eyebrow">EXTERNAL WRITE / EXPLICIT CONSENT</p>
+                <p className="eyebrow">外部写入 · 需要明确确认</p>
                 <h2 id="private-repository-dialog-title">
                   确认创建 GitHub 私有仓库
                 </h2>

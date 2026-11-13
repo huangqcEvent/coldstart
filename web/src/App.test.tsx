@@ -692,6 +692,9 @@ async function openReviewView(
 }
 
 beforeEach(() => {
+  window.localStorage.clear();
+  delete document.documentElement.dataset.theme;
+  document.documentElement.style.colorScheme = '';
   vi.mocked(projectApi.createProject).mockReset();
   vi.mocked(projectApi.readProjectStatus).mockReset();
   vi.mocked(projectApi.readProjectWorkspace).mockReset();
@@ -738,10 +741,13 @@ describe('ColdStart project workspace', () => {
   it('shows the welcome view and gates project navigation', () => {
     render(<App />);
 
-    expect(screen.getByText('COLDSTART / 冷启动')).toBeInTheDocument();
-    expect(screen.getByText('PHASE 09 / PROJECT MEMORY')).toBeInTheDocument();
     expect(
-      within(screen.getByLabelText('当前阶段')).getByText('PHASE 09'),
+      within(screen.getByLabelText('应用导航')).getByText('ColdStart'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('冷启动工作台')).toBeInTheDocument();
+    expect(screen.getByText('本地数据')).toBeInTheDocument();
+    expect(
+      within(screen.getByLabelText('项目工作流')).getByText('本地就绪'),
     ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '冷启动' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '项目总览' })).toBeEnabled();
@@ -749,6 +755,28 @@ describe('ColdStart project workspace', () => {
     expect(screen.getByRole('button', { name: '蓝图编排' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '人工 Inbox' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '项目记忆' })).toBeDisabled();
+  });
+
+  it('toggles between light and dark themes and persists the choice', async () => {
+    const user = userEvent.setup();
+    const view = render(<App />);
+
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+    await user.click(screen.getByRole('button', { name: '切换到浅色模式' }));
+
+    expect(document.documentElement).toHaveAttribute('data-theme', 'light');
+    expect(window.localStorage.getItem('coldstart.theme')).toBe('light');
+    expect(
+      screen.getByRole('button', { name: '切换到深色模式' }),
+    ).toBeInTheDocument();
+
+    view.unmount();
+    render(<App />);
+
+    expect(document.documentElement).toHaveAttribute('data-theme', 'light');
+    expect(
+      screen.getByRole('button', { name: '切换到深色模式' }),
+    ).toBeInTheDocument();
   });
 
   it('shows a filterable project memory timeline and reloads heartbeats on demand', async () => {

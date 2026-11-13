@@ -37,6 +37,19 @@ const categoryLabels: Record<InfoRequestCategory, string> = {
   external_operation: '外部操作',
 };
 
+const workStatusLabels: Record<WorkItemView['workItem']['status'], string> = {
+  draft: '草稿',
+  ready: '待处理',
+  claimed: '已领取',
+  in_progress: '进行中',
+  submitted: '待验收',
+  done: '已完成',
+  blocked: '阻塞',
+  failed: '失败',
+  reopened: '重新打开',
+  cancelled: '已取消',
+};
+
 function InboxRequestCard({
   request,
   busy,
@@ -136,7 +149,9 @@ function HumanWorkCard({
           </span>
           <span className="inbox-badge">计划任务</span>
         </div>
-        <code>{item.workItem.status}</code>
+        <span className={`inbox-work-status inbox-work-status--${item.workItem.status}`}>
+          {workStatusLabels[item.workItem.status]}
+        </span>
       </header>
       <h3>{item.task.title}</h3>
       <dl className="inbox-details">
@@ -209,7 +224,7 @@ export function InboxView({
     <section className="content-view" aria-labelledby="inbox-title">
       <header className="content-view__header">
         <div>
-          <p className="eyebrow">HUMAN INBOX / EXCEPTION ONLY</p>
+          <p className="eyebrow">人工确认 · 仅在必要时介入</p>
           <h1 id="inbox-title">人工 Inbox</h1>
           <p className="content-view__lead">
             开发只在缺少信息、需要决策或外部授权时中断。每条回答会成为可追溯的项目事实。
@@ -304,7 +319,7 @@ export function InboxView({
       <section className="panel facts-panel" aria-labelledby="facts-title">
         <div className="panel__head">
           <div>
-            <p className="panel__eyebrow">CONFIRMED PROJECT FACTS</p>
+            <p className="panel__eyebrow">已确认的项目事实</p>
             <h2 id="facts-title">项目事实</h2>
           </div>
           <span className="count-badge">{facts.length}</span>

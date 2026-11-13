@@ -35,28 +35,29 @@ export function ProjectOverview({
       : workspace.plan.draft
         ? '待发布'
         : '未生成';
+  const planPercent = planTotal > 0 ? Math.round((planDone / planTotal) * 100) : 0;
   const nextStep =
     workspace.sources.length === 0
-      ? '下一步：导入需求文档，让模型提出可追溯的结构化蓝图'
+      ? '导入需求文档，让模型提出可追溯的结构化蓝图'
       : openInbox > 0
-        ? '下一步：在人工 Inbox 处理阻塞问题，再继续推进蓝图'
+        ? '在人工 Inbox 处理阻塞问题，再继续推进蓝图'
         : workspace.draft
-          ? '下一步：检查并发布当前蓝图草稿'
+          ? '检查并发布当前蓝图草稿'
           : workspace.published
             ? workspace.plan.draft
-              ? '下一步：检查并发布开发计划，随后让 Codex 通过 MCP 主动领取'
+              ? '检查并发布开发计划，随后让 Codex 通过 MCP 主动领取'
               : workspace.plan.published
                 ? planTotal > 0 && planDone === planTotal
                   ? '计划已全部完成；进入发布中心核对上架、提审与审批状态'
                   : '计划执行中；Codex 通过 MCP 领取任务，仓库分支与推送风险可实时观察'
-                : '下一步：编译开发计划并发布任务 DAG'
-            : '下一步：在需求导入页生成蓝图草稿';
+                : '编译开发计划并发布任务 DAG'
+            : '在需求导入页生成蓝图草稿';
 
   return (
     <section className="project-view" aria-labelledby="project-title">
       <header className="project-view__header">
         <div>
-          <p className="eyebrow">PROJECT OVERVIEW / 已连接</p>
+          <p className="eyebrow">项目总览 · 本地已连接</p>
           <h1 id="project-title">{workspace.status.name}</h1>
           <p className="project-view__lead">
             {workspace.status.rootPath} · {workspace.status.eventCount} 个事件
@@ -83,33 +84,31 @@ export function ProjectOverview({
 
       <div className="metrics-grid metrics-grid--five" aria-label="项目流程指标">
         <article className="metric-card">
-          <span className="metric-card__index">01</span>
           <p>来源文档</p>
           <strong>{workspace.sources.length}</strong>
           <small>已固化到项目目录</small>
         </article>
         <article className="metric-card">
-          <span className="metric-card__index">02</span>
           <p>蓝图草稿</p>
           <strong>{draftLabel}</strong>
           <small>{workspace.draft ? '可继续人工编辑' : '导入需求后生成'}</small>
         </article>
         <article className="metric-card">
-          <span className="metric-card__index">03</span>
           <p>发布版本</p>
           <strong>{publishedLabel}</strong>
           <small>{workspace.published ? '当前有效蓝图' : '发布前需通过校验'}</small>
         </article>
         <article className="metric-card metric-card--attention">
-          <span className="metric-card__index">04</span>
           <p>待处理 Inbox</p>
           <strong>{openInbox}</strong>
           <small>{openInbox > 0 ? '需要人工提供信息' : '当前无阻塞项'}</small>
         </article>
         <article className="metric-card">
-          <span className="metric-card__index">05</span>
           <p>计划进度</p>
           <strong>{planLabel}</strong>
+          <div className="metric-card__progress" aria-hidden="true">
+            <span style={{ width: `${planPercent}%` }} />
+          </div>
           <small>{planTotal > 0 ? '任务状态实时观察' : '从已发布蓝图编译'}</small>
         </article>
       </div>
@@ -135,7 +134,10 @@ export function ProjectOverview({
 
       <div className="project-view__footer">
         <span className="signal-line" aria-hidden="true" />
-        <span>{nextStep}</span>
+        <div>
+          <strong>建议下一步</strong>
+          <span>{nextStep}</span>
+        </div>
       </div>
     </section>
   );

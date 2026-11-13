@@ -41,7 +41,7 @@ export function RequirementsView({
     <section className="content-view" aria-labelledby="requirements-title">
       <header className="content-view__header">
         <div>
-          <p className="eyebrow">REQUIREMENTS / SOURCE OF TRUTH</p>
+          <p className="eyebrow">需求与来源</p>
           <h1 id="requirements-title">需求导入</h1>
           <p className="content-view__lead">
             原文件、抽取文本和锚点会一起固化到项目目录。模型只能引用这些真实锚点生成蓝图。
@@ -61,7 +61,7 @@ export function RequirementsView({
         <section className="panel" aria-labelledby="source-list-title">
           <div className="panel__head">
             <div>
-              <p className="panel__eyebrow">01 / IMMUTABLE SOURCES</p>
+              <p className="panel__eyebrow">文件与锚点</p>
               <h2 id="source-list-title">来源文档</h2>
             </div>
             <span className="count-badge">{sources.length}</span>
@@ -103,10 +103,10 @@ export function RequirementsView({
         <section className="panel" aria-labelledby="model-config-title">
           <div className="panel__head">
             <div>
-              <p className="panel__eyebrow">02 / MODEL BRIDGE</p>
+              <p className="panel__eyebrow">模型连接</p>
               <h2 id="model-config-title">生成模型</h2>
             </div>
-            <span className="status-dot">LOCAL MEMORY</span>
+            <span className="status-dot">仅本次会话</span>
           </div>
 
           <div className="form-grid form-grid--single">

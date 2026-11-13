@@ -72,7 +72,7 @@ export function BlueprintView({
     <section className="content-view" aria-labelledby="blueprint-title">
       <header className="content-view__header">
         <div>
-          <p className="eyebrow">BLUEPRINT / DELIVERY CONTRACT</p>
+          <p className="eyebrow">交付蓝图</p>
           <h1 id="blueprint-title">蓝图编排</h1>
           <p className="content-view__lead">
             将需求转成可校验的产品、平台、模块与发布边界。发布版本不可变，人工修改会生成新的草稿版本。
@@ -95,7 +95,7 @@ export function BlueprintView({
       {!content ? (
         <section className="panel blueprint-empty">
           <div className="empty-state">
-            <p className="panel__eyebrow">NO DRAFT</p>
+            <p className="panel__eyebrow">尚未生成</p>
             <strong>还没有蓝图草稿</strong>
             <p>
               你可以先生成模型草稿，也可以从来源文档创建一份最小人工草稿，再补齐平台、模块与技术决策。
@@ -146,7 +146,7 @@ export function BlueprintView({
           {readOnly && workspace.published ? (
             <section className="readonly-notice" aria-label="已发布蓝图">
               <div>
-                <p className="panel__eyebrow">PUBLISHED / IMMUTABLE</p>
+                <p className="panel__eyebrow">已发布 · 不可变</p>
                 <strong>当前展示已发布版本 v{workspace.published.revisionNumber}</strong>
                 <p>此版本只读。创建新草稿后可继续调整，发布时会生成新的不可变版本。</p>
               </div>
@@ -175,7 +175,7 @@ export function BlueprintView({
           {!readOnly ? (
             <div className="editor-actions">
               <div>
-                <p className="panel__eyebrow">SAVE / PUBLISH</p>
+                <p className="panel__eyebrow">保存与发布</p>
                 <p>
                   保存会创建新的草稿版本；只有保存成功且未再修改的草稿才能发布。
                 </p>

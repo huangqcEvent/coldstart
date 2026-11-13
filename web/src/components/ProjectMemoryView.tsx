@@ -19,6 +19,48 @@ const phaseLabels: Record<MemoryPhase, string> = {
   system_configuration: '系统与配置',
 };
 
+const eventTypeLabels: Record<string, string> = {
+  project_initialized: '项目初始化',
+  artifact_imported: '文档导入',
+  blueprint_draft_created: '蓝图草稿',
+  blueprint_published: '蓝图发布',
+  info_request_created: '人工请求',
+  info_request_resolved: '人工确认',
+  plan_draft_created: '计划草稿',
+  plan_published: '计划发布',
+  plan_superseded: '计划替换',
+  work_claimed: '任务领取',
+  work_started: '开始执行',
+  work_heartbeat: '任务心跳',
+  work_blocked: '任务阻塞',
+  work_report_submitted: '报告提交',
+  work_completed: '任务完成',
+  verification_started: '验证开始',
+  verification_passed: '验证通过',
+  verification_failed: '验证失败',
+  verification_interrupted: '验证中断',
+  review_started: '评审开始',
+  review_passed: '评审通过',
+  review_blocked: '评审阻断',
+  review_failed: '评审失败',
+  review_interrupted: '评审中断',
+  review_waived: '人工豁免',
+  work_released: '任务释放',
+  lease_expired: '租约过期',
+  human_work_completed: '人工任务',
+  repository_saved: '仓库配置',
+  repository_verification_commands_updated: '验证命令',
+  credential_saved: '凭据保存',
+  credential_deleted: '凭据删除',
+  capability_updated: '能力更新',
+  git_sync_recorded: 'Git 同步',
+  project_setting_updated: '项目设置',
+};
+
+function eventTypeLabel(eventType: string): string {
+  return eventTypeLabels[eventType] ?? eventType;
+}
+
 const phaseOptions: Array<{ phase: MemoryPhase | null; label: string }> = [
   { phase: null, label: '全部' },
   { phase: 'requirements_blueprint', label: phaseLabels.requirements_blueprint },
@@ -79,6 +121,7 @@ function matchesSearch(item: ProjectMemoryItem, query: string): boolean {
     item.title,
     item.summary,
     item.eventType,
+    eventTypeLabel(item.eventType),
     item.reference?.label ?? '',
     item.reference?.id ?? '',
   ]
@@ -193,7 +236,7 @@ export function ProjectMemoryView({ path }: ProjectMemoryViewProps) {
     <section className="content-view memory-view" aria-labelledby="memory-view-title">
       <header className="content-view__header">
         <div>
-          <p className="eyebrow">PROJECT MEMORY / CHANGE AUDIT</p>
+          <p className="eyebrow">项目记忆与变更审计</p>
           <h1 id="memory-view-title">项目记忆</h1>
           <p className="content-view__lead">
             从本地事件日志还原项目演进。这里只展示经过安全投影的变更摘要，不修改、不删除，也不回放历史。
@@ -233,7 +276,7 @@ export function ProjectMemoryView({ path }: ProjectMemoryViewProps) {
 
       {loading ? (
         <section className="panel loading-view" role="status">
-          <p className="eyebrow">READING LOCAL EVENT LOG</p>
+          <p className="eyebrow">正在读取本地事件</p>
           <h2>正在读取项目记忆</h2>
           <p>从本地事件日志还原最近的项目变更。</p>
         </section>
@@ -273,7 +316,7 @@ export function ProjectMemoryView({ path }: ProjectMemoryViewProps) {
           <section className="panel memory-timeline-panel" aria-labelledby="memory-timeline-title">
             <div className="panel__head memory-toolbar">
               <div>
-                <p className="panel__eyebrow">EVENT STREAM / NEWEST FIRST</p>
+                <p className="panel__eyebrow">事件流 · 最新在前</p>
                 <h2 id="memory-timeline-title">项目事件时间线</h2>
               </div>
               <span className="count-badge">{filteredItems.length}</span>
@@ -341,7 +384,9 @@ export function ProjectMemoryView({ path }: ProjectMemoryViewProps) {
                         <span className={`memory-phase memory-phase--${item.phase}`}>
                           {phaseLabels[item.phase]}
                         </span>
-                        <code>{item.eventType}</code>
+                        <code title={item.eventType}>
+                          {eventTypeLabel(item.eventType)}
+                        </code>
                         <time dateTime={item.occurredAt}>{formatTime(item.occurredAt)}</time>
                       </header>
                       <h3>{item.title}</h3>

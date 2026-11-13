@@ -150,7 +150,7 @@ export function ReviewStandardEditor({
       >
         <div className="dialog__head">
           <div>
-            <p className="eyebrow">REVIEW STANDARD / VERSIONED</p>
+            <p className="eyebrow">代码规范 · 版本化</p>
             <h2 id="review-standard-editor-title">{title}</h2>
           </div>
           <button

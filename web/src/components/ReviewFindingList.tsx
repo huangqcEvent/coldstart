@@ -23,7 +23,7 @@ export function ReviewFindingList({ findings }: { findings: ReviewFinding[] }) {
   }
 
   return (
-    <ol className="review-findings" aria-label="AI Review findings">
+    <ol className="review-findings" aria-label="AI 评审问题列表">
       {findings.map((finding, index) => (
         <li
           className={`review-finding review-finding--${finding.severity}`}

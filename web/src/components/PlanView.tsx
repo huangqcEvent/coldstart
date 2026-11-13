@@ -157,7 +157,7 @@ function PlanDraftEditor({
     <section className="plan-editor" aria-labelledby="plan-editor-title">
       <div className="panel__head">
         <div>
-          <p className="panel__eyebrow">DRAFT BOUNDARY / 人工可编辑</p>
+          <p className="panel__eyebrow">计划草稿 · 人工可编辑</p>
           <h2 id="plan-editor-title">计划草稿编辑</h2>
         </div>
         <span className="count-badge">{content.tasks.length} 个任务</span>
@@ -687,7 +687,7 @@ export function PlanView({
     <section className="content-view plan-view" aria-labelledby="plan-title">
       <header className="content-view__header">
         <div>
-          <p className="eyebrow">PLAN ENGINE / CODEX PULL PROTOCOL</p>
+          <p className="eyebrow">计划与执行</p>
           <h1 id="plan-title">计划看板</h1>
           <p className="content-view__lead">
             从已发布蓝图生成不可变任务 DAG。Codex 通过 MCP 主动领取，只有租约内的结构化报告能完成编码任务。
@@ -728,7 +728,7 @@ export function PlanView({
 
       <section className="plan-controls panel">
         <div>
-          <p className="panel__eyebrow">COMPILE / EDIT / PUBLISH</p>
+          <p className="panel__eyebrow">生成、编辑与发布</p>
           <h2>开发计划</h2>
           <p>
             计划由 `plan-v1` 模板确定性生成，不再次调用模型。发布后任务状态、租约和报告都将持久化到本地。
@@ -792,7 +792,7 @@ export function PlanView({
           >
             <div className="panel__head">
               <div>
-                <p className="panel__eyebrow">PUBLISH DIFF / HUMAN CONFIRM</p>
+                <p className="panel__eyebrow">发布变更预览</p>
                 <h2
                   id="plan-publish-dialog-title"
                   ref={publishDialogTitleRef}
@@ -903,7 +903,7 @@ export function PlanView({
           />
           <div className="editor-actions plan-editor-actions">
             <div>
-              <p className="panel__eyebrow">VALIDATE / SAVE</p>
+              <p className="panel__eyebrow">校验与保存</p>
               <p>保存会创建新的计划草稿版本，并重新执行 DAG 与契约校验。</p>
             </div>
             <button
@@ -921,7 +921,7 @@ export function PlanView({
       {!activeRevision ? (
         <section className="panel plan-empty">
           <div className="empty-state">
-            <p className="panel__eyebrow">NO PLAN</p>
+            <p className="panel__eyebrow">暂无计划</p>
             <strong>还没有开发计划</strong>
             <p>发布蓝图后，编译一份包含平台基础、模块切片、能力准备和发布门禁的任务 DAG。</p>
           </div>
@@ -932,7 +932,7 @@ export function PlanView({
         <section className="panel plan-preview">
           <div className="panel__head">
             <div>
-              <p className="panel__eyebrow">DRAFT PREVIEW</p>
+              <p className="panel__eyebrow">计划草稿预览</p>
               <h2>发布前预览</h2>
             </div>
             <span className="count-badge">{activeRevision.content.tasks.length} 个任务</span>
@@ -971,7 +971,7 @@ export function PlanView({
                   <h2 id={`plan-${status}`}>
                     {statusLabels[status]} · {items.length}
                   </h2>
-                  <span>{status}</span>
+                  <span>关键路径 {items.filter((item) => item.task.criticalPath).length}</span>
                 </header>
                 <div className="plan-task-grid">
                   {items.map((item) => (
@@ -993,7 +993,7 @@ export function PlanView({
       <section className="panel mcp-panel" aria-labelledby="mcp-title">
         <div className="panel__head">
           <div>
-            <p className="panel__eyebrow">MCP / CODEX PULL</p>
+            <p className="panel__eyebrow">MCP 接入</p>
             <h2 id="mcp-title">连接 Codex</h2>
           </div>
           <button

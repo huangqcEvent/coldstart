@@ -145,7 +145,7 @@ export function RepositoryVerificationEditor({
     >
       <div className="panel__head">
         <div>
-          <p className="panel__eyebrow">PHASE 07 / COMMAND VERIFICATION</p>
+          <p className="panel__eyebrow">验证命令</p>
           <h3 id="verification-editor-title">仓库验证门禁</h3>
         </div>
         <span className="count-badge">{rows.length} / 8</span>

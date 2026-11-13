@@ -74,7 +74,7 @@ export function CreateProjectDialog({
       >
         <div className="dialog__head">
           <div>
-            <p className="eyebrow">NEW PROJECT / 初始化</p>
+            <p className="eyebrow">新建项目</p>
             <h2 id={titleId}>新建项目</h2>
           </div>
           <span className="dialog__step">01</span>

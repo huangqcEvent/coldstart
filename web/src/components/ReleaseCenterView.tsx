@@ -184,7 +184,7 @@ export function ReleaseCenterView({
     <section className="content-view release-view" aria-busy={loading}>
       <header className="content-view__header">
         <div>
-          <p className="eyebrow">PHASE 05 / RELEASE READINESS</p>
+          <p className="eyebrow">发布准备</p>
           <h1>发布中心</h1>
           <p className="content-view__lead">
             汇总上架、提审、签名与人工审批的当前状态，让 Codex 在开发计划中提前避开外部等待。
@@ -202,7 +202,7 @@ export function ReleaseCenterView({
       {error ? <ErrorBanner error={error} onDismiss={() => setError(null)} /> : null}
 
       <aside className="release-guardrail">
-        <span aria-hidden="true">READ ONLY</span>
+        <span aria-hidden="true">只读</span>
         <div>
           <strong>只汇总状态，不部署、不打包、不提审</strong>
           <p>
@@ -239,28 +239,28 @@ export function ReleaseCenterView({
           </div>
 
           <ReleaseWorkList
-            eyebrow="PREFLIGHT / EXTERNAL DEPENDENCIES"
+            eyebrow="外部前置条件"
             title="发布前置条件"
             description="开发者账号、签名、备案、提审材料等需要提前启动的外部工作。"
             items={release.prerequisites}
             emptyText="当前计划没有声明发布前置条件。"
           />
           <ReleaseWorkList
-            eyebrow="MILESTONES / SHIP READINESS"
+            eyebrow="交付节点"
             title="发布里程碑"
             description="到达可发布状态前必须完成的关键计划节点。"
             items={release.milestones}
             emptyText="当前计划没有生成发布里程碑。"
           />
           <ReleaseWorkList
-            eyebrow="APPROVAL GATES / HUMAN ACCEPTANCE"
+            eyebrow="人工审批"
             title="人工审批闸门"
             description="必须由人确认后才能继续推进的验收与授权节点。"
             items={release.approvalGates}
             emptyText="当前计划没有人工审批闸门。"
           />
           <ReleaseWorkList
-            eyebrow="HUMAN TASKS / EXTERNAL OPERATIONS"
+            eyebrow="外部操作"
             title="人工外部任务"
             description="需要在控制台、应用商店或第三方平台实际完成的操作。"
             items={release.humanTasks}
