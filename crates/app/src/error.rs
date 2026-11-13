@@ -2,9 +2,10 @@ use std::{io, path::PathBuf};
 
 use coldstart_adapters::{DocumentError, GitError, GitHubError, ModelError, SecretStoreError};
 use coldstart_core::{
-    BlueprintRevisionId, CredentialId, InfoRequestId, IntegrationValidationError, ManifestError,
-    PlanCompileError, PlanRevisionId, ProjectError, ProjectId, PullRequestId,
-    PullRequestValidationError, RepositoryId, WorkItemId, WorkReportId,
+    BlueprintRevisionId, CapabilityApiEndpointId, CapabilityApiValidationError, CredentialId,
+    InfoRequestId, IntegrationValidationError, ManifestError, PlanCompileError, PlanRevisionId,
+    ProjectError, ProjectId, PullRequestId, PullRequestValidationError, RepositoryId, WorkItemId,
+    WorkReportId,
 };
 use coldstart_storage::StorageError;
 use thiserror::Error;
@@ -178,6 +179,33 @@ pub enum AppError {
     GitHubIssueAlreadyImported { repository: String, number: u64 },
     #[error("GitHub projects cannot be read from repository {0}: {1}")]
     GitHubProjectIneligible(String, String),
+    #[error("invalid capability API endpoint: {0}")]
+    InvalidCapabilityApiEndpoint(#[from] CapabilityApiValidationError),
+    #[error("capability API endpoint {0} does not exist")]
+    CapabilityApiEndpointNotFound(CapabilityApiEndpointId),
+    #[error("capability API call is not authorized: {0}")]
+    CapabilityApiNotAuthorized(String),
+    #[error("capability {capability_id} is unavailable for environment {environment}")]
+    CapabilityApiUnavailable {
+        capability_id: String,
+        environment: String,
+    },
+    #[error("capability API method is not allowed: {0}")]
+    CapabilityApiMethodNotAllowed(String),
+    #[error("capability API path is not allowed: {0}")]
+    CapabilityApiPathNotAllowed(String),
+    #[error("capability API credential is missing or unavailable")]
+    CapabilityApiCredentialMissing,
+    #[error("capability API credential environment does not match the endpoint environment")]
+    CapabilityApiCredentialMismatch,
+    #[error("capability API request body exceeds {limit} bytes; found {actual}")]
+    CapabilityApiRequestTooLarge { actual: usize, limit: usize },
+    #[error("capability API request timed out")]
+    CapabilityApiTimeout,
+    #[error("capability API redirects are not allowed")]
+    CapabilityApiRedirectNotAllowed,
+    #[error("capability API request failed")]
+    CapabilityApiRequestFailed,
 }
 
 impl AppError {
@@ -259,6 +287,11 @@ impl AppError {
             ) => "review_standard_invalid",
             Self::Storage(StorageError::ReviewInvalid(_)) => "review_failed",
             Self::Storage(StorageError::EmptyReviewWaiverReason) => "review_waiver_invalid",
+            Self::Storage(StorageError::InvalidCapabilityApiEndpoint(_))
+            | Self::Storage(StorageError::CapabilityApiEndpointProjectMismatch(_))
+            | Self::Storage(StorageError::CapabilityApiEndpointNameAlreadyExists { .. }) => {
+                "invalid_capability_api_endpoint"
+            }
             Self::Storage(_) => "storage",
             Self::Io(_) => "io",
             Self::RollbackFailed { .. } => "rollback_failed",
@@ -297,6 +330,18 @@ impl AppError {
             Self::GitHubIssueIneligible(_, _) => "github_issue_ineligible",
             Self::GitHubIssueAlreadyImported { .. } => "github_issue_already_imported",
             Self::GitHubProjectIneligible(_, _) => "github_project_ineligible",
+            Self::InvalidCapabilityApiEndpoint(_) => "invalid_capability_api_endpoint",
+            Self::CapabilityApiEndpointNotFound(_) => "capability_api_endpoint_not_found",
+            Self::CapabilityApiNotAuthorized(_) => "capability_api_not_authorized",
+            Self::CapabilityApiUnavailable { .. } => "capability_api_unavailable",
+            Self::CapabilityApiMethodNotAllowed(_) => "capability_api_method_not_allowed",
+            Self::CapabilityApiPathNotAllowed(_) => "capability_api_path_not_allowed",
+            Self::CapabilityApiCredentialMissing => "capability_api_credential_missing",
+            Self::CapabilityApiCredentialMismatch => "capability_api_credential_mismatch",
+            Self::CapabilityApiRequestTooLarge { .. } => "capability_api_request_too_large",
+            Self::CapabilityApiTimeout => "capability_api_timeout",
+            Self::CapabilityApiRedirectNotAllowed => "capability_api_redirect_not_allowed",
+            Self::CapabilityApiRequestFailed => "capability_api_request_failed",
         }
     }
 

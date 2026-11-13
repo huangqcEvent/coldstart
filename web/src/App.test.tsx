@@ -15,6 +15,7 @@ import * as reviewApi from './api/reviewApi';
 import type {
   BlueprintContent,
   BlueprintRevision,
+  CapabilityApiEndpoint,
   CapabilityStatusView,
   CredentialMetadata,
   DeliveryOverviewView,
@@ -85,6 +86,8 @@ vi.mock('./api/integrationApi', () => ({
   saveCredential: vi.fn(),
   deleteCredential: vi.fn(),
   updateCapability: vi.fn(),
+  saveCapabilityApiEndpoint: vi.fn(),
+  deleteCapabilityApiEndpoint: vi.fn(),
   importGitHubSession: vi.fn(),
   startGitHubDeviceFlow: vi.fn(),
   pollGitHubDeviceFlow: vi.fn(),
@@ -457,6 +460,22 @@ const capability: CapabilityStatusView = {
   updatedAt: '2026-10-30T12:02:00Z',
 };
 
+const capabilityApiEndpoint: CapabilityApiEndpoint = {
+  id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+  projectId: status.projectId,
+  capabilityId: capability.capabilityId,
+  environment: capability.environment,
+  name: '附件上传 API',
+  baseUrl: 'https://oss-api.example.com',
+  pathPrefix: '/v1',
+  allowedMethods: ['GET', 'POST'],
+  credentialId: credential.id,
+  authHeader: 'Authorization',
+  authScheme: 'Bearer',
+  createdAt: '2026-10-30T12:04:00Z',
+  updatedAt: '2026-10-30T12:04:00Z',
+};
+
 const gitSync: GitSyncRecord = {
   id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
   projectId: status.projectId,
@@ -488,6 +507,7 @@ function makeIntegrationWorkspace(
     ],
     credentials: [credential],
     capabilities: [capability],
+    capabilityApiEndpoints: [capabilityApiEndpoint],
     gitSyncs: [gitSync],
     release: {
       prerequisites: [makeHumanWorkItem()],
@@ -880,6 +900,8 @@ beforeEach(() => {
   vi.mocked(integrationApi.saveCredential).mockReset();
   vi.mocked(integrationApi.deleteCredential).mockReset();
   vi.mocked(integrationApi.updateCapability).mockReset();
+  vi.mocked(integrationApi.saveCapabilityApiEndpoint).mockReset();
+  vi.mocked(integrationApi.deleteCapabilityApiEndpoint).mockReset();
   vi.mocked(integrationApi.importGitHubSession).mockReset();
   vi.mocked(integrationApi.startGitHubDeviceFlow).mockReset();
   vi.mocked(integrationApi.pollGitHubDeviceFlow).mockReset();
@@ -1986,7 +2008,7 @@ describe('ColdStart project workspace', () => {
         secret,
       }),
     );
-    await screen.findByText('阿里云 OSS 凭据');
+    expect(await screen.findAllByText('阿里云 OSS 凭据')).not.toHaveLength(0);
     expect(
       screen.getByLabelText('Secret（仅写入 Windows 凭据库）'),
     ).toHaveValue('');
@@ -2020,6 +2042,98 @@ describe('ColdStart project workspace', () => {
       '开发环境已配置',
     );
     expect(await screen.findByText('verified')).toBeInTheDocument();
+  });
+
+  it('creates a capability API whitelist entry without storing a secret', async () => {
+    const user = await openIntegrationView(
+      makeIntegrationWorkspace({ capabilityApiEndpoints: [] }),
+    );
+    expect(screen.getByText('还没有能力 API 白名单')).toBeInTheDocument();
+    vi.mocked(integrationApi.saveCapabilityApiEndpoint).mockResolvedValue(
+      makeIntegrationWorkspace({ capabilityApiEndpoints: [capabilityApiEndpoint] }),
+    );
+
+    await user.type(screen.getByLabelText('白名单名称'), '附件上传 API');
+    await user.type(
+      screen.getByLabelText('HTTPS Base URL'),
+      'https://oss-api.example.com',
+    );
+    await user.clear(screen.getByLabelText('路径前缀'));
+    await user.type(screen.getByLabelText('路径前缀'), '/v1');
+    await user.click(screen.getByLabelText('允许方法 POST'));
+    await user.selectOptions(
+      screen.getByLabelText('能力 API 凭据'),
+      credential.id,
+    );
+    await user.click(
+      screen.getByRole('button', { name: '新增能力 API 白名单' }),
+    );
+
+    expect(integrationApi.saveCapabilityApiEndpoint).toHaveBeenCalledWith(
+      projectPath,
+      null,
+      {
+        capabilityId: capability.capabilityId,
+        environment: capability.environment,
+        name: '附件上传 API',
+        baseUrl: 'https://oss-api.example.com',
+        pathPrefix: '/v1',
+        allowedMethods: ['GET', 'POST'],
+        credentialId: credential.id,
+        authHeader: 'Authorization',
+        authScheme: 'Bearer',
+      },
+    );
+    expect(await screen.findByText('附件上传 API')).toBeInTheDocument();
+  });
+
+  it('edits and deletes a capability API whitelist entry', async () => {
+    const user = await openIntegrationView();
+    const renamedEndpoint: CapabilityApiEndpoint = {
+      ...capabilityApiEndpoint,
+      name: '附件上传 API v2',
+      allowedMethods: ['POST'],
+    };
+    vi.mocked(integrationApi.saveCapabilityApiEndpoint).mockResolvedValue(
+      makeIntegrationWorkspace({ capabilityApiEndpoints: [renamedEndpoint] }),
+    );
+
+    await user.click(
+      screen.getByRole('button', { name: '编辑能力 API：附件上传 API' }),
+    );
+    expect(screen.getByLabelText('HTTPS Base URL')).toHaveValue(
+      'https://oss-api.example.com',
+    );
+    expect(screen.getByLabelText('允许方法 GET')).toBeChecked();
+    expect(screen.getByLabelText('允许方法 POST')).toBeChecked();
+    await user.clear(screen.getByLabelText('白名单名称'));
+    await user.type(screen.getByLabelText('白名单名称'), '附件上传 API v2');
+    await user.click(screen.getByLabelText('允许方法 GET'));
+    await user.click(
+      screen.getByRole('button', { name: '保存能力 API 修改' }),
+    );
+
+    expect(integrationApi.saveCapabilityApiEndpoint).toHaveBeenCalledWith(
+      projectPath,
+      capabilityApiEndpoint.id,
+      expect.objectContaining({
+        name: '附件上传 API v2',
+        allowedMethods: ['POST'],
+      }),
+    );
+    expect(await screen.findByText('附件上传 API v2')).toBeInTheDocument();
+
+    vi.mocked(integrationApi.deleteCapabilityApiEndpoint).mockResolvedValue(
+      makeIntegrationWorkspace({ capabilityApiEndpoints: [] }),
+    );
+    await user.click(
+      screen.getByRole('button', { name: '删除能力 API：附件上传 API v2' }),
+    );
+    expect(integrationApi.deleteCapabilityApiEndpoint).toHaveBeenCalledWith(
+      projectPath,
+      capabilityApiEndpoint.id,
+    );
+    expect(await screen.findByText('还没有能力 API 白名单')).toBeInTheDocument();
   });
 
   it('shows the GitHub device code and checks authorization status', async () => {

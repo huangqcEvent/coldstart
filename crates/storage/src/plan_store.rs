@@ -742,6 +742,61 @@ impl Database {
         Ok(authorization)
     }
 
+    pub fn authorize_work_readonly(
+        &mut self,
+        work_item_id: &WorkItemId,
+        lease_token: &str,
+        now: DateTime<Utc>,
+    ) -> Result<WorkAuthorization, StorageError> {
+        let transaction = self
+            .connection_mut()
+            .transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let item = query_work_item(&transaction, work_item_id)?
+            .ok_or(StorageError::WorkItemNotFound(*work_item_id))?;
+        ensure_active_plan_item(&transaction, &item)?;
+        if !matches!(
+            item.status,
+            WorkItemStatus::Claimed | WorkItemStatus::InProgress
+        ) {
+            return Err(StorageError::WorkNotClaimable(*work_item_id));
+        }
+        let task = query_task_spec_for_work_item(&transaction, work_item_id)?
+            .ok_or(StorageError::WorkItemNotFound(*work_item_id))?;
+        let lease = query_active_lease(&transaction, work_item_id)?.ok_or_else(|| {
+            if query_had_expired_lease(&transaction, work_item_id).unwrap_or(false) {
+                StorageError::LeaseExpired(*work_item_id)
+            } else {
+                StorageError::LeaseInvalid(*work_item_id)
+            }
+        })?;
+        let supplied_hash = sha256_hex(lease_token.as_bytes());
+        if !constant_time_eq(lease.token_hash.as_bytes(), supplied_hash.as_bytes()) {
+            return Err(StorageError::LeaseInvalid(*work_item_id));
+        }
+        if lease.expires_at <= now {
+            return Err(StorageError::LeaseExpired(*work_item_id));
+        }
+        let run = query_active_run_for_lease(&transaction, &lease.id)?
+            .ok_or(StorageError::LeaseInvalid(*work_item_id))?;
+        let lease_summary = LeaseSummary {
+            id: lease.id,
+            work_item_id: *work_item_id,
+            agent_profile: lease.agent_profile,
+            status: LeaseStatus::Active,
+            issued_at: lease.issued_at,
+            expires_at: lease.expires_at,
+            last_heartbeat_at: lease.last_heartbeat_at,
+            released_at: None,
+        };
+        transaction.commit()?;
+        Ok(WorkAuthorization {
+            work_item: item,
+            task_spec: task,
+            lease: lease_summary,
+            run,
+        })
+    }
+
     pub fn expire_leases(
         &mut self,
         project_id: &ProjectId,
@@ -1703,6 +1758,7 @@ struct ActiveLeaseRow {
     token_hash: String,
     issued_at: DateTime<Utc>,
     expires_at: DateTime<Utc>,
+    last_heartbeat_at: DateTime<Utc>,
 }
 
 impl StoredLeaseRow {
@@ -1739,7 +1795,8 @@ fn query_active_lease(
 ) -> Result<Option<ActiveLeaseRow>, StorageError> {
     let row = connection
         .query_row(
-            "SELECT id, work_item_id, agent_profile, token_hash, issued_at, expires_at
+            "SELECT id, work_item_id, agent_profile, token_hash, issued_at, expires_at,
+                    last_heartbeat_at
              FROM leases WHERE work_item_id = ?1 AND status = 'active'",
             [work_item_id.to_string()],
             |row| {
@@ -1750,18 +1807,28 @@ fn query_active_lease(
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
                     row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             },
         )
         .optional()?;
     row.map(
-        |(id, _work_item_id, agent_profile, token_hash, issued_at, expires_at)| {
+        |(
+            id,
+            _work_item_id,
+            agent_profile,
+            token_hash,
+            issued_at,
+            expires_at,
+            last_heartbeat_at,
+        )| {
             Ok(ActiveLeaseRow {
                 id: parse_id(&id, "lease")?,
                 agent_profile,
                 token_hash,
                 issued_at: parse_date(&issued_at)?,
                 expires_at: parse_date(&expires_at)?,
+                last_heartbeat_at: parse_date(&last_heartbeat_at)?,
             })
         },
     )

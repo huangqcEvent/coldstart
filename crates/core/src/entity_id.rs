@@ -44,6 +44,7 @@ macro_rules! uuid_id {
 
 uuid_id!(ArtifactId);
 uuid_id!(BlueprintRevisionId);
+uuid_id!(CapabilityApiEndpointId);
 uuid_id!(CredentialId);
 uuid_id!(GitSyncId);
 uuid_id!(InfoRequestId);

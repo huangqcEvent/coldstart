@@ -2,7 +2,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::StorageError;
 
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let current = read_schema_version(connection)?;
@@ -34,6 +34,7 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v7(&transaction)?;
             create_schema_v8(&transaction)?;
             create_schema_v9(&transaction)?;
+            create_schema_v10(&transaction)?;
         }
         1 => {
             migrate_v1_to_v2(&transaction)?;
@@ -44,6 +45,7 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v7(&transaction)?;
             create_schema_v8(&transaction)?;
             create_schema_v9(&transaction)?;
+            create_schema_v10(&transaction)?;
         }
         2 => {
             create_schema_v3(&transaction)?;
@@ -53,6 +55,7 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v7(&transaction)?;
             create_schema_v8(&transaction)?;
             create_schema_v9(&transaction)?;
+            create_schema_v10(&transaction)?;
         }
         3 => {
             create_schema_v4(&transaction)?;
@@ -61,6 +64,7 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v7(&transaction)?;
             create_schema_v8(&transaction)?;
             create_schema_v9(&transaction)?;
+            create_schema_v10(&transaction)?;
         }
         4 => {
             create_schema_v5(&transaction)?;
@@ -68,23 +72,31 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v7(&transaction)?;
             create_schema_v8(&transaction)?;
             create_schema_v9(&transaction)?;
+            create_schema_v10(&transaction)?;
         }
         5 => {
             create_schema_v6(&transaction)?;
             create_schema_v7(&transaction)?;
             create_schema_v8(&transaction)?;
             create_schema_v9(&transaction)?;
+            create_schema_v10(&transaction)?;
         }
         6 => {
             create_schema_v7(&transaction)?;
             create_schema_v8(&transaction)?;
             create_schema_v9(&transaction)?;
+            create_schema_v10(&transaction)?;
         }
         7 => {
             create_schema_v8(&transaction)?;
             create_schema_v9(&transaction)?;
+            create_schema_v10(&transaction)?;
         }
-        8 => create_schema_v9(&transaction)?,
+        8 => {
+            create_schema_v9(&transaction)?;
+            create_schema_v10(&transaction)?;
+        }
+        9 => create_schema_v10(&transaction)?,
         _ => return Err(unsupported_schema(current)),
     }
 
@@ -593,6 +605,35 @@ fn create_schema_v9(transaction: &Transaction<'_>) -> Result<(), StorageError> {
 
             CREATE INDEX pull_request_insights_by_project
                 ON pull_request_insights(project_id, synced_at DESC);
+            ",
+    )?;
+    Ok(())
+}
+
+fn create_schema_v10(transaction: &Transaction<'_>) -> Result<(), StorageError> {
+    transaction.execute_batch(
+        "
+            CREATE TABLE capability_api_endpoints (
+                id TEXT PRIMARY KEY NOT NULL,
+                project_id TEXT NOT NULL,
+                capability_id TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                name TEXT NOT NULL,
+                base_url TEXT NOT NULL,
+                path_prefix TEXT NOT NULL,
+                allowed_methods_json TEXT NOT NULL,
+                credential_id TEXT,
+                auth_header TEXT,
+                auth_scheme TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(project_id, capability_id, environment, name),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (credential_id) REFERENCES credentials(id) ON DELETE SET NULL
+            );
+
+            CREATE INDEX capability_api_endpoints_by_capability
+                ON capability_api_endpoints(project_id, capability_id, environment, name);
             ",
     )?;
     Ok(())

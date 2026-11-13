@@ -11,10 +11,11 @@ use coldstart_app::{
     IntegrationService, PlanService, ProjectService, RepositoryDraft, SaveCredentialInput,
 };
 use coldstart_core::{
-    ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration, CapabilityObligation,
-    CapabilityStatus, CredentialEnvironment, CredentialKind, GenerationSource, ModuleDefinition,
-    PlatformDefinition, PlatformKind, ProjectId, RepositoryAuthMode, RepositorySyncPolicy,
-    RepositoryVerificationCommand, SourceReference, TraceableText, WorkItemStatus,
+    ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration, CapabilityApiEndpointId,
+    CapabilityObligation, CapabilityStatus, CredentialEnvironment, CredentialKind,
+    GenerationSource, ModuleDefinition, PlatformDefinition, PlatformKind, ProjectId,
+    RepositoryAuthMode, RepositorySyncPolicy, RepositoryVerificationCommand, SourceReference,
+    TraceableText, WorkItemStatus,
 };
 use coldstart_storage::Database;
 use rusqlite::Connection;
@@ -565,6 +566,7 @@ fn stdio_server_lists_all_work_tools_and_rejects_an_unknown_tool() {
     assert_eq!(
         names,
         vec![
+            "call_capability_api",
             "claim_next_work",
             "get_capability_status",
             "get_project_brief",
@@ -700,6 +702,52 @@ fn stdio_server_returns_capability_status_without_the_secret() {
     assert_eq!(
         tool_error(&missing)["code"].as_str(),
         Some("capability_not_found")
+    );
+}
+
+#[test]
+fn stdio_server_rejects_capability_api_calls_without_authorization() {
+    let fixture = Fixture::new();
+    let (capability_id, _) = fixture.seed_configured_capability();
+    let mut client = McpStdioClient::spawn(&fixture.home);
+    client.initialize();
+    let claimed = claim_one(&mut client, "stdio-capability-api-claim");
+    let work_id = claimed["workItem"]["id"].as_str().unwrap().to_owned();
+    let lease_token = claimed["leaseToken"].as_str().unwrap().to_owned();
+    let endpoint_id = CapabilityApiEndpointId::new().to_string();
+
+    let invalid_lease = client.call_tool(
+        "call_capability_api",
+        json!({
+            "capability_id": capability_id,
+            "environment": "development",
+            "endpoint_id": endpoint_id,
+            "work_id": work_id,
+            "lease_token": "invalid-lease",
+            "method": "GET",
+            "path": "/v1/files"
+        }),
+    );
+    assert_eq!(
+        tool_error(&invalid_lease)["code"].as_str(),
+        Some("lease_invalid")
+    );
+
+    let unauthorized = client.call_tool(
+        "call_capability_api",
+        json!({
+            "capability_id": capability_id,
+            "environment": "development",
+            "endpoint_id": endpoint_id,
+            "work_id": work_id,
+            "lease_token": lease_token,
+            "method": "GET",
+            "path": "/v1/files"
+        }),
+    );
+    assert_eq!(
+        tool_error(&unauthorized)["code"].as_str(),
+        Some("capability_api_not_authorized")
     );
 }
 

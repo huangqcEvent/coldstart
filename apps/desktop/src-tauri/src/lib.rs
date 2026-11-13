@@ -30,6 +30,8 @@ pub fn run() {
             commands::save_credential,
             commands::delete_credential,
             commands::update_capability,
+            commands::save_capability_api_endpoint,
+            commands::delete_capability_api_endpoint,
             commands::import_github_session,
             commands::start_github_device_flow,
             commands::poll_github_device_flow,

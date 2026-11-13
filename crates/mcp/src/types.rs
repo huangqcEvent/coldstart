@@ -41,6 +41,38 @@ pub(crate) struct CapabilityStatusArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct CapabilityApiQueryArgs {
+    #[schemars(description = "Query parameter name")]
+    pub key: String,
+    #[schemars(description = "Query parameter value")]
+    pub value: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CallCapabilityApiArgs {
+    #[schemars(description = "Blueprint capability ID authorized by this work contract")]
+    pub capability_id: String,
+    #[schemars(description = "One of development, staging, or production")]
+    pub environment: String,
+    #[schemars(description = "Configured capability API endpoint ID")]
+    pub endpoint_id: String,
+    pub work_id: String,
+    pub lease_token: String,
+    #[schemars(description = "One of GET, POST, PUT, PATCH, or DELETE")]
+    pub method: String,
+    #[schemars(description = "Absolute request path within the endpoint path prefix")]
+    pub path: String,
+    #[serde(default)]
+    pub query: Vec<CapabilityApiQueryArgs>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub content_type: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct WorkLeaseArgs {
     pub work_id: String,
     pub lease_token: String,

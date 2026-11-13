@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type {
+  CapabilityApiEndpointInput,
   CapabilityStatus,
   CreatePrivateRepositoryInput,
   GitHubDeviceFlow,
@@ -73,6 +74,28 @@ export async function updateCapability(
     status,
     credentialId,
     note,
+  });
+}
+
+export async function saveCapabilityApiEndpoint(
+  path: string,
+  endpointId: string | null,
+  input: CapabilityApiEndpointInput,
+) {
+  return invoke<IntegrationWorkspace>('save_capability_api_endpoint', {
+    path,
+    endpointId,
+    input,
+  });
+}
+
+export async function deleteCapabilityApiEndpoint(
+  path: string,
+  endpointId: string,
+) {
+  return invoke<IntegrationWorkspace>('delete_capability_api_endpoint', {
+    path,
+    endpointId,
   });
 }
 

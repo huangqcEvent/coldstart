@@ -3050,6 +3050,50 @@ button:disabled {
   align-self: flex-start;
 }
 
+.capability-api-list {
+  margin-top: 14px;
+}
+
+.capability-api-editor__head {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.capability-api-form {
+  padding-top: 16px;
+}
+
+.capability-api-methods {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.capability-api-methods label {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  padding: 7px 10px;
+  color: var(--muted);
+  font-family: Consolas, "Cascadia Code", monospace;
+  font-size: 0.62rem;
+  background: rgba(3, 13, 22, 0.46);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+
+.capability-api-methods input {
+  accent-color: var(--ice);
+}
+
+.capability-api-methods label:has(input:checked) {
+  color: var(--ice-bright);
+  background: rgba(124, 233, 246, 0.07);
+  border-color: rgba(124, 233, 246, 0.36);
+}
+
 .release-guardrail {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);

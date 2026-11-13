@@ -1,5 +1,6 @@
 mod artifact;
 mod blueprint;
+mod capability_api;
 mod context;
 mod entity_id;
 mod error;
@@ -17,11 +18,13 @@ mod verification;
 
 pub use artifact::{ArtifactFormat, ArtifactFormatError, ArtifactMetadata, DocumentAnchor};
 pub use blueprint::*;
+pub use capability_api::*;
 pub use context::*;
 pub use entity_id::{
-    ArtifactId, BlueprintEntityId, BlueprintRevisionId, CredentialId, EntityIdError, GitSyncId,
-    InfoRequestId, LeaseId, PlanRevisionId, ProjectFactId, PullRequestId, RepositoryId,
-    ReviewStandardId, ReviewStandardRevisionId, TaskSpecId, WorkItemId, WorkReportId, WorkRunId,
+    ArtifactId, BlueprintEntityId, BlueprintRevisionId, CapabilityApiEndpointId, CredentialId,
+    EntityIdError, GitSyncId, InfoRequestId, LeaseId, PlanRevisionId, ProjectFactId, PullRequestId,
+    RepositoryId, ReviewStandardId, ReviewStandardRevisionId, TaskSpecId, WorkItemId, WorkReportId,
+    WorkRunId,
 };
 pub use error::ProjectError;
 pub use event::{DomainEvent, DomainEventKind};

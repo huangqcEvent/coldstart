@@ -135,6 +135,21 @@ pub enum StorageError {
     CredentialSecretRefAlreadyExists(String),
     #[error("credential {0} does not belong to the requested project")]
     CredentialProjectMismatch(coldstart_core::CredentialId),
+    #[error("capability API endpoint {0} does not belong to the requested project")]
+    CapabilityApiEndpointProjectMismatch(coldstart_core::CapabilityApiEndpointId),
+    #[error(
+        "capability API endpoint name {name} already exists for capability {capability_id} in environment {environment}"
+    )]
+    CapabilityApiEndpointNameAlreadyExists {
+        capability_id: String,
+        environment: String,
+        name: String,
+    },
+    #[error("capability {capability_id} does not exist for environment {environment}")]
+    CapabilityApiCapabilityNotFound {
+        capability_id: String,
+        environment: String,
+    },
     #[error("project setting key cannot be empty")]
     EmptyProjectSettingKey,
     #[error("git sync branch and commit SHA cannot be empty")]
@@ -160,6 +175,8 @@ pub enum StorageError {
     InvalidPlan(#[from] PlanValidationError),
     #[error("invalid integration configuration: {0}")]
     InvalidIntegration(#[from] IntegrationValidationError),
+    #[error("invalid capability API endpoint: {0}")]
+    InvalidCapabilityApiEndpoint(#[from] coldstart_core::CapabilityApiValidationError),
     #[error("database schema version {found} is newer than supported version {supported}")]
     UnsupportedSchema { found: i64, supported: i64 },
     #[error("SQLite did not enable WAL mode; active journal mode is {0}")]

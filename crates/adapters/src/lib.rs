@@ -1,3 +1,4 @@
+mod capability_api;
 mod document;
 mod git;
 mod github;
@@ -6,6 +7,10 @@ mod review;
 mod secret;
 mod verification;
 
+pub use capability_api::{
+    CapabilityApiClient, CapabilityApiError, CapabilityApiHttpRequest, CapabilityApiHttpResponse,
+    UreqCapabilityApiClient,
+};
 pub use document::{
     DocumentError, ExtractedDocument, MAX_DOCUMENT_BYTES, MAX_EXTRACTED_CHARACTERS,
     extract_document,

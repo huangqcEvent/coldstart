@@ -1,9 +1,9 @@
 use chrono::Utc;
 use coldstart_core::{
-    BlueprintContent, BlueprintEntityId, ContextOmission, ContextReference, ContextReferenceKind,
-    InfoRequestStatus, PlanRevision, ProjectFact, ReviewContextView, ReviewScope, ReviewSnapshot,
-    TaskContext, TaskReferenceContent, TaskSpec, VerificationSnapshot, WorkItem, estimate_tokens,
-    sha256_hex,
+    BlueprintContent, BlueprintEntityId, CapabilityApiEndpoint, ContextOmission, ContextReference,
+    ContextReferenceKind, InfoRequestStatus, PlanRevision, ProjectFact, ReviewContextView,
+    ReviewScope, ReviewSnapshot, TaskContext, TaskReferenceContent, TaskSpec, VerificationSnapshot,
+    WorkItem, estimate_tokens, sha256_hex,
 };
 
 use crate::{
@@ -36,6 +36,9 @@ pub(crate) fn compile_task_context(
         .ok_or(AppError::BlueprintNotFound(plan.blueprint_revision_id))?;
     let repository = repository_context(project, task)?;
     let capabilities = load_capabilities_for_context(project)?;
+    let capability_api_endpoints = project
+        .database
+        .list_capability_api_endpoints(&project.project.id)?;
     let facts = project.database.list_project_facts(&project.project.id)?;
     let info_requests = project.database.list_info_requests(&project.project.id)?;
     let mut header = render_header(task);
@@ -58,6 +61,7 @@ pub(crate) fn compile_task_context(
         verification: verification.as_ref(),
         review,
         capabilities: &capabilities,
+        capability_api_endpoints: &capability_api_endpoints,
         facts: &facts,
         info_requests: &info_requests,
     }) {
@@ -220,6 +224,7 @@ struct ContextSectionInputs<'a> {
     verification: Option<&'a VerificationSnapshot>,
     review: Option<&'a ReviewSnapshot>,
     capabilities: &'a [CapabilityStatusView],
+    capability_api_endpoints: &'a [CapabilityApiEndpoint],
     facts: &'a [ProjectFact],
     info_requests: &'a [coldstart_core::InfoRequest],
 }
@@ -233,6 +238,7 @@ fn build_sections(inputs: ContextSectionInputs<'_>) -> Vec<Section> {
         verification,
         review,
         capabilities,
+        capability_api_endpoints,
         facts,
         info_requests,
     } = inputs;
@@ -312,6 +318,47 @@ fn build_sections(inputs: ContextSectionInputs<'_>) -> Vec<Section> {
             title: "三方能力状态".to_owned(),
             content: format!(
                 "{lines}\n\ncredentialRef 仅表示系统凭据库中的引用。禁止读取、打印凭据或把 Secret 写入代码、配置和报告；缺少生产能力时必须报告阻塞。"
+            ),
+        });
+    }
+    let authorized_endpoints = capability_api_endpoints
+        .iter()
+        .filter(|endpoint| task.context_refs.contains(&endpoint.capability_id))
+        .collect::<Vec<_>>();
+    if !authorized_endpoints.is_empty() {
+        let lines = authorized_endpoints
+            .iter()
+            .map(|endpoint| {
+                let methods = endpoint
+                    .allowed_methods
+                    .iter()
+                    .map(|method| method.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "- {}（endpointId={}）：能力 {} / 环境 {} / 方法 {} / 路径前缀 {}{}",
+                    endpoint.name,
+                    endpoint.id,
+                    endpoint.capability_id,
+                    endpoint.environment,
+                    methods,
+                    endpoint.path_prefix,
+                    if endpoint.credential_id.is_some() {
+                        " / 系统凭据已绑定"
+                    } else {
+                        " / 无凭据"
+                    }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        sections.push(Section {
+            priority: 91,
+            id: "capability-api-endpoints".to_owned(),
+            kind: ContextReferenceKind::ProjectFact,
+            title: "可调用的能力 API".to_owned(),
+            content: format!(
+                "{lines}\n\n只有上述白名单端点可被当前任务调用。需要访问三方 API 时，调用 call_capability_api，并传入 endpointId、capabilityId、environment、workId、leaseToken、method、path；不要尝试读取凭据、拼接完整 URL 或绕过方法和路径限制。"
             ),
         });
     }

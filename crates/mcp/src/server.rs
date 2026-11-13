@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
 use coldstart_app::{
-    AppError, ClaimRequest, ContextHandoffService, IntegrationService, PlanService,
-    ProjectMemoryService,
+    AppError, CallCapabilityApiRequest, CapabilityApiQueryParameter, CapabilityApiService,
+    ClaimRequest, ContextHandoffService, IntegrationService, PlanService, ProjectMemoryService,
 };
-use coldstart_core::{BlueprintEntityId, WorkItemId};
+use coldstart_core::{BlueprintEntityId, CapabilityApiEndpointId, CapabilityApiMethod, WorkItemId};
 use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -14,11 +14,11 @@ use rmcp::{
 use serde::Serialize;
 
 use crate::{
-    error::{app_error_result, invalid_capability_id_result, invalid_id_result},
+    error::{app_error_result, invalid_capability_id_result, invalid_id_result, tool_error_result},
     types::{
-        CapabilityStatusArgs, ClaimNextWorkArgs, ProjectBriefArgs, ProjectMemoryArgs,
-        ReadTaskReferenceArgs, ReleaseWorkArgs, ReportWorkBlockerArgs, SubmitWorkReportArgs,
-        WorkLeaseArgs,
+        CallCapabilityApiArgs, CapabilityStatusArgs, ClaimNextWorkArgs, ProjectBriefArgs,
+        ProjectMemoryArgs, ReadTaskReferenceArgs, ReleaseWorkArgs, ReportWorkBlockerArgs,
+        SubmitWorkReportArgs, WorkLeaseArgs,
     },
 };
 
@@ -137,6 +137,61 @@ impl ColdStartMcp {
             )
         })
         .await
+    }
+
+    #[tool(
+        description = "Call a configured third-party capability API within the active work lease. Secrets are injected locally and never returned."
+    )]
+    pub async fn call_capability_api(
+        &self,
+        Parameters(args): Parameters<CallCapabilityApiArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let capability_id = match args.capability_id.parse::<BlueprintEntityId>() {
+            Ok(capability_id) => capability_id,
+            Err(_) => return Ok(invalid_capability_id_result(&args.capability_id)),
+        };
+        let endpoint_id = match args.endpoint_id.parse::<CapabilityApiEndpointId>() {
+            Ok(endpoint_id) => endpoint_id,
+            Err(_) => return Ok(invalid_id_result("endpoint_id", &args.endpoint_id)),
+        };
+        let work_id = match Self::parse_work_id(&args.work_id) {
+            Ok(work_id) => work_id,
+            Err(result) => return Ok(result),
+        };
+        let method = match CapabilityApiMethod::parse(&args.method) {
+            Some(method) => method,
+            None => {
+                return Ok(tool_error_result(
+                    "invalid_capability_api_method",
+                    "method must be GET, POST, PUT, PATCH, or DELETE",
+                    Some(serde_json::json!({
+                        "field": "method",
+                        "value": args.method,
+                    })),
+                ));
+            }
+        };
+        let request = CallCapabilityApiRequest {
+            capability_id,
+            environment: args.environment,
+            endpoint_id,
+            work_id,
+            lease_token: args.lease_token,
+            method,
+            path: args.path,
+            query: args
+                .query
+                .into_iter()
+                .map(|item| CapabilityApiQueryParameter {
+                    key: item.key,
+                    value: item.value,
+                })
+                .collect(),
+            body: args.body,
+            content_type: args.content_type,
+        };
+        let project_home = self.project_home.clone();
+        Self::execute(move || CapabilityApiService::new().call(project_home, request)).await
     }
 
     #[tool(

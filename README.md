@@ -2,7 +2,7 @@
 
 > Vibe Coding 之前，先把项目冷启动。
 
-ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review、GitHub 草稿 PR、只读验收同步、冲突定位与部署状态、GitHub Project 协作概览、多仓库交付总览、开发计划和项目记忆组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文和提交完成报告。
+ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review、GitHub 草稿 PR、只读验收同步、冲突定位与部署状态、GitHub Project 协作概览、多仓库交付总览、开发计划和项目记忆组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文、调用受限能力 API 和提交完成报告。
 
 ColdStart 本身不生成业务代码，也不替你启动 Agent。它解决的是编码之前与编码之后最容易失真的问题：现在到底要做什么、依赖是否满足、密钥和提审材料是否就绪、Agent 是否真的完成了任务，以及本次改动是否值得进入主分支。
 
@@ -182,6 +182,9 @@ D:\work\your-project
 2. 配置远程 URL、默认分支、保护分支、认证方式和同步策略。
 3. 在 Windows Credential Manager 中保存 Git、云存储、短信、支付等 Secret 引用。
 4. 按 `development`、`staging`、`production` 跟踪三方能力状态与关联凭据。
+5. 在“能力 API 白名单”中登记 HTTPS Base URL、路径前缀、允许方法、鉴权头和凭据引用。
+
+白名单只保存配置和凭据引用，不保存 Secret。Codex 调用时仍需通过有效租约、任务能力授权、能力状态、端点环境、方法/路径和凭据环境检查。
 
 领取编码任务时，ColdStart 会检查工作区、获取远程、验证基准分支并创建 `codex/*` 任务分支。工作区不干净、分支冲突、远程不可用或认证失败会释放租约，不覆盖本地或远程历史。
 
@@ -212,7 +215,7 @@ Codex 提交报告后，ColdStart 先校验真实分支、HEAD、Commit 和变�
 
 ### 7. 让 Codex 通过 MCP 领取工作
 
-Codex 可以先通过 MCP 读取项目简报和项目记忆恢复上下文，再主动领取下一个可执行任务。领取后读取编译后的任务上下文；如果当前任务与前序工作相关，还可以读取任务接力摘要。完成后提交结构化报告。ColdStart 不启动 Codex，也不要求 Codex 与桌面 UI 同时打开。
+Codex 可以先通过 MCP 读取项目简报和项目记忆恢复上下文，再主动领取下一个可执行任务。领取后读取编译后的任务上下文；如果当前任务与前序工作相关，还可以读取任务接力摘要。需要访问已配置的三方服务时，调用 `call_capability_api`，由本机注入 Secret。完成后提交结构化报告。ColdStart 不启动 Codex，也不要求 Codex 与桌面 UI 同时打开。
 
 ### 8. 完成与推送
 
@@ -472,7 +475,7 @@ Codex 或兼容 MCP 客户端使用以下配置连接某个 ColdStart 项目：
 
 ### MCP 工具
 
-当前实际暴露 11 个工具：
+当前实际暴露 12 个工具：
 
 - `get_project_brief`：领取任务前读取有界的项目简报，包括当前蓝图、计划状态、当前工作、最近完成、阻塞、未决信息、项目事实和最近记忆；不返回本地路径、远程 URL、凭据引用或租约。
 - `get_project_memory`：按游标分页读取安全项目记忆，支持 `limit` 和 `include_heartbeats`，默认隐藏心跳。
@@ -485,10 +488,34 @@ Codex 或兼容 MCP 客户端使用以下配置连接某个 ColdStart 项目：
 - `submit_work_report`：提交契约哈希、验收结果、分支、Commit、变更文件、证据和幂等键；触发真实 Git 校验、本地验证、AI Review 和推送。
 - `release_work`：释放无法继续的任务租约。
 - `get_capability_status`：读取能力与环境状态、提供方和凭据引用标识，永不返回 Secret。
+- `call_capability_api`：在有效租约和能力授权范围内调用已登记的三方 HTTPS API；由本机注入 Secret，响应限长并脱敏。
 
 GitHub 草稿 PR 的创建与刷新只在桌面端开放，不属于 MCP 工具。Agent 仍只能提交任务报告，不能合并、关闭或刷新 PR。
 
 默认租约为 30 分钟，建议每 5 分钟心跳；默认上下文预算为 12,000 tokens。租约令牌是随机值，SQLite 只保存 SHA-256 哈希，不写入事件、日志、UI 或报告。
+
+### 能力 API 受限代理
+
+`call_capability_api` 不接受完整 URL，也不接受 Secret。输入为：
+
+```json
+{
+  "capability_id": "capability_xxx",
+  "environment": "development",
+  "endpoint_id": "00000000-0000-4000-8000-000000000000",
+  "work_id": "00000000-0000-4000-8000-000000000001",
+  "lease_token": "当前租约令牌",
+  "method": "POST",
+  "path": "/v1/files",
+  "query": [{ "key": "mode", "value": "upload" }],
+  "body": "{\"name\":\"demo\"}",
+  "content_type": "application/json"
+}
+```
+
+调用必须同时满足：租约为当前活动租约；工作项是 Agent 编码任务；任务契约明确引用该能力；能力状态为 `configured` 或 `verified`；端点项目、能力和环境完全匹配；方法和路径命中白名单；凭据环境为共享或与端点一致。只读授权校验不会刷新心跳、推进任务或写事件。
+
+代理只允许 HTTPS，拒绝重定向、URL 内嵌凭据、非绝对路径、`..` 和编码路径穿越。请求正文最多 256 KiB，响应正文最多保留 128 KiB，超时 20 秒。响应若回显注入的 Secret，会替换为 `[REDACTED]`。API 响应不写入 SQLite、项目记忆、报告或 Git。
 
 ### Codex 的推荐执行循环
 
@@ -519,6 +546,8 @@ claim_next_work
 - Review 模型凭据通过引用选择；实际值只在执行评审时读取到内存。
 - 需求生成蓝图的 API Key 只存在于当前界面内存与本次 IPC 调用中，重启后清空。
 - 读取 GitHub Issue 与 Project 使用仓库已绑定的 OAuth/PAT 凭据；Token 只进入 Rust 请求头，不进入前端、SQLite、事件、日志或项目文件。
+- 能力 API Secret 只在 Rust 代理发请求时从 Windows Credential Manager 读取；MCP 入参、任务上下文、SQLite、事件、日志、报告和响应都不包含明文 Secret。
+- 能力 API 只允许静态鉴权 Header 注入，不支持 OSS SDK 签名等需要额外算法计算的方案；第一版仍存在“公网域名在 DNS 解析后指向内网地址”的理论 SSRF 边界，部署时应避免为不可信域名登记白名单。
 
 ### 仓库安全
 
@@ -557,7 +586,7 @@ your-project/
 ```
 
 - `coldstart.project.json`：项目清单，不保存机器绝对路径。
-- `.coldstart/state.db`：SQLite 状态、蓝图、计划、任务、报告、验证、Review、草稿 PR 与验收快照记录。
+- `.coldstart/state.db`：SQLite 状态、蓝图、计划、任务、报告、验证、Review、草稿 PR、验收快照与能力 API 白名单记录。
 - `.coldstart/artifacts/`：导入的需求文档与提取结果。
 - `.coldstart/review-standards/`：规范原文件、提取文本和修订目录。
 
@@ -576,6 +605,7 @@ your-project/
 - GitHub Issue 导入只支持 GitHub.com 上与已映射仓库关联的开放、已关闭或全部 Issue，每种状态最多读取 50 条；关键词、标签和导入状态筛选只作用于当前快照，不调用 Search API、不自动翻页、不导入评论、附件、Projects 或 Milestones，也不会自动刷新或生成蓝图。
 - GitHub Project 概览只支持 GitHub.com，手动读取最多 5 个项目、每个项目 30 个条目和 10 个单选项字段；不支持视图、评论、过滤自动化，不自动翻页、不后台轮询，也不会把条目导入 ColdStart。
 - 多仓库交付总览是本地只读快照，不联网、不后台轮询、不跨项目聚合；GitHub PR、Checks、Review 与部署变化需要先在“AI 评审”页手动刷新，再刷新总览。
+- 能力 API 代理只支持 HTTPS 与静态鉴权 Header，不支持 OSS 等 SDK 签名、二进制流、Cookie 会话或自动重定向；DNS 解析到内网地址的理论 SSRF 风险仍依赖白名单治理。
 - Review 依赖外部 OpenAI 兼容模型；模型服务故障会失败关闭而不是跳过。
 - AI Review 不能证明代码没有漏洞，也不能替代人工安全审计。
 - MCP 项目简报只基于当前已发布计划；更早计划的历史需要通过项目记忆分页查看。
@@ -706,6 +736,7 @@ pnpm --dir apps/desktop build:installer
 - [GitHub Issue 收件箱筛选增强设计](docs/superpowers/specs/2026-11-13-coldstart-issue-inbox-filters-design.md)
 - [GitHub Project 只读概览设计](docs/superpowers/specs/2026-11-13-coldstart-github-projects-design.md)
 - [多仓库交付总览设计](docs/superpowers/specs/2026-11-13-coldstart-delivery-overview-design.md)
+- [MCP 受限凭据代理设计](docs/superpowers/specs/2026-11-13-coldstart-mcp-credential-proxy-design.md)
 - [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
 - [AI Review 实施计划](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
 - [项目记忆实施计划](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
@@ -739,7 +770,9 @@ pnpm --dir apps/desktop build:installer
 - [第十九阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-github-projects/progress.md)
 - [第二十阶段：多仓库交付总览](docs/superpowers/plans/2026-11-13-coldstart-delivery-overview.md)
 - [第二十阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-delivery-overview/progress.md)
+- [第二十一阶段：MCP 受限凭据代理](docs/superpowers/plans/2026-11-13-coldstart-mcp-credential-proxy.md)
+- [第二十一阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-mcp-credential-proxy/progress.md)
 
 ## 技术形态
 
-Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub Issue 导入、Project 只读 GraphQL、草稿 PR、验收同步、合并就绪、冲突定位与部署状态、多仓库交付聚合、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。
+Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub Issue 导入、Project 只读 GraphQL、草稿 PR、验收同步、合并就绪、冲突定位与部署状态、多仓库交付聚合、能力 API 受限代理、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。

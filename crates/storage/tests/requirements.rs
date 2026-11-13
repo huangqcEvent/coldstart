@@ -170,7 +170,7 @@ fn migrates_v2_to_v5_without_losing_projects_or_events() {
             |row| row.get(0),
         )
         .expect("tables must be readable");
-    assert_eq!(version, 9);
+    assert_eq!(version, 10);
     assert_eq!(table_count, 4);
 }
 

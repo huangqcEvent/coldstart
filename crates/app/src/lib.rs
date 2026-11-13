@@ -1,3 +1,4 @@
+mod capability_api;
 mod context;
 mod context_compiler;
 mod delivery_overview;
@@ -19,6 +20,10 @@ mod service;
 mod status;
 mod workspace;
 
+pub use capability_api::{
+    CallCapabilityApiRequest, CapabilityApiCallView, CapabilityApiQueryParameter,
+    CapabilityApiService,
+};
 pub use delivery_overview::{
     DeliveryChecksView, DeliveryGitSyncView, DeliveryOverviewService, DeliveryOverviewView,
     DeliveryPullRequestView, DeliveryRepositoryState, DeliveryTaskCounts, RepositoryDeliveryView,

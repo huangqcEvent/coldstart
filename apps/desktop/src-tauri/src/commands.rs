@@ -11,10 +11,11 @@ use coldstart_app::{
     ReviewStandardRevisionInput, ReviewStandardView, ReviewWorkspace, SaveCredentialInput,
 };
 use coldstart_core::{
-    BlueprintContent, BlueprintEntityId, BlueprintRevisionId, CapabilityStatus, CredentialId,
-    InfoRequestId, PlanContent, PlanPublishPreview, PlanRevisionId, PullRequestId,
-    PullRequestRecord, RepositoryVerificationCommand, ReviewConfiguration,
-    ReviewConfigurationInput, ReviewStandardId, WorkItemId, WorkReportId, WorkReportRecord,
+    BlueprintContent, BlueprintEntityId, BlueprintRevisionId, CapabilityApiEndpointId,
+    CapabilityApiEndpointInput, CapabilityStatus, CredentialId, InfoRequestId, PlanContent,
+    PlanPublishPreview, PlanRevisionId, PullRequestId, PullRequestRecord,
+    RepositoryVerificationCommand, ReviewConfiguration, ReviewConfigurationInput, ReviewStandardId,
+    WorkItemId, WorkReportId, WorkReportRecord,
 };
 use tauri::State;
 
@@ -548,6 +549,62 @@ pub async fn update_capability(
     .map_err(join_error)?
 }
 
+pub fn save_capability_api_endpoint_sync(
+    service: &IntegrationService,
+    path: String,
+    endpoint_id: Option<String>,
+    input: CapabilityApiEndpointInput,
+) -> Result<IntegrationWorkspace, CommandError> {
+    let endpoint_id = endpoint_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map(parse_capability_api_endpoint_id)
+        .transpose()?;
+    service
+        .save_capability_api_endpoint(PathBuf::from(path), endpoint_id, input)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn save_capability_api_endpoint(
+    service: State<'_, Arc<IntegrationService>>,
+    path: String,
+    endpoint_id: Option<String>,
+    input: CapabilityApiEndpointInput,
+) -> Result<IntegrationWorkspace, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        save_capability_api_endpoint_sync(service.as_ref(), path, endpoint_id, input)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn delete_capability_api_endpoint_sync(
+    service: &IntegrationService,
+    path: String,
+    endpoint_id: String,
+) -> Result<IntegrationWorkspace, CommandError> {
+    let endpoint_id = parse_capability_api_endpoint_id(&endpoint_id)?;
+    service
+        .delete_capability_api_endpoint(PathBuf::from(path), endpoint_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn delete_capability_api_endpoint(
+    service: State<'_, Arc<IntegrationService>>,
+    path: String,
+    endpoint_id: String,
+) -> Result<IntegrationWorkspace, CommandError> {
+    let service = Arc::clone(&service);
+    tauri::async_runtime::spawn_blocking(move || {
+        delete_capability_api_endpoint_sync(service.as_ref(), path, endpoint_id)
+    })
+    .await
+    .map_err(join_error)?
+}
+
 pub fn import_github_session_sync(
     service: &IntegrationService,
     path: String,
@@ -990,6 +1047,13 @@ fn parse_capability_id(value: &str) -> Result<BlueprintEntityId, CommandError> {
     value.parse().map_err(|_| CommandError {
         code: "invalid_id".to_owned(),
         message: "能力 ID 无效".to_owned(),
+    })
+}
+
+fn parse_capability_api_endpoint_id(value: &str) -> Result<CapabilityApiEndpointId, CommandError> {
+    value.parse().map_err(|_| CommandError {
+        code: "invalid_id".to_owned(),
+        message: "能力 API 端点 ID 无效".to_owned(),
     })
 }
 

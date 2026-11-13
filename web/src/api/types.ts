@@ -632,6 +632,36 @@ export interface CapabilityStatusView {
   updatedAt: string;
 }
 
+export type CapabilityApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+export interface CapabilityApiEndpoint {
+  id: string;
+  projectId: string;
+  capabilityId: string;
+  environment: string;
+  name: string;
+  baseUrl: string;
+  pathPrefix: string;
+  allowedMethods: CapabilityApiMethod[];
+  credentialId: string | null;
+  authHeader: string | null;
+  authScheme: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CapabilityApiEndpointInput {
+  capabilityId: string;
+  environment: string;
+  name: string;
+  baseUrl: string;
+  pathPrefix: string;
+  allowedMethods: CapabilityApiMethod[];
+  credentialId: string | null;
+  authHeader: string | null;
+  authScheme: string | null;
+}
+
 export interface GitSyncRecord {
   id: string;
   projectId: string;
@@ -657,6 +687,7 @@ export interface IntegrationWorkspace {
   verificationCommands: RepositoryVerificationView[];
   credentials: CredentialMetadata[];
   capabilities: CapabilityStatusView[];
+  capabilityApiEndpoints: CapabilityApiEndpoint[];
   gitSyncs: GitSyncRecord[];
   release: ReleaseCenter;
 }

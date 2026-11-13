@@ -12,7 +12,8 @@ use coldstart_adapters::{
     import_gh_token,
 };
 use coldstart_core::{
-    CAPABILITY_ENVIRONMENTS, CapabilityState, CapabilityStatus, CredentialEnvironment,
+    CAPABILITY_ENVIRONMENTS, CapabilityApiEndpoint, CapabilityApiEndpointId,
+    CapabilityApiEndpointInput, CapabilityState, CapabilityStatus, CredentialEnvironment,
     CredentialId, CredentialKind, CredentialMetadata, GitSyncRecord, ProjectId, Repository,
     RepositoryAuthMode, RepositorySyncPolicy, RepositoryVerificationCommand, TaskKind,
 };
@@ -122,6 +123,7 @@ pub struct IntegrationWorkspace {
     pub verification_commands: Vec<RepositoryVerificationView>,
     pub credentials: Vec<CredentialMetadata>,
     pub capabilities: Vec<CapabilityStatusView>,
+    pub capability_api_endpoints: Vec<CapabilityApiEndpoint>,
     pub git_syncs: Vec<GitSyncRecord>,
     pub release: ReleaseCenterView,
 }
@@ -390,6 +392,54 @@ impl IntegrationService {
             })
     }
 
+    pub fn save_capability_api_endpoint(
+        &self,
+        project_home: PathBuf,
+        endpoint_id: Option<CapabilityApiEndpointId>,
+        input: CapabilityApiEndpointInput,
+    ) -> Result<IntegrationWorkspace, AppError> {
+        let mut project = OpenProject::open(project_home.clone())?;
+        if let Some(credential_id) = input.credential_id {
+            let credential = project
+                .database
+                .credential(&project.project.id, &credential_id)?
+                .ok_or(AppError::CredentialNotFound(credential_id))?;
+            if credential.environment != CredentialEnvironment::Shared
+                && credential.environment.as_str() != input.environment
+            {
+                return Err(AppError::CapabilityApiCredentialMismatch);
+            }
+        }
+        let endpoint = match endpoint_id {
+            Some(endpoint_id) => {
+                let mut endpoint = project
+                    .database
+                    .capability_api_endpoint(&project.project.id, &endpoint_id)?
+                    .ok_or(AppError::CapabilityApiEndpointNotFound(endpoint_id))?;
+                endpoint.update_from(input)?;
+                endpoint
+            }
+            None => CapabilityApiEndpoint::new(project.project.id, input)?,
+        };
+        project.database.save_capability_api_endpoint(&endpoint)?;
+        self.load_workspace(project_home)
+    }
+
+    pub fn delete_capability_api_endpoint(
+        &self,
+        project_home: PathBuf,
+        endpoint_id: CapabilityApiEndpointId,
+    ) -> Result<IntegrationWorkspace, AppError> {
+        let mut project = OpenProject::open(project_home.clone())?;
+        if !project
+            .database
+            .delete_capability_api_endpoint(&project.project.id, &endpoint_id)?
+        {
+            return Err(AppError::CapabilityApiEndpointNotFound(endpoint_id));
+        }
+        self.load_workspace(project_home)
+    }
+
     pub fn import_github_session(
         &self,
         project_home: PathBuf,
@@ -587,6 +637,9 @@ fn build_integration_workspace(project: &OpenProject) -> Result<IntegrationWorks
         .collect::<Result<Vec<_>, AppError>>()?;
     let credentials = project.database.list_credentials(&project.project.id)?;
     let capabilities = load_capability_views(project)?;
+    let capability_api_endpoints = project
+        .database
+        .list_capability_api_endpoints(&project.project.id)?;
     let git_syncs = project.database.list_git_syncs(&project.project.id)?;
     let plan = build_plan_workspace(project)?;
     let release = ReleaseCenterView {
@@ -624,6 +677,7 @@ fn build_integration_workspace(project: &OpenProject) -> Result<IntegrationWorks
         verification_commands,
         credentials,
         capabilities,
+        capability_api_endpoints,
         git_syncs,
         release,
     })

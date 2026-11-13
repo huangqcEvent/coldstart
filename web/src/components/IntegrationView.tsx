@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 
 import * as integrationApi from '../api/integrationApi';
 import type {
+  CapabilityApiEndpoint,
+  CapabilityApiEndpointInput,
+  CapabilityApiMethod,
   CapabilityStatus,
   CapabilityStatusView,
   CommandError,
@@ -53,7 +56,26 @@ interface CapabilityFormState {
   note: string;
 }
 
+interface CapabilityApiEndpointFormState {
+  capabilityKey: string;
+  name: string;
+  baseUrl: string;
+  pathPrefix: string;
+  allowedMethods: CapabilityApiMethod[];
+  credentialId: string;
+  authHeader: string;
+  authScheme: string;
+}
+
 const repositoryKeys = ['server', 'admin', 'web', 'app', 'mini_program'];
+
+const capabilityApiMethods: CapabilityApiMethod[] = [
+  'GET',
+  'POST',
+  'PUT',
+  'PATCH',
+  'DELETE',
+];
 
 const repositoryKeyLabels: Record<string, string> = {
   server: 'server / 服务端',
@@ -121,6 +143,40 @@ function blankCredentialForm(): CredentialFormState {
   };
 }
 
+function capabilityKey(item: CapabilityStatusView) {
+  return `${item.capabilityId}:${item.environment}`;
+}
+
+function blankCapabilityApiEndpointForm(
+  capabilities: CapabilityStatusView[] = [],
+): CapabilityApiEndpointFormState {
+  return {
+    capabilityKey: capabilities[0] ? capabilityKey(capabilities[0]) : '',
+    name: '',
+    baseUrl: '',
+    pathPrefix: '/v1',
+    allowedMethods: ['GET'],
+    credentialId: '',
+    authHeader: 'Authorization',
+    authScheme: 'Bearer',
+  };
+}
+
+function capabilityApiEndpointForm(
+  endpoint: CapabilityApiEndpoint,
+): CapabilityApiEndpointFormState {
+  return {
+    capabilityKey: `${endpoint.capabilityId}:${endpoint.environment}`,
+    name: endpoint.name,
+    baseUrl: endpoint.baseUrl,
+    pathPrefix: endpoint.pathPrefix,
+    allowedMethods: endpoint.allowedMethods,
+    credentialId: endpoint.credentialId ?? '',
+    authHeader: endpoint.authHeader ?? '',
+    authScheme: endpoint.authScheme ?? '',
+  };
+}
+
 function capabilityDrafts(
   capabilities: CapabilityStatusView[],
 ): Record<string, CapabilityFormState> {
@@ -168,6 +224,10 @@ export function IntegrationView({ path }: IntegrationViewProps) {
   const [capabilityForms, setCapabilityForms] = useState<
     Record<string, CapabilityFormState>
   >({});
+  const [endpointForm, setEndpointForm] = useState<CapabilityApiEndpointFormState>(
+    blankCapabilityApiEndpointForm,
+  );
+  const [editingEndpointId, setEditingEndpointId] = useState<string | null>(null);
   const [githubSession, setGitHubSession] = useState<GitHubSession | null>(null);
   const [clientId, setClientId] = useState('');
   const [deviceFlow, setDeviceFlow] = useState<GitHubDeviceFlow | null>(null);
@@ -184,6 +244,11 @@ export function IntegrationView({ path }: IntegrationViewProps) {
   function adoptWorkspace(next: IntegrationWorkspace) {
     setWorkspace(next);
     setCapabilityForms(capabilityDrafts(next.capabilities));
+    setEndpointForm((current) =>
+      current.capabilityKey || next.capabilities.length === 0
+        ? current
+        : blankCapabilityApiEndpointForm(next.capabilities),
+    );
     setPrivateRepositoryKey((current) => current || next.repositories[0]?.key || '');
     setPrivateCredentialId((current) => current || next.credentials[0]?.id || '');
   }
@@ -318,6 +383,64 @@ export function IntegrationView({ path }: IntegrationViewProps) {
     );
     if (result) {
       adoptWorkspace(result);
+    }
+  }
+
+  function beginNewEndpoint() {
+    setEditingEndpointId(null);
+    setEndpointForm(blankCapabilityApiEndpointForm(workspace?.capabilities ?? []));
+  }
+
+  function beginEditEndpoint(item: CapabilityApiEndpoint) {
+    setEditingEndpointId(item.id);
+    setEndpointForm(capabilityApiEndpointForm(item));
+  }
+
+  function toggleEndpointMethod(method: CapabilityApiMethod) {
+    setEndpointForm((current) => ({
+      ...current,
+      allowedMethods: current.allowedMethods.includes(method)
+        ? current.allowedMethods.filter((value) => value !== method)
+        : [...current.allowedMethods, method],
+    }));
+  }
+
+  async function handleSaveEndpoint() {
+    const [capabilityId, environment] = endpointForm.capabilityKey.split(':');
+    if (!capabilityId || !environment) {
+      return;
+    }
+    const input: CapabilityApiEndpointInput = {
+      capabilityId,
+      environment,
+      name: endpointForm.name.trim(),
+      baseUrl: endpointForm.baseUrl.trim(),
+      pathPrefix: endpointForm.pathPrefix.trim(),
+      allowedMethods: endpointForm.allowedMethods,
+      credentialId: endpointForm.credentialId || null,
+      authHeader: endpointForm.authHeader.trim() || null,
+      authScheme: endpointForm.authScheme.trim() || null,
+    };
+    const result = await perform('正在保存能力 API 白名单', () =>
+      integrationApi.saveCapabilityApiEndpoint(path, editingEndpointId, input),
+    );
+    if (result) {
+      adoptWorkspace(result);
+      setEditingEndpointId(null);
+      setEndpointForm(blankCapabilityApiEndpointForm(result.capabilities));
+    }
+  }
+
+  async function handleDeleteEndpoint(item: CapabilityApiEndpoint) {
+    const result = await perform('正在删除能力 API 白名单', () =>
+      integrationApi.deleteCapabilityApiEndpoint(path, item.id),
+    );
+    if (result) {
+      adoptWorkspace(result);
+      if (editingEndpointId === item.id) {
+        setEditingEndpointId(null);
+        setEndpointForm(blankCapabilityApiEndpointForm(result.capabilities));
+      }
     }
   }
 
@@ -1114,6 +1237,284 @@ export function IntegrationView({ path }: IntegrationViewProps) {
                 <p>蓝图声明文件存储、短信、支付等能力后，会在这里按环境跟踪配置状态。</p>
               </div>
             )}
+          </section>
+
+          <section
+            className="panel integration-panel--wide"
+            aria-labelledby="capability-api-title"
+          >
+            <div className="panel__head">
+              <div>
+                <p className="panel__eyebrow">MCP 受限凭据代理</p>
+                <h2 id="capability-api-title">能力 API 白名单</h2>
+              </div>
+              <span className="count-badge">
+                {workspace.capabilityApiEndpoints.length}
+              </span>
+            </div>
+            <p className="field__hint">
+              Codex 只能通过 MCP 调用任务已授权的端点。Secret 由 Windows
+              凭据库在本机注入，页面、MCP 参数与响应都不回显明文；第一版只支持静态鉴权
+              Header。
+            </p>
+
+            {workspace.capabilityApiEndpoints.length ? (
+              <div className="credential-list capability-api-list">
+                {workspace.capabilityApiEndpoints.map((item) => {
+                  const capabilityName =
+                    workspace.capabilities.find(
+                      (capability) =>
+                        capability.capabilityId === item.capabilityId &&
+                        capability.environment === item.environment,
+                    )?.name ?? item.capabilityId;
+                  const credentialName =
+                    workspace.credentials.find(
+                      (credential) => credential.id === item.credentialId,
+                    )?.name ?? '不关联凭据';
+                  return (
+                    <article className="integration-card" key={item.id}>
+                      <header>
+                        <div>
+                          <strong>{item.name}</strong>
+                          <code>
+                            {capabilityName} · {item.environment}
+                          </code>
+                        </div>
+                        <div className="view-actions">
+                          <button
+                            className="button button--ghost button--compact"
+                            type="button"
+                            aria-label={`编辑能力 API：${item.name}`}
+                            onClick={() => beginEditEndpoint(item)}
+                            disabled={busy}
+                          >
+                            编辑
+                          </button>
+                          <button
+                            className="button button--ghost button--compact"
+                            type="button"
+                            aria-label={`删除能力 API：${item.name}`}
+                            onClick={() => void handleDeleteEndpoint(item)}
+                            disabled={busy}
+                          >
+                            删除
+                          </button>
+                        </div>
+                      </header>
+                      <p className="integration-path">
+                        {item.baseUrl}
+                        {item.pathPrefix}
+                      </p>
+                      <div className="integration-tags">
+                        {item.allowedMethods.map((method) => (
+                          <span key={method}>{method}</span>
+                        ))}
+                        <span>{credentialName}</span>
+                        <span>
+                          {item.authHeader
+                            ? `${item.authHeader}${item.authScheme ? ` · ${item.authScheme}` : ''}`
+                            : '无鉴权头'}
+                        </span>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="empty-state">
+                <strong>还没有能力 API 白名单</strong>
+                <p>
+                  为已配置能力添加 HTTPS 端点后，任务上下文只会展示端点元数据，Codex
+                  仍需通过租约和能力授权才能调用。
+                </p>
+              </div>
+            )}
+
+            <div className="integration-subsection">
+              <div className="capability-api-editor__head">
+                <div>
+                  <p className="panel__eyebrow">
+                    {editingEndpointId ? '编辑现有端点' : '新增端点'}
+                  </p>
+                  <h3>{editingEndpointId ? '修改能力 API 白名单' : '登记能力 API'}</h3>
+                </div>
+                {editingEndpointId ? (
+                  <button
+                    className="button button--ghost button--compact"
+                    type="button"
+                    onClick={beginNewEndpoint}
+                    disabled={busy}
+                  >
+                    新建白名单
+                  </button>
+                ) : null}
+              </div>
+              {workspace.capabilities.length ? (
+                <form
+                  className="integration-form capability-api-form"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleSaveEndpoint();
+                  }}
+                >
+                  <div className="integration-form__grid">
+                    <label className="field integration-form__wide">
+                      <span>能力与环境</span>
+                      <select
+                        value={endpointForm.capabilityKey}
+                        onChange={(event) =>
+                          setEndpointForm({
+                            ...endpointForm,
+                            capabilityKey: event.target.value,
+                          })
+                        }
+                        disabled={busy || editingEndpointId !== null}
+                      >
+                        {workspace.capabilities.map((item) => (
+                          <option value={capabilityKey(item)} key={capabilityKey(item)}>
+                            {item.name} · {item.environment}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>白名单名称</span>
+                      <input
+                        value={endpointForm.name}
+                        onChange={(event) =>
+                          setEndpointForm({ ...endpointForm, name: event.target.value })
+                        }
+                        placeholder="附件上传 API"
+                        disabled={busy}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>路径前缀</span>
+                      <input
+                        value={endpointForm.pathPrefix}
+                        onChange={(event) =>
+                          setEndpointForm({
+                            ...endpointForm,
+                            pathPrefix: event.target.value,
+                          })
+                        }
+                        placeholder="/v1"
+                        disabled={busy}
+                      />
+                    </label>
+                    <label className="field integration-form__wide">
+                      <span>HTTPS Base URL</span>
+                      <input
+                        value={endpointForm.baseUrl}
+                        onChange={(event) =>
+                          setEndpointForm({
+                            ...endpointForm,
+                            baseUrl: event.target.value,
+                          })
+                        }
+                        placeholder="https://api.example.com"
+                        autoComplete="off"
+                        spellCheck={false}
+                        disabled={busy}
+                      />
+                    </label>
+                    <div className="field integration-form__wide">
+                      <span>允许方法</span>
+                      <div className="capability-api-methods">
+                        {capabilityApiMethods.map((method) => (
+                          <label key={method}>
+                            <input
+                              type="checkbox"
+                              aria-label={`允许方法 ${method}`}
+                              checked={endpointForm.allowedMethods.includes(method)}
+                              onChange={() => toggleEndpointMethod(method)}
+                              disabled={busy}
+                            />
+                            <span>{method}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <label className="field">
+                      <span>能力 API 凭据</span>
+                      <select
+                        value={endpointForm.credentialId}
+                        onChange={(event) =>
+                          setEndpointForm({
+                            ...endpointForm,
+                            credentialId: event.target.value,
+                          })
+                        }
+                        disabled={busy}
+                      >
+                        <option value="">不关联凭据</option>
+                        {workspace.credentials.map((item) => (
+                          <option value={item.id} key={item.id}>
+                            {item.name} · {item.environment}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>鉴权头名称</span>
+                      <input
+                        value={endpointForm.authHeader}
+                        onChange={(event) =>
+                          setEndpointForm({
+                            ...endpointForm,
+                            authHeader: event.target.value,
+                          })
+                        }
+                        placeholder="Authorization"
+                        autoComplete="off"
+                        spellCheck={false}
+                        disabled={busy}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>鉴权前缀</span>
+                      <input
+                        value={endpointForm.authScheme}
+                        onChange={(event) =>
+                          setEndpointForm({
+                            ...endpointForm,
+                            authScheme: event.target.value,
+                          })
+                        }
+                        placeholder="Bearer"
+                        autoComplete="off"
+                        spellCheck={false}
+                        disabled={busy}
+                      />
+                    </label>
+                  </div>
+                  <p className="field__hint">
+                    只允许 HTTPS、路径前缀内的方法和静态 Header 注入；不代签 OSS
+                    等 SDK 签名，也不跟随重定向。
+                  </p>
+                  <div className="view-actions integration-form__actions">
+                    <button
+                      className="button button--primary"
+                      type="submit"
+                      disabled={
+                        busy ||
+                        !endpointForm.capabilityKey ||
+                        !endpointForm.name.trim() ||
+                        !endpointForm.baseUrl.trim() ||
+                        !endpointForm.pathPrefix.trim() ||
+                        endpointForm.allowedMethods.length === 0
+                      }
+                    >
+                      {editingEndpointId ? '保存能力 API 修改' : '新增能力 API 白名单'}
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <div className="empty-state">
+                  先在蓝图中声明三方能力并完成状态同步，之后才能登记能力 API。
+                </div>
+              )}
+            </div>
           </section>
 
           <section
