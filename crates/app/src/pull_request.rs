@@ -1,18 +1,20 @@
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use coldstart_adapters::{
-    CreateDraftPullRequestRequest, GitAdapter, GitHubCheckRun, GitHubClient, GitHubError,
-    GitHubPullRequest, GitHubPullRequestReview, GitHubPullRequestReviewComment,
-    GitHubRepositoryCoordinates, GitHubToken, SecretStore, WindowsSecretStore,
-    sanitize_verification_output,
+    CreateDraftPullRequestRequest, GitAdapter, GitHubCheckRun, GitHubClient,
+    GitHubDeploymentSnapshot, GitHubError, GitHubPullRequest, GitHubPullRequestReview,
+    GitHubPullRequestReviewComment, GitHubRepositoryCoordinates, GitHubToken, SecretStore,
+    WindowsSecretStore, sanitize_verification_output,
 };
 use coldstart_core::{
     CredentialKind, GitSyncStatus, MAX_PULL_REQUEST_CHECK_APP_CHARS,
     MAX_PULL_REQUEST_CHECK_NAME_CHARS, MAX_PULL_REQUEST_CONFLICT_PATHS,
+    MAX_PULL_REQUEST_DEPLOYMENT_DESCRIPTION_CHARS, MAX_PULL_REQUEST_DEPLOYMENT_ENVIRONMENT_CHARS,
     MAX_PULL_REQUEST_INSIGHT_AUTHOR_CHARS, MAX_PULL_REQUEST_INSIGHT_PATH_CHARS,
     MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS, PullRequestCheck, PullRequestCheckConclusion,
-    PullRequestCheckStatus, PullRequestConflictDetails, PullRequestId, PullRequestInsights,
+    PullRequestCheckStatus, PullRequestConflictDetails, PullRequestDeployment,
+    PullRequestDeploymentDetails, PullRequestDeploymentState, PullRequestId, PullRequestInsights,
     PullRequestMergeability, PullRequestRecord, PullRequestReview, PullRequestReviewComment,
     PullRequestReviewState, PullRequestState, ReportOutcome, Repository, RepositoryAuthMode,
     ReviewStatus, TaskKind, TaskSpec, WorkItemStatus, WorkReportId,
@@ -225,6 +227,8 @@ impl PullRequestService {
         let state = pull_request_state(&remote)?;
         let conflict_details =
             diagnose_conflict_details(&self.git, &repository, &remote, state, mergeability);
+        let deployment_details =
+            fetch_deployment_details(github, &token, &coordinates, &remote.head.sha);
         let insights = pull_request_insights(
             record.id,
             mergeability,
@@ -232,7 +236,8 @@ impl PullRequestService {
             reviews,
             review_comments,
         )?
-        .with_conflict_details(conflict_details)?;
+        .with_conflict_details(conflict_details)?
+        .with_deployment_details(deployment_details)?;
         if record.update_state(state, remote.draft)? {
             project.database.save_pull_request(&record)?;
         }
@@ -338,6 +343,89 @@ fn conflict_path(value: &str) -> Option<String> {
     } else {
         Some(truncate_chars(&value, MAX_PULL_REQUEST_INSIGHT_PATH_CHARS))
     }
+}
+
+fn fetch_deployment_details(
+    github: &GitHubClient,
+    token: &GitHubToken,
+    coordinates: &GitHubRepositoryCoordinates,
+    head_sha: &str,
+) -> PullRequestDeploymentDetails {
+    let snapshot = match github.pull_request_deployments(
+        token,
+        &coordinates.owner,
+        &coordinates.repository,
+        head_sha,
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(_) => return PullRequestDeploymentDetails::unavailable(),
+    };
+    if snapshot.deployments.is_empty() {
+        return PullRequestDeploymentDetails::no_deployments();
+    }
+    let GitHubDeploymentSnapshot {
+        deployments,
+        truncated,
+    } = snapshot;
+    let deployments = deployments
+        .into_iter()
+        .map(|deployment| {
+            let (state, status_description, status_updated_at) = match github.deployment_status(
+                token,
+                &coordinates.owner,
+                &coordinates.repository,
+                deployment.id,
+            ) {
+                Ok(Some(status)) => (
+                    PullRequestDeploymentState::parse(&status.state),
+                    status.description,
+                    parse_status_timestamp(status.updated_at.as_deref()),
+                ),
+                Ok(None) | Err(_) => (PullRequestDeploymentState::Unknown, None, None),
+            };
+            PullRequestDeployment {
+                environment: deployment_text(
+                    &deployment.environment,
+                    MAX_PULL_REQUEST_DEPLOYMENT_ENVIRONMENT_CHARS,
+                ),
+                state,
+                description: status_description
+                    .as_deref()
+                    .and_then(|value| {
+                        deployment_description(value, MAX_PULL_REQUEST_DEPLOYMENT_DESCRIPTION_CHARS)
+                    })
+                    .or_else(|| {
+                        deployment.description.as_deref().and_then(|value| {
+                            deployment_description(
+                                value,
+                                MAX_PULL_REQUEST_DEPLOYMENT_DESCRIPTION_CHARS,
+                            )
+                        })
+                    }),
+                status_updated_at,
+            }
+        })
+        .collect();
+    PullRequestDeploymentDetails::available(deployments, truncated)
+}
+
+fn deployment_text(value: &str, limit: usize) -> String {
+    let value = sanitize_verification_output(value)
+        .replace(['\r', '\n', '\t'], " ")
+        .trim()
+        .to_owned();
+    truncate_chars(&value, limit)
+}
+
+fn deployment_description(value: &str, limit: usize) -> Option<String> {
+    let value = deployment_text(value, limit);
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn parse_status_timestamp(value: Option<&str>) -> Option<DateTime<Utc>> {
+    value
+        .and_then(|value| DateTime::parse_from_rfc3339(value.trim()).ok())
+        .map(|value| value.with_timezone(&Utc))
 }
 
 fn pull_request_insights(

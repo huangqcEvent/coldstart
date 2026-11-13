@@ -33,13 +33,17 @@ pub use plan_compiler::*;
 pub use project::{Project, ProjectId};
 pub use pull_request::{
     MAX_PULL_REQUEST_CHECK_APP_CHARS, MAX_PULL_REQUEST_CHECK_NAME_CHARS,
-    MAX_PULL_REQUEST_CONFLICT_PATHS, MAX_PULL_REQUEST_INSIGHT_AUTHOR_CHARS,
-    MAX_PULL_REQUEST_INSIGHT_ITEMS, MAX_PULL_REQUEST_INSIGHT_PATH_CHARS,
-    MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS, MAX_PULL_REQUEST_TITLE_CHARS, MAX_PULL_REQUEST_URL_CHARS,
-    PullRequestCheck, PullRequestCheckConclusion, PullRequestCheckStatus, PullRequestCheckSummary,
+    MAX_PULL_REQUEST_CONFLICT_PATHS, MAX_PULL_REQUEST_DEPLOYMENT_DESCRIPTION_CHARS,
+    MAX_PULL_REQUEST_DEPLOYMENT_ENVIRONMENT_CHARS, MAX_PULL_REQUEST_DEPLOYMENTS,
+    MAX_PULL_REQUEST_INSIGHT_AUTHOR_CHARS, MAX_PULL_REQUEST_INSIGHT_ITEMS,
+    MAX_PULL_REQUEST_INSIGHT_PATH_CHARS, MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS,
+    MAX_PULL_REQUEST_TITLE_CHARS, MAX_PULL_REQUEST_URL_CHARS, PullRequestCheck,
+    PullRequestCheckConclusion, PullRequestCheckStatus, PullRequestCheckSummary,
     PullRequestChecksState, PullRequestConflictDetails, PullRequestConflictState,
-    PullRequestInsights, PullRequestMergeability, PullRequestRecord, PullRequestReview,
-    PullRequestReviewComment, PullRequestReviewState, PullRequestState, PullRequestValidationError,
+    PullRequestDeployment, PullRequestDeploymentDetails, PullRequestDeploymentState,
+    PullRequestDeploymentsState, PullRequestInsights, PullRequestMergeability, PullRequestRecord,
+    PullRequestReview, PullRequestReviewComment, PullRequestReviewState, PullRequestState,
+    PullRequestValidationError,
 };
 pub use review::*;
 pub use source_reference::SourceReference;

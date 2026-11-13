@@ -15,6 +15,9 @@ pub const MAX_PULL_REQUEST_INSIGHT_PATH_CHARS: usize = 1_024;
 pub const MAX_PULL_REQUEST_CONFLICT_PATHS: usize = 100;
 pub const MAX_PULL_REQUEST_CHECK_NAME_CHARS: usize = 200;
 pub const MAX_PULL_REQUEST_CHECK_APP_CHARS: usize = 100;
+pub const MAX_PULL_REQUEST_DEPLOYMENTS: usize = 10;
+pub const MAX_PULL_REQUEST_DEPLOYMENT_ENVIRONMENT_CHARS: usize = 200;
+pub const MAX_PULL_REQUEST_DEPLOYMENT_DESCRIPTION_CHARS: usize = 500;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -171,6 +174,143 @@ impl PullRequestConflictDetails {
             }
         } else if !self.paths.is_empty() || self.truncated {
             return Err(PullRequestValidationError::InvalidConflictDetails);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestDeploymentState {
+    Success,
+    Failure,
+    Error,
+    Inactive,
+    InProgress,
+    Queued,
+    Pending,
+    Unknown,
+}
+
+impl PullRequestDeploymentState {
+    pub fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "success" => Self::Success,
+            "failure" => Self::Failure,
+            "error" => Self::Error,
+            "inactive" => Self::Inactive,
+            "in_progress" => Self::InProgress,
+            "queued" => Self::Queued,
+            "pending" => Self::Pending,
+            _ => Self::Unknown,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failure => "failure",
+            Self::Error => "error",
+            Self::Inactive => "inactive",
+            Self::InProgress => "in_progress",
+            Self::Queued => "queued",
+            Self::Pending => "pending",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestDeploymentsState {
+    #[default]
+    NotChecked,
+    NoDeployments,
+    Available,
+    Unavailable,
+}
+
+impl PullRequestDeploymentsState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotChecked => "not_checked",
+            Self::NoDeployments => "no_deployments",
+            Self::Available => "available",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestDeployment {
+    pub environment: String,
+    pub state: PullRequestDeploymentState,
+    pub description: Option<String>,
+    pub status_updated_at: Option<DateTime<Utc>>,
+}
+
+impl PullRequestDeployment {
+    pub fn validate(&self) -> Result<(), PullRequestValidationError> {
+        validate_required_insight_text(
+            "deployment environment",
+            &self.environment,
+            MAX_PULL_REQUEST_DEPLOYMENT_ENVIRONMENT_CHARS,
+        )?;
+        validate_optional_insight_text(
+            "deployment description",
+            self.description.as_deref(),
+            MAX_PULL_REQUEST_DEPLOYMENT_DESCRIPTION_CHARS,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestDeploymentDetails {
+    pub state: PullRequestDeploymentsState,
+    pub deployments: Vec<PullRequestDeployment>,
+    pub truncated: bool,
+}
+
+impl PullRequestDeploymentDetails {
+    pub fn available(deployments: Vec<PullRequestDeployment>, truncated: bool) -> Self {
+        Self {
+            state: PullRequestDeploymentsState::Available,
+            deployments,
+            truncated,
+        }
+    }
+
+    pub fn no_deployments() -> Self {
+        Self {
+            state: PullRequestDeploymentsState::NoDeployments,
+            ..Self::default()
+        }
+    }
+
+    pub fn unavailable() -> Self {
+        Self {
+            state: PullRequestDeploymentsState::Unavailable,
+            ..Self::default()
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), PullRequestValidationError> {
+        if self.state == PullRequestDeploymentsState::Available {
+            if self.deployments.is_empty() {
+                return Err(PullRequestValidationError::InvalidDeploymentDetails);
+            }
+            if self.deployments.len() > MAX_PULL_REQUEST_DEPLOYMENTS {
+                return Err(PullRequestValidationError::InsightListTooLong {
+                    field: "deployments",
+                });
+            }
+            for deployment in &self.deployments {
+                deployment.validate()?;
+            }
+        } else if !self.deployments.is_empty() || self.truncated {
+            return Err(PullRequestValidationError::InvalidDeploymentDetails);
         }
         Ok(())
     }
@@ -391,6 +531,8 @@ pub struct PullRequestInsights {
     pub mergeability: PullRequestMergeability,
     #[serde(default)]
     pub conflict_details: PullRequestConflictDetails,
+    #[serde(default)]
+    pub deployment_details: PullRequestDeploymentDetails,
     pub checks: Vec<PullRequestCheck>,
     pub reviews: Vec<PullRequestReview>,
     pub review_comments: Vec<PullRequestReviewComment>,
@@ -409,6 +551,7 @@ impl PullRequestInsights {
             pull_request_id,
             mergeability: PullRequestMergeability::Unknown,
             conflict_details: PullRequestConflictDetails::default(),
+            deployment_details: PullRequestDeploymentDetails::default(),
             checks,
             reviews,
             review_comments,
@@ -432,8 +575,18 @@ impl PullRequestInsights {
         Ok(self)
     }
 
+    pub fn with_deployment_details(
+        mut self,
+        deployment_details: PullRequestDeploymentDetails,
+    ) -> Result<Self, PullRequestValidationError> {
+        self.deployment_details = deployment_details;
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn validate(&self) -> Result<(), PullRequestValidationError> {
         self.conflict_details.validate()?;
+        self.deployment_details.validate()?;
         validate_insight_count("checks", self.checks.len())?;
         validate_insight_count("reviews", self.reviews.len())?;
         validate_insight_count("review comments", self.review_comments.len())?;
@@ -629,6 +782,8 @@ pub enum PullRequestValidationError {
     InvalidInsightLine,
     #[error("pull request conflict details are inconsistent with their state")]
     InvalidConflictDetails,
+    #[error("pull request deployment details are inconsistent with their state")]
+    InvalidDeploymentDetails,
 }
 
 fn validate_insight_count(
@@ -956,6 +1111,7 @@ mod tests {
         let object = value.as_object_mut().expect("insights must be an object");
         object.remove("mergeability");
         object.remove("conflictDetails");
+        object.remove("deploymentDetails");
         let restored: PullRequestInsights =
             serde_json::from_value(value).expect("legacy snapshot must deserialize");
         assert_eq!(restored.mergeability, PullRequestMergeability::Unknown);
@@ -965,6 +1121,11 @@ mod tests {
         );
         assert!(restored.conflict_details.paths.is_empty());
         assert!(!restored.conflict_details.truncated);
+        assert_eq!(
+            restored.deployment_details.state,
+            PullRequestDeploymentsState::NotChecked
+        );
+        assert!(restored.deployment_details.deployments.is_empty());
     }
 
     #[test]
@@ -1028,6 +1189,108 @@ mod tests {
             error,
             PullRequestValidationError::InvalidInsightText {
                 field: "conflict path"
+            }
+        );
+    }
+
+    #[test]
+    fn deployment_details_round_trip_and_enforce_state_consistency() {
+        for (value, expected) in [
+            ("success", PullRequestDeploymentState::Success),
+            ("failure", PullRequestDeploymentState::Failure),
+            ("error", PullRequestDeploymentState::Error),
+            ("inactive", PullRequestDeploymentState::Inactive),
+            ("in_progress", PullRequestDeploymentState::InProgress),
+            ("queued", PullRequestDeploymentState::Queued),
+            ("pending", PullRequestDeploymentState::Pending),
+            ("unexpected", PullRequestDeploymentState::Unknown),
+        ] {
+            assert_eq!(PullRequestDeploymentState::parse(value), expected);
+        }
+
+        let deployment = PullRequestDeployment {
+            environment: "production".to_owned(),
+            state: PullRequestDeploymentState::Success,
+            description: Some("直播环境部署完成".to_owned()),
+            status_updated_at: Some(Utc::now()),
+        };
+        let details = PullRequestDeploymentDetails::available(vec![deployment.clone()], true);
+        let insights =
+            PullRequestInsights::new(PullRequestId::new(), vec![], vec![], vec![], Utc::now())
+                .expect("insights must validate")
+                .with_deployment_details(details.clone())
+                .expect("available deployment details must validate");
+        let restored: PullRequestInsights = serde_json::from_value(
+            serde_json::to_value(&insights).expect("insights must serialize"),
+        )
+        .expect("deployment details must deserialize");
+        assert_eq!(restored.deployment_details, details);
+        assert_eq!(restored.deployment_details.deployments[0], deployment);
+
+        let inconsistent = PullRequestDeploymentDetails {
+            state: PullRequestDeploymentsState::NoDeployments,
+            deployments: vec![deployment],
+            truncated: false,
+        };
+        let error =
+            PullRequestInsights::new(PullRequestId::new(), vec![], vec![], vec![], Utc::now())
+                .expect("insights must validate")
+                .with_deployment_details(inconsistent)
+                .expect_err("inconsistent deployment details must fail");
+        assert_eq!(error, PullRequestValidationError::InvalidDeploymentDetails);
+
+        let empty = PullRequestDeploymentDetails::available(vec![], false);
+        let error =
+            PullRequestInsights::new(PullRequestId::new(), vec![], vec![], vec![], Utc::now())
+                .expect("insights must validate")
+                .with_deployment_details(empty)
+                .expect_err("available deployment details must contain a deployment");
+        assert_eq!(error, PullRequestValidationError::InvalidDeploymentDetails);
+    }
+
+    #[test]
+    fn deployment_details_enforce_count_and_text_bounds() {
+        let deployments = (0..=MAX_PULL_REQUEST_DEPLOYMENTS)
+            .map(|index| PullRequestDeployment {
+                environment: format!("environment-{index}"),
+                state: PullRequestDeploymentState::Success,
+                description: None,
+                status_updated_at: None,
+            })
+            .collect();
+        let error =
+            PullRequestInsights::new(PullRequestId::new(), vec![], vec![], vec![], Utc::now())
+                .expect("insights must validate")
+                .with_deployment_details(PullRequestDeploymentDetails::available(
+                    deployments,
+                    false,
+                ))
+                .expect_err("too many deployments must fail");
+        assert_eq!(
+            error,
+            PullRequestValidationError::InsightListTooLong {
+                field: "deployments"
+            }
+        );
+
+        let invalid = PullRequestDeployment {
+            environment: "production".to_owned(),
+            state: PullRequestDeploymentState::Failure,
+            description: Some("line one\nline two".to_owned()),
+            status_updated_at: None,
+        };
+        let error =
+            PullRequestInsights::new(PullRequestId::new(), vec![], vec![], vec![], Utc::now())
+                .expect("insights must validate")
+                .with_deployment_details(PullRequestDeploymentDetails::available(
+                    vec![invalid],
+                    false,
+                ))
+                .expect_err("control characters must fail");
+        assert_eq!(
+            error,
+            PullRequestValidationError::InvalidInsightText {
+                field: "deployment description"
             }
         );
     }

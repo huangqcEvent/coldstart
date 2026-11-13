@@ -831,6 +831,35 @@ export interface PullRequestConflictDetails {
   truncated: boolean;
 }
 
+export type PullRequestDeploymentState =
+  | 'success'
+  | 'failure'
+  | 'error'
+  | 'inactive'
+  | 'in_progress'
+  | 'queued'
+  | 'pending'
+  | 'unknown';
+
+export type PullRequestDeploymentsState =
+  | 'not_checked'
+  | 'no_deployments'
+  | 'available'
+  | 'unavailable';
+
+export interface PullRequestDeployment {
+  environment: string;
+  state: PullRequestDeploymentState;
+  description: string | null;
+  statusUpdatedAt: string | null;
+}
+
+export interface PullRequestDeploymentDetails {
+  state: PullRequestDeploymentsState;
+  deployments: PullRequestDeployment[];
+  truncated: boolean;
+}
+
 export type PullRequestReviewState =
   | 'approved'
   | 'changes_requested'
@@ -866,6 +895,7 @@ export interface PullRequestInsights {
   pullRequestId: string;
   mergeability: PullRequestMergeability;
   conflictDetails: PullRequestConflictDetails;
+  deploymentDetails: PullRequestDeploymentDetails;
   checks: PullRequestCheck[];
   reviews: PullRequestReview[];
   reviewComments: PullRequestReviewComment[];

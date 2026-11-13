@@ -618,6 +618,18 @@ function makePullRequestInsights(
       paths: ['src/order.ts', 'src/payment.ts'],
       truncated: false,
     },
+    deploymentDetails: {
+      state: 'available',
+      deployments: [
+        {
+          environment: 'production',
+          state: 'success',
+          description: '生产部署完成',
+          statusUpdatedAt: '2026-11-13T08:06:00Z',
+        },
+      ],
+      truncated: false,
+    },
     checks: [
       {
         name: 'unit tests',
@@ -1845,10 +1857,16 @@ describe('ColdStart project workspace', () => {
     expect(screen.getByText('合并前检查 · 2 项待人工确认')).toBeInTheDocument();
     expect(screen.getByText('存在合并冲突')).toBeInTheDocument();
     expect(screen.getByText('本地定位到 2 个冲突文件')).toBeInTheDocument();
+    expect(screen.getByText('1 个环境部署成功')).toBeInTheDocument();
+    expect(screen.getByText('production')).toBeInTheDocument();
+    expect(screen.getByText('生产部署完成')).toBeInTheDocument();
     expect(screen.getByText('src/order.ts')).toBeInTheDocument();
     expect(screen.getByText('src/payment.ts')).toBeInTheDocument();
     expect(
       screen.getByText('由本地 merge-tree 计算，未修改工作区；GitHub 状态仍是最终依据。'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('部署成功不代表已获准发布或合并；ColdStart 不创建、审批、取消或重试部署。'),
     ).toBeInTheDocument();
     expect(screen.getAllByText('1 项 Review 要求修改').length).toBeGreaterThan(0);
     expect(screen.getByText('请补充失败分支测试。')).toBeInTheDocument();
@@ -1907,6 +1925,100 @@ describe('ColdStart project workspace', () => {
     expect(screen.getByText('本地未复现冲突')).toBeInTheDocument();
     expect(
       screen.getByText('GitHub 仍标记存在合并冲突。可能本地缺少最新目标分支或提交对象，请先同步后再次刷新；这不表示冲突已解决。'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows failed and in-progress deployment states without merge permission', async () => {
+    const deployments = makeReviewHistory('passed', {
+      pullRequest: makePullRequest({ draft: false, state: 'merged' }),
+      pullRequestInsights: makePullRequestInsights({
+        deploymentDetails: {
+          state: 'available',
+          deployments: [
+            {
+              environment: 'production',
+              state: 'failure',
+              description: '生产部署失败',
+              statusUpdatedAt: '2026-11-13T08:07:00Z',
+            },
+            {
+              environment: 'staging',
+              state: 'in_progress',
+              description: '预发部署中',
+              statusUpdatedAt: null,
+            },
+          ],
+          truncated: false,
+        },
+      }),
+    });
+    await openReviewView(makeReviewWorkspace({ recentReviews: [deployments] }));
+    expect(screen.getByText('1 个环境部署失败')).toBeInTheDocument();
+    expect(screen.getByText('生产部署失败')).toBeInTheDocument();
+    expect(screen.getByText('staging')).toBeInTheDocument();
+    expect(screen.getByText('部署中')).toBeInTheDocument();
+    expect(screen.getByText('尚未获取部署状态记录')).toBeInTheDocument();
+  });
+
+  it('explains when the pull request head has no deployments', async () => {
+    const noDeployments = makeReviewHistory('passed', {
+      pullRequest: makePullRequest({ draft: false }),
+      pullRequestInsights: makePullRequestInsights({
+        deploymentDetails: {
+          state: 'no_deployments',
+          deployments: [],
+          truncated: false,
+        },
+      }),
+    });
+    await openReviewView(
+      makeReviewWorkspace({ recentReviews: [noDeployments] }),
+    );
+    expect(screen.getByText('无部署记录')).toBeInTheDocument();
+    expect(
+      screen.getByText('GitHub 未返回当前 PR 头提交的部署记录。'),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps a PR snapshot when deployment data is unavailable', async () => {
+    const unavailable = makeReviewHistory('passed', {
+      pullRequest: makePullRequest({ draft: false }),
+      pullRequestInsights: makePullRequestInsights({
+        deploymentDetails: {
+          state: 'unavailable',
+          deployments: [],
+          truncated: false,
+        },
+      }),
+    });
+    await openReviewView(
+      makeReviewWorkspace({ recentReviews: [unavailable] }),
+    );
+    expect(screen.getByText('部署状态不可用')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '本次刷新未能读取 GitHub Deployment；PR 状态、Checks、Review 与评论不受影响。',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('explains legacy deployment snapshots without inventing a status', async () => {
+    const legacy = makeReviewHistory('passed', {
+      pullRequest: makePullRequest({ draft: false }),
+      pullRequestInsights: makePullRequestInsights({
+        deploymentDetails: {
+          state: 'not_checked',
+          deployments: [],
+          truncated: false,
+        },
+      }),
+    });
+    await openReviewView(makeReviewWorkspace({ recentReviews: [legacy] }));
+    expect(screen.getByText('部署状态未同步')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '这是阶段 16 之前的快照。再次刷新后会读取当前 PR 头提交的部署状态。',
+      ),
     ).toBeInTheDocument();
   });
 

@@ -15,9 +15,10 @@ use coldstart_core::{
     AcceptanceResult, ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration,
     CapabilityObligation, CapabilityStatus, ClaimResult, CredentialEnvironment, CredentialKind,
     DomainEventKind, GenerationSource, ModuleDefinition, PlatformDefinition, PlatformKind,
-    PullRequestConflictState, PullRequestMergeability, PullRequestRecord, PullRequestState,
-    ReleasePrerequisite, ReportOutcome, RepositoryAuthMode, RepositorySyncPolicy,
-    RepositoryVerificationCommand, SourceReference, TraceableText, WorkItemStatus, WorkReportInput,
+    PullRequestConflictState, PullRequestDeploymentState, PullRequestDeploymentsState,
+    PullRequestMergeability, PullRequestRecord, PullRequestState, ReleasePrerequisite,
+    ReportOutcome, RepositoryAuthMode, RepositorySyncPolicy, RepositoryVerificationCommand,
+    SourceReference, TraceableText, WorkItemStatus, WorkReportInput,
 };
 use coldstart_storage::Database;
 use tempfile::TempDir;
@@ -1187,11 +1188,26 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
         }
     ])
     .to_string();
+    let deployments_body = serde_json::json!([{
+        "id": 71,
+        "sha": commit.trim(),
+        "environment": "production",
+        "description": "发布候选版本"
+    }])
+    .to_string();
+    let deployment_status_body = serde_json::json!([{
+        "state": "success",
+        "description": "生产部署完成",
+        "updated_at": "2026-11-13T10:00:00Z"
+    }])
+    .to_string();
     let refresh_server = MockGitHub::start_sequence(vec![
         (200, refresh_body),
         (200, checks_body),
         (200, reviews_body),
         (200, comments_body),
+        (200, deployments_body),
+        (200, deployment_status_body),
     ]);
     let refresh_client =
         GitHubClient::with_endpoints(&refresh_server.base_url, &refresh_server.base_url)
@@ -1203,7 +1219,7 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
     assert_eq!(refreshed.state, PullRequestState::Merged);
     assert!(!refreshed.draft);
     let requests = refresh_server.finish_requests();
-    assert_eq!(requests.len(), 4);
+    assert_eq!(requests.len(), 6);
     assert!(requests.iter().all(|request| request.method == "GET"));
     assert_eq!(requests[0].url, "/repos/octocat/demo/pulls/17");
     assert_eq!(
@@ -1220,6 +1236,17 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
     assert_eq!(
         requests[3].url,
         "/repos/octocat/demo/pulls/17/comments?per_page=100"
+    );
+    assert_eq!(
+        requests[4].url,
+        format!(
+            "/repos/octocat/demo/deployments?sha={}&per_page=11",
+            commit.trim()
+        )
+    );
+    assert_eq!(
+        requests[5].url,
+        "/repos/octocat/demo/deployments/71/statuses?per_page=1"
     );
     assert!(
         requests.iter().all(|request| {
@@ -1252,6 +1279,25 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
     assert_eq!(insights.review_comments.len(), 1);
     assert_eq!(insights.review_comments[0].line, Some(12));
     assert_eq!(insights.mergeability, PullRequestMergeability::Mergeable);
+    assert_eq!(
+        insights.deployment_details.state,
+        PullRequestDeploymentsState::Available
+    );
+    assert_eq!(insights.deployment_details.deployments.len(), 1);
+    assert_eq!(
+        insights.deployment_details.deployments[0].environment,
+        "production"
+    );
+    assert_eq!(
+        insights.deployment_details.deployments[0].state,
+        PullRequestDeploymentState::Success
+    );
+    assert_eq!(
+        insights.deployment_details.deployments[0]
+            .description
+            .as_deref(),
+        Some("生产部署完成")
+    );
     let serialized_insights = serde_json::to_string(&insights).expect("insights must serialize");
     assert!(!serialized_insights.contains("test-github-value"));
     assert!(events.events.iter().any(|event| matches!(
@@ -1299,7 +1345,8 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
     let failed_client =
         GitHubClient::with_endpoints(&failed_server.base_url, &failed_server.base_url)
             .expect("GitHub client must create");
-    let failed_service = PullRequestService::with_dependencies(secrets, Some(failed_client));
+    let failed_service =
+        PullRequestService::with_dependencies(secrets.clone(), Some(failed_client));
     let error = failed_service
         .refresh(fixture.home.clone(), created.id)
         .expect_err("a failed checks request must abort the refresh");
@@ -1315,6 +1362,120 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
         stored.state,
         PullRequestState::Merged,
         "a failed refresh must not overwrite the previous state"
+    );
+    drop(database);
+
+    let deployment_failure_refresh = serde_json::json!({
+        "number": 17,
+        "html_url": created.html_url,
+        "state": "closed",
+        "draft": false,
+        "merged": false,
+        "title": format!("[{task_key}] {}", task.title),
+        "head": { "ref": branch, "sha": commit.trim() },
+        "base": { "ref": "main", "sha": "2222222222222222222222222222222222222222" },
+        "mergeable": true,
+        "mergeable_state": "clean"
+    })
+    .to_string();
+    let deployment_failure_server = MockGitHub::start_sequence(vec![
+        (200, deployment_failure_refresh),
+        (200, r#"{"total_count":0,"check_runs":[]}"#.to_owned()),
+        (200, "[]".to_owned()),
+        (200, "[]".to_owned()),
+        (500, r#"{"message":"deployments unavailable"}"#.to_owned()),
+    ]);
+    let deployment_failure_client = GitHubClient::with_endpoints(
+        &deployment_failure_server.base_url,
+        &deployment_failure_server.base_url,
+    )
+    .expect("GitHub client must create");
+    let deployment_failure_service =
+        PullRequestService::with_dependencies(secrets.clone(), Some(deployment_failure_client));
+    deployment_failure_service
+        .refresh(fixture.home.clone(), created.id)
+        .expect("deployment lookup failure must not fail the PR refresh");
+    let deployment_failure_requests = deployment_failure_server.finish_requests();
+    assert_eq!(deployment_failure_requests.len(), 5);
+    assert!(
+        deployment_failure_requests
+            .iter()
+            .all(|request| request.method == "GET")
+    );
+    let database = Database::open(&database_path).expect("database must reopen");
+    let insights = database
+        .load_pull_request_insights(&fixture.project_id, &created.id)
+        .expect("insights must load")
+        .expect("insights must persist");
+    assert_eq!(
+        insights.deployment_details.state,
+        PullRequestDeploymentsState::Unavailable
+    );
+    assert!(insights.deployment_details.deployments.is_empty());
+    drop(database);
+
+    let status_failure_refresh = serde_json::json!({
+        "number": 17,
+        "html_url": created.html_url,
+        "state": "closed",
+        "draft": false,
+        "merged": false,
+        "title": format!("[{task_key}] {}", task.title),
+        "head": { "ref": branch, "sha": commit.trim() },
+        "base": { "ref": "main", "sha": "2222222222222222222222222222222222222222" },
+        "mergeable": true,
+        "mergeable_state": "clean"
+    })
+    .to_string();
+    let status_failure_deployments = serde_json::json!([{
+        "id": 72,
+        "sha": commit.trim(),
+        "environment": "staging",
+        "description": "部署记录描述"
+    }])
+    .to_string();
+    let status_failure_server = MockGitHub::start_sequence(vec![
+        (200, status_failure_refresh),
+        (200, r#"{"total_count":0,"check_runs":[]}"#.to_owned()),
+        (200, "[]".to_owned()),
+        (200, "[]".to_owned()),
+        (200, status_failure_deployments),
+        (
+            500,
+            r#"{"message":"deployment status unavailable"}"#.to_owned(),
+        ),
+    ]);
+    let status_failure_client = GitHubClient::with_endpoints(
+        &status_failure_server.base_url,
+        &status_failure_server.base_url,
+    )
+    .expect("GitHub client must create");
+    let status_failure_service =
+        PullRequestService::with_dependencies(secrets, Some(status_failure_client));
+    status_failure_service
+        .refresh(fixture.home.clone(), created.id)
+        .expect("one deployment status failure must not fail the PR refresh");
+    let status_failure_requests = status_failure_server.finish_requests();
+    assert_eq!(status_failure_requests.len(), 6);
+    let database = Database::open(&database_path).expect("database must reopen");
+    let insights = database
+        .load_pull_request_insights(&fixture.project_id, &created.id)
+        .expect("insights must load")
+        .expect("insights must persist");
+    assert_eq!(
+        insights.deployment_details.state,
+        PullRequestDeploymentsState::Available
+    );
+    assert_eq!(insights.deployment_details.deployments.len(), 1);
+    assert_eq!(
+        insights.deployment_details.deployments[0].state,
+        PullRequestDeploymentState::Unknown
+    );
+    assert_eq!(
+        insights.deployment_details.deployments[0]
+            .description
+            .as_deref(),
+        Some("部署记录描述")
     );
 }
 
@@ -1425,6 +1586,7 @@ fn refresh_persists_local_conflict_paths_and_degrades_when_base_is_missing() {
         (200, r#"{"total_count":0,"check_runs":[]}"#.to_owned()),
         (200, "[]".to_owned()),
         (200, "[]".to_owned()),
+        (200, "[]".to_owned()),
     ]);
     let client = GitHubClient::with_endpoints(&server.base_url, &server.base_url)
         .expect("GitHub client must create");
@@ -1436,8 +1598,8 @@ fn refresh_persists_local_conflict_paths_and_degrades_when_base_is_missing() {
     let requests = server.finish_requests();
     assert_eq!(
         requests.len(),
-        4,
-        "conflict diagnostics must not add GitHub requests"
+        5,
+        "conflict diagnostics must not add GitHub requests beyond deployment lookup"
     );
     assert!(requests.iter().all(|request| request.method == "GET"));
 
@@ -1477,6 +1639,7 @@ fn refresh_persists_local_conflict_paths_and_degrades_when_base_is_missing() {
     let missing_server = MockGitHub::start_sequence(vec![
         (200, missing_base_body),
         (200, r#"{"total_count":0,"check_runs":[]}"#.to_owned()),
+        (200, "[]".to_owned()),
         (200, "[]".to_owned()),
         (200, "[]".to_owned()),
     ]);

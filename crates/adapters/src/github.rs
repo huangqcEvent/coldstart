@@ -1,7 +1,8 @@
 use std::{fmt, process::Command, time::Duration};
 
 use coldstart_core::{
-    MAX_PULL_REQUEST_CHECK_NAME_CHARS, MAX_PULL_REQUEST_INSIGHT_ITEMS,
+    MAX_PULL_REQUEST_CHECK_NAME_CHARS, MAX_PULL_REQUEST_DEPLOYMENTS,
+    MAX_PULL_REQUEST_INSIGHT_ITEMS, MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS,
     MAX_PULL_REQUEST_TITLE_CHARS, MAX_PULL_REQUEST_URL_CHARS, validate_branch_name,
 };
 use serde::{Deserialize, Serialize};
@@ -250,6 +251,30 @@ pub struct GitHubPullRequestReviewComment {
     pub html_url: Option<String>,
     #[serde(default)]
     pub user: Option<GitHubActor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GitHubDeployment {
+    pub id: u64,
+    pub sha: String,
+    pub environment: String,
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitHubDeploymentSnapshot {
+    pub deployments: Vec<GitHubDeployment>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GitHubDeploymentStatus {
+    pub state: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 pub struct GitHubClient {
@@ -551,6 +576,62 @@ impl GitHubClient {
             });
         }
         parse_pull_request_review_comments_response(&response.body)
+    }
+
+    pub fn pull_request_deployments(
+        &self,
+        token: &GitHubToken,
+        owner: &str,
+        repository: &str,
+        head_sha: &str,
+    ) -> Result<GitHubDeploymentSnapshot, GitHubError> {
+        validate_owner(owner)?;
+        validate_repository_name(repository)?;
+        validate_commit_sha(head_sha)?;
+        let path = format!(
+            "/repos/{owner}/{repository}/deployments?sha={head_sha}&per_page={limit}",
+            owner = owner.trim(),
+            repository = repository.trim(),
+            head_sha = head_sha.trim(),
+            limit = MAX_PULL_REQUEST_DEPLOYMENTS + 1,
+        );
+        let response = self.get_json(&path, Some(token))?;
+        if !(200..300).contains(&response.status) {
+            return Err(GitHubError::HttpStatus {
+                status: response.status,
+                body: truncate_error(&redact_secret(&response.body, Some(token))),
+            });
+        }
+        parse_deployments_response(&response.body, head_sha.trim())
+    }
+
+    pub fn deployment_status(
+        &self,
+        token: &GitHubToken,
+        owner: &str,
+        repository: &str,
+        deployment_id: u64,
+    ) -> Result<Option<GitHubDeploymentStatus>, GitHubError> {
+        validate_owner(owner)?;
+        validate_repository_name(repository)?;
+        if deployment_id == 0 {
+            return Err(GitHubError::InvalidResponse(
+                "deployment ID must be greater than zero".to_owned(),
+            ));
+        }
+        let path = format!(
+            "/repos/{owner}/{repository}/deployments/{deployment_id}/statuses?per_page=1",
+            owner = owner.trim(),
+            repository = repository.trim(),
+        );
+        let response = self.get_json(&path, Some(token))?;
+        if !(200..300).contains(&response.status) {
+            return Err(GitHubError::HttpStatus {
+                status: response.status,
+                body: truncate_error(&redact_secret(&response.body, Some(token))),
+            });
+        }
+        parse_deployment_status_response(&response.body)
     }
 
     fn post_json(
@@ -876,6 +957,87 @@ fn parse_pull_request_review_comments_response(
         validate_optional_https_url("review comment URL", comment.html_url.as_deref())?;
     }
     Ok(comments)
+}
+
+fn parse_deployments_response(
+    body: &str,
+    requested_sha: &str,
+) -> Result<GitHubDeploymentSnapshot, GitHubError> {
+    let mut deployments: Vec<GitHubDeployment> = serde_json::from_str(body)
+        .map_err(|error| GitHubError::InvalidResponse(error.to_string()))?;
+    if deployments.len() > MAX_PULL_REQUEST_DEPLOYMENTS + 1 {
+        return Err(GitHubError::InvalidResponse(format!(
+            "deployment list exceeds {} items",
+            MAX_PULL_REQUEST_DEPLOYMENTS + 1
+        )));
+    }
+    for deployment in &deployments {
+        if deployment.id == 0
+            || deployment.sha.trim() != requested_sha
+            || deployment.environment.trim().is_empty()
+            || deployment.environment.chars().count() > MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS
+            || deployment.environment.chars().any(char::is_control)
+        {
+            return Err(GitHubError::InvalidResponse(
+                "deployment response omitted required fields".to_owned(),
+            ));
+        }
+        if let Some(description) = deployment.description.as_deref()
+            && (description.chars().count() > MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS
+                || description.chars().any(char::is_control))
+        {
+            return Err(GitHubError::InvalidResponse(
+                "deployment description is invalid".to_owned(),
+            ));
+        }
+    }
+    let truncated = deployments.len() > MAX_PULL_REQUEST_DEPLOYMENTS;
+    deployments.truncate(MAX_PULL_REQUEST_DEPLOYMENTS);
+    Ok(GitHubDeploymentSnapshot {
+        deployments,
+        truncated,
+    })
+}
+
+fn parse_deployment_status_response(
+    body: &str,
+) -> Result<Option<GitHubDeploymentStatus>, GitHubError> {
+    let statuses: Vec<GitHubDeploymentStatus> = serde_json::from_str(body)
+        .map_err(|error| GitHubError::InvalidResponse(error.to_string()))?;
+    if statuses.len() > MAX_PULL_REQUEST_INSIGHT_ITEMS {
+        return Err(GitHubError::InvalidResponse(format!(
+            "deployment status list exceeds {MAX_PULL_REQUEST_INSIGHT_ITEMS} items"
+        )));
+    }
+    let Some(status) = statuses.into_iter().next() else {
+        return Ok(None);
+    };
+    if status.state.trim().is_empty()
+        || status.state.chars().count() > 40
+        || status.state.chars().any(char::is_control)
+    {
+        return Err(GitHubError::InvalidResponse(
+            "deployment status omitted required fields".to_owned(),
+        ));
+    }
+    if let Some(description) = status.description.as_deref()
+        && (description.chars().count() > MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS
+            || description.chars().any(char::is_control))
+    {
+        return Err(GitHubError::InvalidResponse(
+            "deployment status description is invalid".to_owned(),
+        ));
+    }
+    if let Some(updated_at) = status.updated_at.as_deref()
+        && (updated_at.trim().is_empty()
+            || updated_at.chars().count() > 64
+            || updated_at.chars().any(char::is_control))
+    {
+        return Err(GitHubError::InvalidResponse(
+            "deployment status timestamp is invalid".to_owned(),
+        ));
+    }
+    Ok(Some(status))
 }
 
 fn split_scopes(value: Option<&str>) -> Vec<String> {

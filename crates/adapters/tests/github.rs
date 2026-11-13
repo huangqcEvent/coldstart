@@ -545,3 +545,92 @@ fn rejects_insecure_check_links_and_more_than_one_hundred_insight_items() {
     assert!(matches!(error, GitHubError::InvalidResponse(_)));
     server.finish();
 }
+
+#[test]
+fn reads_bounded_deployments_for_the_requested_head_sha() {
+    let head = "abcdef1234567890abcdef1234567890abcdef12";
+    let body = serde_json::json!(
+        (0..11)
+            .map(|index| serde_json::json!({
+                "id": index + 1,
+                "sha": head,
+                "environment": format!("environment-{index}"),
+                "description": format!("deployment-{index}")
+            }))
+            .collect::<Vec<_>>()
+    )
+    .to_string();
+    let server = MockServer::start(200, vec![], &body);
+    let token = GitHubToken::new(TOKEN).expect("token must be valid");
+    let snapshot = client(&server.base_url)
+        .pull_request_deployments(&token, "octocat", "demo", head)
+        .expect("deployments must load");
+
+    assert_eq!(snapshot.deployments.len(), 10);
+    assert!(snapshot.truncated);
+    assert_eq!(snapshot.deployments[0].environment, "environment-0");
+    let captured = server.finish();
+    assert_eq!(captured.method, "GET");
+    assert_eq!(
+        captured.url,
+        format!("/repos/octocat/demo/deployments?sha={head}&per_page=11")
+    );
+    assert_eq!(
+        captured.authorization.as_deref(),
+        Some("Bearer gho_sensitive_test_token")
+    );
+}
+
+#[test]
+fn rejects_deployments_for_another_commit() {
+    let body = serde_json::json!([{
+        "id": 1,
+        "sha": "2222222222222222222222222222222222222222",
+        "environment": "production",
+        "description": null
+    }])
+    .to_string();
+    let server = MockServer::start(200, vec![], &body);
+    let token = GitHubToken::new(TOKEN).expect("token must be valid");
+    let error = client(&server.base_url)
+        .pull_request_deployments(
+            &token,
+            "octocat",
+            "demo",
+            "1111111111111111111111111111111111111111",
+        )
+        .expect_err("deployments for another SHA must fail");
+    assert!(matches!(error, GitHubError::InvalidResponse(_)));
+    server.finish();
+}
+
+#[test]
+fn reads_the_latest_deployment_status_and_accepts_an_empty_history() {
+    let body = serde_json::json!([{
+        "state": "success",
+        "description": "生产部署完成",
+        "updated_at": "2026-11-13T10:00:00Z"
+    }])
+    .to_string();
+    let server = MockServer::start(200, vec![], &body);
+    let token = GitHubToken::new(TOKEN).expect("token must be valid");
+    let status = client(&server.base_url)
+        .deployment_status(&token, "octocat", "demo", 42)
+        .expect("deployment status must load")
+        .expect("deployment status must exist");
+    assert_eq!(status.state, "success");
+    assert_eq!(status.description.as_deref(), Some("生产部署完成"));
+    let captured = server.finish();
+    assert_eq!(captured.method, "GET");
+    assert_eq!(
+        captured.url,
+        "/repos/octocat/demo/deployments/42/statuses?per_page=1"
+    );
+
+    let server = MockServer::start(200, vec![], "[]");
+    let status = client(&server.base_url)
+        .deployment_status(&token, "octocat", "demo", 42)
+        .expect("empty status history must load");
+    assert_eq!(status, None);
+    server.finish();
+}

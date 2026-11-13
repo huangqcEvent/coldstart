@@ -2,7 +2,7 @@
 
 > Vibe Coding 之前，先把项目冷启动。
 
-ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review、GitHub 草稿 PR、只读验收同步与冲突定位、开发计划和项目记忆组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文和提交完成报告。
+ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review、GitHub 草稿 PR、只读验收同步、冲突定位与部署状态、开发计划和项目记忆组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文和提交完成报告。
 
 ColdStart 本身不生成业务代码，也不替你启动 Agent。它解决的是编码之前与编码之后最容易失真的问题：现在到底要做什么、依赖是否满足、密钥和提审材料是否就绪、Agent 是否真的完成了任务，以及本次改动是否值得进入主分支。
 
@@ -67,6 +67,7 @@ ColdStart 不会自动通读整个仓库并替你还原完整架构。历史项�
   -> 人工在桌面端创建 GitHub 草稿 PR
   -> 手动刷新 PR 合并就绪、Checks、Review 与行内评论
   -> GitHub 标记冲突时，仅从本地定位冲突路径
+  -> 只读查看 PR 头提交的部署记录与最新状态
   -> 在 GitHub 人工审查并决定是否合并
   -> 解锁后继任务
   -> 在项目记忆中复盘每次变更与门禁结果
@@ -231,22 +232,24 @@ Codex 可以先通过 MCP 读取项目简报和项目记忆恢复上下文，再
 
 PR 正文包含任务、验收、验证、Review、变更文件和已知问题，并经过脱敏和长度限制。创建成功后可以打开 GitHub 链接，也可以回到 ColdStart 手动“刷新状态”。
 
-每次刷新会以 PR 当前 head 提交为边界，发起四个只读 `GET` 请求，读取并保存：
+每次刷新会以 PR 当前 head 提交为边界，先发起四个必需的只读 `GET` 请求，读取并保存：
 
 1. PR 开放、关闭、已合并状态、草稿标记与合并状态。
 2. 该提交上的 GitHub Checks。
 3. PR Review 结论与正文。
 4. PR 行内 Review 评论、文件路径和行号。
 
-四个请求全部成功后才写入本地快照；任一步失败时，本次刷新不覆盖已有 PR 状态或验收信息。Checks 汇总区会分别显示无 Checks、运行中、失败与全部通过；失败或待处理状态只用于人工判断，不会触发自动修复、重跑或合并。
+四个请求全部成功后才写入核心验收快照；任一步失败时，本次刷新不覆盖已有 PR 状态或验收信息。Checks 汇总区会分别显示无 Checks、运行中、失败与全部通过；失败或待处理状态只用于人工判断，不会触发自动修复、重跑或合并。
+
+核心快照成功后，ColdStart 还会用同一个 head SHA 读取最多 10 条 GitHub Deployment，并读取每个部署的最新状态。部署列表请求失败时，只把部署区域标记为“不可用”，不会阻断 PR、合并状态、Checks、Review 与评论落库；单个部署状态读取失败时，该环境显示“状态未知”。部署区域展示成功、失败、错误、进行中、排队、等待、停用和未知状态，不保存 payload、日志链接或原始响应。
 
 PR 卡片还会展示 GitHub 合并状态与“合并前检查”。合并冲突、暂不可合并、分支落后、草稿、GitHub 正在计算、Checks 失败或未完成、Review 要求修改都会列为待人工确认项。没有已知阻塞项也不代表已获准合并；最终仍受 GitHub 分支保护、审批和 Checks 规则约束。已合并或已关闭 PR 显示终态，不再执行合并前检查。
 
 当 GitHub 明确标记合并冲突时，ColdStart 会使用 PR 详情中的 base/head 提交，在映射的本地仓库执行只读 `git merge-tree`，展示冲突文件路径。该诊断不新增 GitHub 请求，不切换分支、不修改工作区或索引，并会禁用系统/全局 Git 配置、覆盖仓库本地自定义 merge driver，避免只读刷新执行仓库脚本。若本地缺少对应提交，界面显示“无法在本地定位”；若本地未复现冲突，也不会宣称冲突已解决。冲突路径最多保存 100 条，不保存补丁内容或 Git 原始输出。
 
-每个列表只读取第一页，最多展示 100 项；外部正文按纯文本显示，详情链接只接受 HTTPS。GitHub 返回未知状态时显示“未知”，ColdStart 不推断为通过。
+Checks、Review 和评论只读取第一页，每类最多展示 100 项；部署最多展示当前 head 提交最近 10 条。外部正文按纯文本显示，详情链接只接受 HTTPS。GitHub 返回未知状态时显示“未知”，ColdStart 不推断为通过或部署成功。
 
-ColdStart 不自动合并、不关闭 PR、不转正式 PR、不写评论、不重跑 Checks、不创建 Commit Status、不自动解决冲突或更新目标分支，也不创建 Release Tag。PR、合并状态、Checks、评论和冲突文件同步只能在桌面端人工触发，不属于 MCP 工具。
+ColdStart 不自动合并、不关闭 PR、不转正式 PR、不写评论、不重跑 Checks、不创建 Commit Status、不自动解决冲突或更新目标分支，也不创建、审批、取消、重试或回滚部署，不创建 Release Tag。PR、合并状态、Checks、评论、冲突文件和部署状态同步只能在桌面端人工触发，不属于 MCP 工具。
 
 ### 10. 复盘项目记忆
 
@@ -504,7 +507,7 @@ claim_next_work
 - 推送失败只记录风险，不伪造成功或回滚已完成状态。
 - 创建 GitHub 私有仓库需要桌面端二次确认。
 - 草稿 PR 只能由桌面端人工创建；请求正文由 ColdStart 生成，Token 不进入正文或本地记录。
-- PR 刷新只通过只读请求同步状态、合并就绪、Checks、Review 与行内评论，不执行合并、关闭、评论、重跑或 Checks 写入。
+- PR 刷新只通过只读请求同步状态、合并就绪、Checks、Review、行内评论和当前 head 提交的部署状态，不执行合并、关闭、评论、重跑、Checks 写入或部署操作。
 
 ### 执行安全
 
@@ -545,8 +548,8 @@ your-project/
 - 历史项目不会自动还原完整架构，需要文档和人工收敛。
 - 没有团队权限、多人并发审批或云端同步。
 - 不自动部署、打包、提审、发布小程序、合并分支或创建 Release Tag。
-- GitHub 草稿 PR 与验收信息同步只支持 GitHub.com 和桌面端人工触发；每次最多读取 100 个 Checks、100 条 Review、100 条行内评论，不自动翻页。
-- 在 GitHub 标记 PR 冲突时，使用本地 `merge-tree` 只读定位冲突路径；本地缺少提交时降级为不可用。不读取部署状态、Issue 或 Projects，也不会根据失败的 Checks 自动修复、重跑或合并。
+- GitHub 草稿 PR 与验收信息同步只支持 GitHub.com 和桌面端人工触发；每次最多读取 100 个 Checks、100 条 Review、100 条行内评论和 10 条 Deployment，不自动翻页。
+- 在 GitHub 标记 PR 冲突时，使用本地 `merge-tree` 只读定位冲突路径；本地缺少提交时降级为不可用。部署状态只读取当前 PR 头提交，不读取 Actions 日志、部署 payload、Issue 或 Projects，也不会根据失败的 Checks 或部署自动修复、重跑、部署或合并。
 - Review 依赖外部 OpenAI 兼容模型；模型服务故障会失败关闭而不是跳过。
 - AI Review 不能证明代码没有漏洞，也不能替代人工安全审计。
 - MCP 项目简报只基于当前已发布计划；更早计划的历史需要通过项目记忆分页查看。
@@ -606,7 +609,7 @@ your-project/
 
 ### 无法刷新 PR 验收信息
 
-刷新使用 PR 状态、Checks、Review 和行内评论四个只读请求。出现以下情况时，本次同步不会覆盖当前快照：
+刷新先使用 PR 状态、Checks、Review 和行内评论四个必需只读请求。出现以下情况时，本次同步不会覆盖当前快照：
 
 - GitHub 网络、认证或任一接口失败，通常返回 `github_request_failed` 或 `github_token_invalid`。
 - 响应缺少必要字段、head SHA 非法、链接不是 HTTPS 或返回超过上限，通常返回 `github_response_invalid` 或 `pull_request_invalid`。
@@ -614,6 +617,8 @@ your-project/
 - 仓库不再使用凭据认证，或 Windows Credential Manager 中缺少 Token，返回 `pull_request_ineligible` 或相关凭据错误。
 
 冲突文件定位是附带诊断，不参与上述 GitHub 请求的原子边界。本地缺少 base/head 提交或 `git merge-tree` 不可用时，GitHub 状态、Checks、Review 和评论仍会保存，冲突区域显示“无法在本地定位冲突文件”。本地未复现冲突也不会覆盖 GitHub 的冲突状态。
+
+部署状态也是附加只读信息。部署列表请求失败时，PR 验收快照仍会保存，部署区域显示“部署状态不可用”；单个部署状态请求失败时，该环境显示“状态未知”。这些降级不会触发部署、审批、取消或重试。
 
 修复后重新点击“刷新状态”。旧快照会保留到下一次完整同步成功。
 
@@ -659,6 +664,7 @@ pnpm --dir apps/desktop build:installer
 - [GitHub PR 验收信息只读同步设计](docs/superpowers/specs/2026-11-13-coldstart-pr-insights-design.md)
 - [GitHub PR 合并就绪只读展示设计](docs/superpowers/specs/2026-11-13-coldstart-pr-merge-readiness-design.md)
 - [GitHub PR 冲突文件本地定位设计](docs/superpowers/specs/2026-11-13-coldstart-pr-conflict-locator-design.md)
+- [GitHub PR 部署状态只读展示设计](docs/superpowers/specs/2026-11-13-coldstart-pr-deployment-status-design.md)
 - [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
 - [AI Review 实施计划](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
 - [项目记忆实施计划](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
@@ -682,7 +688,9 @@ pnpm --dir apps/desktop build:installer
 - [第十四阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-pr-merge-readiness/progress.md)
 - [第十五阶段：GitHub PR 冲突文件本地定位](docs/superpowers/plans/2026-11-13-coldstart-pr-conflict-locator.md)
 - [第十五阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-pr-conflict-locator/progress.md)
+- [第十六阶段：GitHub PR 部署状态只读展示](docs/superpowers/plans/2026-11-13-coldstart-pr-deployment-status.md)
+- [第十六阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-pr-deployment-status/progress.md)
 
 ## 技术形态
 
-Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub 草稿 PR、验收同步、合并就绪与冲突定位、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。
+Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub 草稿 PR、验收同步、合并就绪、冲突定位与部署状态、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。

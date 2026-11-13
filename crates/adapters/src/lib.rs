@@ -16,10 +16,10 @@ pub use git::{
 };
 pub use github::{
     CreateDraftPullRequestRequest, CreatePrivateRepositoryRequest, DeviceFlowPoll, DeviceFlowStart,
-    GitHubActor, GitHubCheckApp, GitHubCheckRun, GitHubClient, GitHubConnection, GitHubError,
-    GitHubPullRequest, GitHubPullRequestBranch, GitHubPullRequestReview,
-    GitHubPullRequestReviewComment, GitHubRepository, GitHubRepositoryCoordinates, GitHubToken,
-    import_gh_token,
+    GitHubActor, GitHubCheckApp, GitHubCheckRun, GitHubClient, GitHubConnection, GitHubDeployment,
+    GitHubDeploymentSnapshot, GitHubDeploymentStatus, GitHubError, GitHubPullRequest,
+    GitHubPullRequestBranch, GitHubPullRequestReview, GitHubPullRequestReviewComment,
+    GitHubRepository, GitHubRepositoryCoordinates, GitHubToken, import_gh_token,
 };
 pub use model::{
     BlueprintModel, ModelAnchor, ModelConfig, ModelError, ModelExtractionRequest, ModelSource,

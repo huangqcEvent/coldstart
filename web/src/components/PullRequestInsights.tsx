@@ -1,5 +1,6 @@
 import type {
   PullRequestCheck,
+  PullRequestDeployment,
   PullRequestInsights as PullRequestInsightsData,
   PullRequestMergeability,
   PullRequestRecord,
@@ -50,6 +51,17 @@ const mergeabilityLabels: Record<
   draft: { label: '草稿 PR', tone: 'none' },
   checking: { label: 'GitHub 正在计算合并状态', tone: 'pending' },
   unknown: { label: '合并状态未知', tone: 'none' },
+};
+
+const deploymentStateLabels: Record<PullRequestDeployment['state'], string> = {
+  success: '部署成功',
+  failure: '部署失败',
+  error: '部署错误',
+  inactive: '已停用',
+  in_progress: '部署中',
+  queued: '排队中',
+  pending: '等待中',
+  unknown: '状态未知',
 };
 
 function failedChecks(insights: PullRequestInsightsData) {
@@ -166,6 +178,74 @@ function mergeReadiness(
       };
 }
 
+function deploymentBadgeTone(state: PullRequestDeployment['state']) {
+  if (state === 'failure' || state === 'error') {
+    return 'failure';
+  }
+  if (state === 'in_progress' || state === 'queued' || state === 'pending') {
+    return 'pending';
+  }
+  if (state === 'success') {
+    return 'success';
+  }
+  return 'none';
+}
+
+function deploymentBadge(insights: PullRequestInsightsData) {
+  const details = insights.deploymentDetails;
+  if (details.state === 'not_checked') {
+    return { label: '部署状态未同步', tone: 'none' };
+  }
+  if (details.state === 'no_deployments') {
+    return { label: '无部署记录', tone: 'none' };
+  }
+  if (details.state === 'unavailable') {
+    return { label: '部署状态不可用', tone: 'none' };
+  }
+  const failed = details.deployments.filter((deployment) =>
+    ['failure', 'error'].includes(deployment.state),
+  ).length;
+  const pending = details.deployments.filter((deployment) =>
+    ['in_progress', 'queued', 'pending'].includes(deployment.state),
+  ).length;
+  const unknown = details.deployments.filter(
+    (deployment) => deployment.state === 'unknown',
+  ).length;
+  const inactive = details.deployments.filter(
+    (deployment) => deployment.state === 'inactive',
+  ).length;
+  if (failed > 0) {
+    return { label: `${failed} 个环境部署失败`, tone: 'failure' };
+  }
+  if (pending > 0) {
+    return { label: `${pending} 个环境部署未结束`, tone: 'pending' };
+  }
+  if (unknown > 0) {
+    return { label: `${unknown} 个环境部署状态未知`, tone: 'pending' };
+  }
+  if (inactive > 0) {
+    return { label: '部分环境部署已停用', tone: 'none' };
+  }
+  return {
+    label: `${details.deployments.length} 个环境部署成功`,
+    tone: 'success',
+  };
+}
+
+function deploymentDescription(insights: PullRequestInsightsData) {
+  switch (insights.deploymentDetails.state) {
+    case 'not_checked':
+      return '这是阶段 16 之前的快照。再次刷新后会读取当前 PR 头提交的部署状态。';
+    case 'no_deployments':
+      return 'GitHub 未返回当前 PR 头提交的部署记录。';
+    case 'unavailable':
+      return '本次刷新未能读取 GitHub Deployment；PR 状态、Checks、Review 与评论不受影响。';
+    case 'available':
+    default:
+      return '只展示当前 PR 头提交最近 10 条 GitHub Deployment，状态来自每个部署的最新记录。';
+  }
+}
+
 function formatSyncedAt(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -222,6 +302,7 @@ export function PullRequestInsights({
   const checks = checksBadge(insights);
   const reviews = reviewBadge(insights);
   const conflicts = conflictDiagnostic(insights);
+  const deployments = deploymentBadge(insights);
   const showConflicts =
     pullRequest.state === 'open' &&
     insights.mergeability === 'conflicted' &&
@@ -242,6 +323,9 @@ export function PullRequestInsights({
           </span>
           <span className="pr-insights__badge pr-insights__badge--neutral">
             {insights.reviewComments.length} 条行内评论
+          </span>
+          <span className={`pr-insights__badge pr-insights__badge--${deployments.tone}`}>
+            {deployments.label}
           </span>
         </div>
         <small>同步于 {formatSyncedAt(insights.syncedAt)}</small>
@@ -285,6 +369,43 @@ export function PullRequestInsights({
           ) : null}
         </section>
       ) : null}
+
+      <section
+        className={`pr-insights__deployments pr-insights__deployments--${deployments.tone}`}
+        aria-label="GitHub 部署状态"
+      >
+        <header>
+          <strong>部署状态</strong>
+          <span>GitHub 只读</span>
+        </header>
+        <p>{deploymentDescription(insights)}</p>
+        {insights.deploymentDetails.state === 'available' ? (
+          <ul>
+            {insights.deploymentDetails.deployments.map((deployment, index) => (
+              <li key={`${deployment.environment}-${index}`}>
+                <div>
+                  <strong>{deployment.environment}</strong>
+                  <span
+                    className={`pr-insights__badge pr-insights__badge--${deploymentBadgeTone(deployment.state)}`}
+                  >
+                    {deploymentStateLabels[deployment.state]}
+                  </span>
+                </div>
+                {deployment.description ? <p>{deployment.description}</p> : null}
+                <small>
+                  {deployment.statusUpdatedAt
+                    ? `状态更新于 ${formatSyncedAt(deployment.statusUpdatedAt)}`
+                    : '尚未获取部署状态记录'}
+                </small>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {insights.deploymentDetails.truncated ? (
+          <small>仅展示最近 10 条部署，完整记录请到 GitHub 查看。</small>
+        ) : null}
+        <small>部署成功不代表已获准发布或合并；ColdStart 不创建、审批、取消或重试部署。</small>
+      </section>
 
       <details className="pr-insights__details">
         <summary>查看 Checks、Review 与评论</summary>
