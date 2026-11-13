@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState } from 'react';
 
 import * as integrationApi from '../api/integrationApi';
 import * as issueApi from '../api/issueApi';
+import { GitHubProjectsPanel } from './GitHubProjectsPanel';
 import type {
   ArtifactMetadata,
   CommandError,
@@ -568,6 +569,8 @@ export function RequirementsView({
           )
         ) : null}
       </section>
+
+      <GitHubProjectsPanel path={path} repositories={repositories} busy={busy} />
     </section>
   );
 }

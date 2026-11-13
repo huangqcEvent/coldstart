@@ -3,11 +3,12 @@ use std::{path::PathBuf, sync::Arc};
 use coldstart_adapters::{GitHubIssueListState, ModelConfig, OpenAiCompatibleModel};
 use coldstart_app::{
     CreatePrivateRepositoryInput, DeviceFlowView, GitHubDevicePollView, GitHubIssueListView,
-    GitHubIssueService, GitHubSessionView, IntegrationService, IntegrationWorkspace, PlanService,
-    ProjectMemoryPage, ProjectMemoryService, ProjectService, ProjectStatus, ProjectWorkspace,
-    PullRequestService, RepositoryDraft, RepositoryValidationView, RequirementsService,
-    ReviewService, ReviewStandardContent, ReviewStandardImport, ReviewStandardManualInput,
-    ReviewStandardRevisionInput, ReviewStandardView, ReviewWorkspace, SaveCredentialInput,
+    GitHubIssueService, GitHubProjectOverviewView, GitHubProjectService, GitHubSessionView,
+    IntegrationService, IntegrationWorkspace, PlanService, ProjectMemoryPage, ProjectMemoryService,
+    ProjectService, ProjectStatus, ProjectWorkspace, PullRequestService, RepositoryDraft,
+    RepositoryValidationView, RequirementsService, ReviewService, ReviewStandardContent,
+    ReviewStandardImport, ReviewStandardManualInput, ReviewStandardRevisionInput,
+    ReviewStandardView, ReviewWorkspace, SaveCredentialInput,
 };
 use coldstart_core::{
     BlueprintContent, BlueprintEntityId, BlueprintRevisionId, CapabilityStatus, CredentialId,
@@ -668,6 +669,25 @@ pub async fn import_github_issue(
     })
     .await
     .map_err(join_error)?
+}
+
+pub fn list_github_projects_sync(
+    path: String,
+    repository_key: String,
+) -> Result<GitHubProjectOverviewView, CommandError> {
+    GitHubProjectService::new()
+        .list_projects(PathBuf::from(path), &repository_key)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn list_github_projects(
+    path: String,
+    repository_key: String,
+) -> Result<GitHubProjectOverviewView, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || list_github_projects_sync(path, repository_key))
+        .await
+        .map_err(join_error)?
 }
 
 pub fn load_review_workspace_sync(path: String) -> Result<ReviewWorkspace, CommandError> {

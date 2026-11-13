@@ -5,7 +5,8 @@ use std::{
 
 use coldstart_adapters::{
     CreateDraftPullRequestRequest, CreatePrivateRepositoryRequest, DeviceFlowPoll, GitHubClient,
-    GitHubError, GitHubIssueListState, GitHubRepositoryCoordinates, GitHubToken,
+    GitHubError, GitHubIssueListState, GitHubProjectItemKind, GitHubProjectItemState,
+    GitHubRepositoryCoordinates, GitHubToken,
 };
 use tiny_http::{Header, Response, Server, StatusCode};
 
@@ -781,6 +782,206 @@ fn reads_one_issue_and_rejects_invalid_or_pull_request_entries() {
     let error = client(&server.base_url)
         .repository_issue(&token, "octocat", "demo", 9)
         .expect_err("pull request must fail");
+    assert!(matches!(error, GitHubError::InvalidResponse(_)));
+    server.finish();
+}
+
+#[test]
+fn lists_repository_projects_v2_with_bounded_items_and_fields() {
+    let body = serde_json::json!({
+        "data": {
+            "repository": {
+                "projectsV2": {
+                    "pageInfo": { "hasNextPage": true },
+                    "nodes": [
+                        {
+                            "id": "PVT_kwDO_project_1",
+                            "number": 3,
+                            "title": "冷启动开发计划",
+                            "url": "https://github.com/orgs/octocat/projects/3",
+                            "closed": false,
+                            "updatedAt": "2026-11-13T12:00:00Z",
+                            "items": {
+                                "totalCount": 31,
+                                "pageInfo": { "hasNextPage": true },
+                                "nodes": [
+                                    {
+                                        "id": "PVTI_kwDO_item_1",
+                                        "updatedAt": "2026-11-13T11:30:00Z",
+                                        "fieldValues": {
+                                            "nodes": [
+                                                {
+                                                    "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                                                    "name": "进行中",
+                                                    "field": { "name": "Status" }
+                                                },
+                                                {
+                                                    "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                                                    "name": "P1",
+                                                    "field": { "name": "Priority" }
+                                                },
+                                                {
+                                                    "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                                                    "name": "Feature",
+                                                    "field": { "name": "Type" }
+                                                },
+                                                {
+                                                    "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                                                    "name": "Alice",
+                                                    "field": { "name": "Owner" }
+                                                },
+                                                {
+                                                    "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                                                    "name": "S1",
+                                                    "field": { "name": "Sprint" }
+                                                },
+                                                {
+                                                    "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                                                    "name": "Web",
+                                                    "field": { "name": "Area" }
+                                                },
+                                                {
+                                                    "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                                                    "name": "M",
+                                                    "field": { "name": "Size" }
+                                                },
+                                                {
+                                                    "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                                                    "name": "Low",
+                                                    "field": { "name": "Risk" }
+                                                },
+                                                {
+                                                    "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                                                    "name": "Build",
+                                                    "field": { "name": "Stage" }
+                                                },
+                                                {
+                                                    "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                                                    "name": "v1",
+                                                    "field": { "name": "Release" }
+                                                },
+                                                {
+                                                    "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                                                    "name": "ignored",
+                                                    "field": { "name": "Extra" }
+                                                }
+                                            ]
+                                        },
+                                        "content": {
+                                            "__typename": "Issue",
+                                            "number": 7,
+                                            "title": "新增导出",
+                                            "state": "OPEN",
+                                            "url": "https://github.com/octocat/demo/issues/7",
+                                            "updatedAt": "2026-11-13T11:00:00Z"
+                                        }
+                                    },
+                                    {
+                                        "id": "PVTI_kwDO_item_2",
+                                        "updatedAt": "2026-11-13T10:00:00Z",
+                                        "fieldValues": { "nodes": [] },
+                                        "content": {
+                                            "__typename": "DraftIssue",
+                                            "title": "待补充验收说明"
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            }
+        }
+    })
+    .to_string();
+    let server = MockServer::start(200, vec![], &body);
+    let token = GitHubToken::new(TOKEN).expect("token must be valid");
+    let overview = client(&server.base_url)
+        .list_repository_projects(&token, "octocat", "demo")
+        .expect("projects must load");
+
+    assert!(overview.truncated);
+    assert_eq!(overview.projects.len(), 1);
+    let project = &overview.projects[0];
+    assert_eq!(project.number, 3);
+    assert_eq!(project.title, "冷启动开发计划");
+    assert_eq!(project.total_items, 31);
+    assert!(project.truncated);
+    assert_eq!(project.items.len(), 2);
+    assert_eq!(project.items[0].kind, GitHubProjectItemKind::Issue);
+    assert_eq!(project.items[0].state, Some(GitHubProjectItemState::Open));
+    assert_eq!(project.items[0].fields[0].name, "Status");
+    assert_eq!(project.items[0].fields[0].value, "进行中");
+    assert_eq!(project.items[0].fields.len(), 10);
+    assert!(
+        !project.items[0]
+            .fields
+            .iter()
+            .any(|field| field.name == "Extra")
+    );
+    assert_eq!(project.items[1].kind, GitHubProjectItemKind::DraftIssue);
+    let captured = server.finish();
+    assert_eq!(captured.method, "POST");
+    assert_eq!(captured.url, "/graphql");
+    assert_eq!(
+        captured.authorization.as_deref(),
+        Some("Bearer gho_sensitive_test_token")
+    );
+    assert!(captured.body.contains("projectsV2(first: 5)"));
+    assert!(captured.body.contains("items(first: 30)"));
+    assert!(
+        captured
+            .body
+            .contains("ProjectV2ItemFieldSingleSelectValue")
+    );
+    assert!(!captured.body.contains(TOKEN));
+}
+
+#[test]
+fn rejects_graphql_errors_and_untrusted_project_urls() {
+    let body = serde_json::json!({
+        "data": null,
+        "errors": [{ "message": format!("Resource not accessible by personal access token {TOKEN}") }]
+    })
+    .to_string();
+    let server = MockServer::start(200, vec![], &body);
+    let token = GitHubToken::new(TOKEN).expect("token must be valid");
+    let error = client(&server.base_url)
+        .list_repository_projects(&token, "octocat", "demo")
+        .expect_err("GraphQL errors must fail");
+    assert!(matches!(error, GitHubError::InvalidResponse(_)));
+    assert!(error.to_string().contains("Resource not accessible"));
+    assert!(!error.to_string().contains(TOKEN));
+    assert!(error.to_string().contains("***"));
+    server.finish();
+
+    let body = serde_json::json!({
+        "data": {
+            "repository": {
+                "projectsV2": {
+                    "pageInfo": { "hasNextPage": false },
+                    "nodes": [{
+                        "id": "PVT_kwDO_project_1",
+                        "number": 3,
+                        "title": "非法链接",
+                        "url": "http://github.com/orgs/octocat/projects/3",
+                        "closed": false,
+                        "updatedAt": "2026-11-13T12:00:00Z",
+                        "items": {
+                            "totalCount": 0,
+                            "pageInfo": { "hasNextPage": false },
+                            "nodes": []
+                        }
+                    }]
+                }
+            }
+        }
+    })
+    .to_string();
+    let server = MockServer::start(200, vec![], &body);
+    let error = client(&server.base_url)
+        .list_repository_projects(&token, "octocat", "demo")
+        .expect_err("insecure project URL must fail");
     assert!(matches!(error, GitHubError::InvalidResponse(_)));
     server.finish();
 }

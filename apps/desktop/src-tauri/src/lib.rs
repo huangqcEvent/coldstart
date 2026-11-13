@@ -35,6 +35,7 @@ pub fn run() {
             commands::create_github_private_repository,
             commands::list_github_issues,
             commands::import_github_issue,
+            commands::list_github_projects,
             commands::load_review_workspace,
             commands::save_review_configuration,
             commands::import_review_standard,

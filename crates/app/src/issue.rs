@@ -5,14 +5,14 @@ use coldstart_adapters::{
     GitHubClient, GitHubError, GitHubIssue, GitHubIssueListState, GitHubIssueState,
     GitHubRepositoryCoordinates, GitHubToken, SecretStore, WindowsSecretStore,
 };
-use coldstart_core::{CredentialKind, Repository, RepositoryAuthMode};
+use coldstart_core::Repository;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AppError, ProjectWorkspace, context::OpenProject, requirements::import_requirement_file_as,
+    AppError, ProjectWorkspace, context::OpenProject,
+    github_access::resolve_github_repository_access, requirements::import_requirement_file_as,
 };
 
-const GITHUB_PROVIDER: &str = "github";
 const ISSUE_BODY_PREVIEW_CHARS: usize = 360;
 
 pub struct GitHubIssueService {
@@ -154,43 +154,14 @@ impl GitHubIssueService {
         project: &OpenProject,
         repository_key: &str,
     ) -> Result<(Repository, GitHubRepositoryCoordinates, GitHubToken), AppError> {
-        let repository = project
-            .database
-            .repository_by_key(&project.project.id, repository_key)?
-            .ok_or_else(|| AppError::RepositoryNotFound(repository_key.to_owned()))?;
-        if repository.auth_mode != RepositoryAuthMode::Credential {
-            return Err(AppError::GitHubIssueIneligible(
-                repository.key.clone(),
-                "仓库必须使用 GitHub OAuth Token 或 Personal Access Token".to_owned(),
-            ));
-        }
-        let credential_id = repository
-            .credential_id
-            .ok_or(AppError::RepositoryCredentialMissing(repository.id))?;
-        let credential = project
-            .database
-            .credential(&project.project.id, &credential_id)?
-            .ok_or(AppError::CredentialNotFound(credential_id))?;
-        if !credential
-            .provider
-            .trim()
-            .eq_ignore_ascii_case(GITHUB_PROVIDER)
-            || !matches!(
-                credential.kind,
-                CredentialKind::OAuthToken | CredentialKind::PersonalAccessToken
-            )
-        {
-            return Err(AppError::GitHubIssueIneligible(
-                repository.key.clone(),
-                "仓库凭据不是 GitHub OAuth Token 或 Personal Access Token".to_owned(),
-            ));
-        }
-        let coordinates = GitHubRepositoryCoordinates::from_remote_url(&repository.remote_url)
-            .map_err(|error| {
-                AppError::GitHubIssueIneligible(repository.key.clone(), error.to_string())
-            })?;
-        let token = GitHubToken::new(self.secrets.get(&credential.secret_ref)?)?;
-        Ok((repository, coordinates, token))
+        let access = resolve_github_repository_access(
+            project,
+            repository_key,
+            self.secrets.as_ref(),
+            self.github.as_ref(),
+            AppError::GitHubIssueIneligible,
+        )?;
+        Ok((access.repository, access.coordinates, access.token))
     }
 }
 

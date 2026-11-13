@@ -2,7 +2,7 @@
 
 > Vibe Coding 之前，先把项目冷启动。
 
-ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review、GitHub 草稿 PR、只读验收同步、冲突定位与部署状态、开发计划和项目记忆组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文和提交完成报告。
+ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review、GitHub 草稿 PR、只读验收同步、冲突定位与部署状态、GitHub Project 协作概览、开发计划和项目记忆组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文和提交完成报告。
 
 ColdStart 本身不生成业务代码，也不替你启动 Agent。它解决的是编码之前与编码之后最容易失真的问题：现在到底要做什么、依赖是否满足、密钥和提审材料是否就绪、Agent 是否真的完成了任务，以及本次改动是否值得进入主分支。
 
@@ -59,6 +59,7 @@ ColdStart 不会自动通读整个仓库并替你还原完整架构。历史项�
   -> 生成并人工校正蓝图
   -> 编译带依赖关系的开发计划
   -> 配置仓库、凭据、验证命令与代码规范
+  -> 可选：只读查看仓库关联的 GitHub Project 外部进度
   -> Codex 通过 MCP 主动领取任务
   -> 提交结构化报告、分支、Commit 与证据
   -> ColdStart 校验真实 Git 变更并独立执行验证命令
@@ -140,11 +141,13 @@ D:\work\your-project
 
 ## 完整工作流
 
-### 1. 导入需求与 GitHub Issue
+### 1. 导入需求、GitHub Issue 与 Project 概览
 
 在“需求导入”中导入一个或多个 Markdown、TXT、DOCX、PDF 文档。单个文档不超过 20 MiB，单次抽取锚点文本总量不超过 80,000 字符。扫描型 PDF 暂不执行 OCR。
 
 同一页面还可以从已映射的 GitHub.com 仓库只读读取开放、已关闭或全部 Issue，每个状态最多 50 条最近更新记录。列表会过滤 Pull Request，并展示标题、正文预览、标签、更新时间、评论数和链接。读取后可再按编号、标题、标签或正文预览搜索，按标签过滤，或只查看尚未导入的记录；这些筛选只作用于当前快照。人工选择单条 Issue 后，ColdStart 使用最新快照生成 `github-issue-<number>.md`，复用本地锚点与来源哈希；同一 Issue 不能重复导入。Issue 只作为外部需求资料，评论、附件和 Projects 不会导入，正文不会触发命令，也不会自动生成蓝图。
+
+同一页面还提供“GitHub Project 只读概览”。选择已映射的 GitHub.com 仓库后，可以手动读取最多 5 个 Projects v2；每个项目最多展示 30 个条目（Issue、PR、草稿或受限内容）和 10 个单选项字段，并标注项目或条目截断。该概览只用于人工确认外部协作进度，不写入 SQLite、不产生项目事件、不导入需求、蓝图或计划，也不会改变 ColdStart 任务状态。OAuth 授权需要 `read:project` scope，PAT 需要 Projects 只读权限。
 
 生成蓝图前需要配置 OpenAI 兼容服务的 Base URL、模型名称和 API Key，并明确同意将需求文本发送到该服务。需求模型 Key 只存在于当前界面内存和本次 IPC 调用中，不写入 SQLite、事件、日志或项目文件；切换页面或重启后需要重新输入。
 
@@ -501,7 +504,7 @@ claim_next_work
 - 删除凭据元数据时会同步删除对应系统凭据条目。
 - Review 模型凭据通过引用选择；实际值只在执行评审时读取到内存。
 - 需求生成蓝图的 API Key 只存在于当前界面内存与本次 IPC 调用中，重启后清空。
-- 读取 GitHub Issue 使用仓库已绑定的 OAuth/PAT 凭据；Token 只进入 Rust 请求头，不进入前端、SQLite、事件、日志或项目文件。
+- 读取 GitHub Issue 与 Project 使用仓库已绑定的 OAuth/PAT 凭据；Token 只进入 Rust 请求头，不进入前端、SQLite、事件、日志或项目文件。
 
 ### 仓库安全
 
@@ -511,7 +514,8 @@ claim_next_work
 - 创建 GitHub 私有仓库需要桌面端二次确认。
 - 草稿 PR 只能由桌面端人工创建；请求正文由 ColdStart 生成，Token 不进入正文或本地记录。
 - PR 刷新只通过只读请求同步状态、合并就绪、Checks、Review、行内评论和当前 head 提交的部署状态，不执行合并、关闭、评论、重跑、Checks 写入或部署操作。
-- GitHub Issue 导入只能由桌面端人工触发，只读开放 Issue；不创建、编辑、关闭、评论或分配 Issue，也不增加 MCP 工具。
+- GitHub Issue 导入只能由桌面端人工触发，可只读开放、已关闭或全部 Issue；不创建、编辑、关闭、评论或分配 Issue。
+- GitHub Project 只能由桌面端人工触发只读概览；不写 Project、字段或条目，不导入需求或计划，也不增加 MCP 工具。
 
 ### 执行安全
 
@@ -554,7 +558,8 @@ your-project/
 - 不自动部署、打包、提审、发布小程序、合并分支或创建 Release Tag。
 - GitHub 草稿 PR 与验收信息同步只支持 GitHub.com 和桌面端人工触发；每次最多读取 100 个 Checks、100 条 Review、100 条行内评论和 10 条 Deployment，不自动翻页。
 - 在 GitHub 标记 PR 冲突时，使用本地 `merge-tree` 只读定位冲突路径；本地缺少提交时降级为不可用。部署状态只读取当前 PR 头提交，不读取 Actions 日志或部署 payload，也不会根据失败的 Checks 或部署自动修复、重跑、部署或合并。
-- GitHub Issue 导入只支持 GitHub.com 上与已映射仓库关联的开放或已关闭 Issue，每种状态最多读取 50 条；关键词、标签和导入状态筛选只作用于当前快照，不调用 Search API、不自动翻页、不导入评论、附件、Projects 或 Milestones，也不会自动刷新或生成蓝图。
+- GitHub Issue 导入只支持 GitHub.com 上与已映射仓库关联的开放、已关闭或全部 Issue，每种状态最多读取 50 条；关键词、标签和导入状态筛选只作用于当前快照，不调用 Search API、不自动翻页、不导入评论、附件、Projects 或 Milestones，也不会自动刷新或生成蓝图。
+- GitHub Project 概览只支持 GitHub.com，手动读取最多 5 个项目、每个项目 30 个条目和 10 个单选项字段；不支持视图、评论、过滤自动化，不自动翻页、不后台轮询，也不会把条目导入 ColdStart。
 - Review 依赖外部 OpenAI 兼容模型；模型服务故障会失败关闭而不是跳过。
 - AI Review 不能证明代码没有漏洞，也不能替代人工安全审计。
 - MCP 项目简报只基于当前已发布计划；更早计划的历史需要通过项目记忆分页查看。
@@ -627,6 +632,17 @@ your-project/
 
 修复后重新点击“刷新状态”。旧快照会保留到下一次完整同步成功。
 
+### 无法读取 GitHub Project
+
+按以下顺序检查：
+
+1. 仓库是否已映射，远程是否为 GitHub.com，并使用 OAuth Token 或 PAT 凭据认证。
+2. OAuth 授权是否包含 `read:project`；使用 PAT 时，Token 是否具备 Projects 只读权限。
+3. 项目是否已关联到该仓库；组织级 Project 需要通过仓库可见的 Projects v2 连接访问。
+4. 是否把“无可见项目”误认为加载失败。空结果会显示独立空态，不会伪造项目。
+
+常见错误码：`github_project_ineligible` 表示仓库或凭据不符合条件，`github_response_invalid` 表示 GraphQL 返回错误、权限不足或响应结构非法，`github_request_failed` 表示网络或 GitHub 请求失败。失败时当前 Project 视图会清空，不会保留上次成功数据。
+
 ### 安装后找不到 MCP
 
 安装版计划看板会优先定位桌面 EXE 同级的 `coldstart-mcp.exe`，也会识别 Tauri 的 `resources\coldstart-mcp.exe`。复制 MCP 配置前确认文件存在；源码运行时可先执行 `cargo build -p coldstart-mcp --release`。
@@ -672,6 +688,7 @@ pnpm --dir apps/desktop build:installer
 - [GitHub PR 部署状态只读展示设计](docs/superpowers/specs/2026-11-13-coldstart-pr-deployment-status-design.md)
 - [GitHub Issue 需求收集与导入设计](docs/superpowers/specs/2026-11-13-coldstart-github-issue-intake-design.md)
 - [GitHub Issue 收件箱筛选增强设计](docs/superpowers/specs/2026-11-13-coldstart-issue-inbox-filters-design.md)
+- [GitHub Project 只读概览设计](docs/superpowers/specs/2026-11-13-coldstart-github-projects-design.md)
 - [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
 - [AI Review 实施计划](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
 - [项目记忆实施计划](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
@@ -701,7 +718,9 @@ pnpm --dir apps/desktop build:installer
 - [第十七阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-github-issue-intake/progress.md)
 - [第十八阶段：GitHub Issue 收件箱筛选增强](docs/superpowers/plans/2026-11-13-coldstart-issue-inbox-filters.md)
 - [第十八阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-issue-inbox-filters/progress.md)
+- [第十九阶段：GitHub Project 只读概览](docs/superpowers/plans/2026-11-13-coldstart-github-projects.md)
+- [第十九阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-github-projects/progress.md)
 
 ## 技术形态
 
-Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub Issue 导入、草稿 PR、验收同步、合并就绪、冲突定位与部署状态、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。
+Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub Issue 导入、Project 只读 GraphQL、草稿 PR、验收同步、合并就绪、冲突定位与部署状态、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。

@@ -20,6 +20,13 @@ pub const MAX_GITHUB_ISSUE_BODY_CHARS: usize = 30_000;
 pub const MAX_GITHUB_ISSUE_LABELS: usize = 20;
 pub const MAX_GITHUB_ISSUE_LABEL_CHARS: usize = 50;
 const MAX_GITHUB_ISSUE_RAW_ITEMS: usize = 100;
+pub const MAX_GITHUB_PROJECTS: usize = 5;
+pub const MAX_GITHUB_PROJECT_ITEMS: usize = 30;
+pub const MAX_GITHUB_PROJECT_FIELDS: usize = 10;
+pub const MAX_GITHUB_PROJECT_TITLE_CHARS: usize = 200;
+pub const MAX_GITHUB_PROJECT_ITEM_TITLE_CHARS: usize = 256;
+pub const MAX_GITHUB_PROJECT_FIELD_CHARS: usize = 80;
+const MAX_GITHUB_PROJECT_NODE_ID_CHARS: usize = 200;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct GitHubToken(String);
@@ -324,6 +331,58 @@ pub struct GitHubIssue {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitHubIssueList {
     pub issues: Vec<GitHubIssue>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitHubProjectItemKind {
+    Issue,
+    PullRequest,
+    DraftIssue,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitHubProjectItemState {
+    Open,
+    Closed,
+    Merged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitHubProjectField {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitHubProjectItem {
+    pub id: String,
+    pub kind: GitHubProjectItemKind,
+    pub number: Option<u64>,
+    pub title: String,
+    pub state: Option<GitHubProjectItemState>,
+    pub html_url: Option<String>,
+    pub updated_at: Option<String>,
+    pub fields: Vec<GitHubProjectField>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitHubProject {
+    pub id: String,
+    pub number: u64,
+    pub title: String,
+    pub html_url: String,
+    pub closed: bool,
+    pub updated_at: String,
+    pub total_items: u64,
+    pub items: Vec<GitHubProjectItem>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitHubProjectOverview {
+    pub projects: Vec<GitHubProject>,
     pub truncated: bool,
 }
 
@@ -732,6 +791,71 @@ impl GitHubClient {
             });
         }
         parse_issue_response(&response.body)
+    }
+
+    pub fn list_repository_projects(
+        &self,
+        token: &GitHubToken,
+        owner: &str,
+        repository: &str,
+    ) -> Result<GitHubProjectOverview, GitHubError> {
+        validate_owner(owner)?;
+        validate_repository_name(repository)?;
+        let query = format!(
+            r#"query RepositoryProjects($owner: String!, $name: String!) {{
+  repository(owner: $owner, name: $name) {{
+    projectsV2(first: {MAX_GITHUB_PROJECTS}) {{
+      pageInfo {{ hasNextPage }}
+      nodes {{
+        id
+        number
+        title
+        url
+        closed
+        updatedAt
+        items(first: {MAX_GITHUB_PROJECT_ITEMS}) {{
+          totalCount
+          pageInfo {{ hasNextPage }}
+          nodes {{
+            id
+            updatedAt
+            fieldValues(first: {MAX_GITHUB_PROJECT_FIELDS}) {{
+              nodes {{
+                __typename
+                ... on ProjectV2ItemFieldSingleSelectValue {{
+                  name
+                  field {{ ... on ProjectV2SingleSelectField {{ name }} }}
+                }}
+              }}
+            }}
+            content {{
+              __typename
+              ... on Issue {{ number title state url updatedAt }}
+              ... on PullRequest {{ number title state url updatedAt }}
+              ... on DraftIssue {{ title }}
+            }}
+          }}
+        }}
+      }}
+    }}
+  }}
+}}"#
+        );
+        let body = serde_json::json!({
+            "query": query,
+            "variables": {
+                "owner": owner.trim(),
+                "name": repository.trim(),
+            },
+        });
+        let response = self.post_json(&self.api_base, "/graphql", &body, Some(token))?;
+        if !(200..300).contains(&response.status) {
+            return Err(GitHubError::HttpStatus {
+                status: response.status,
+                body: truncate_error(&redact_secret(&response.body, Some(token))),
+            });
+        }
+        parse_repository_projects_response(&response.body, token)
     }
 
     fn post_json(
@@ -1278,6 +1402,350 @@ fn parse_issue_list_response(body: &str) -> Result<GitHubIssueList, GitHubError>
         raw_count >= MAX_GITHUB_ISSUE_RAW_ITEMS || issues.len() > MAX_GITHUB_ISSUE_ITEMS;
     issues.truncate(MAX_GITHUB_ISSUE_ITEMS);
     Ok(GitHubIssueList { issues, truncated })
+}
+
+#[derive(Deserialize)]
+struct RawGraphQlResponse {
+    #[serde(default)]
+    data: Option<RawRepositoryProjectsData>,
+    #[serde(default)]
+    errors: Vec<RawGraphQlError>,
+}
+
+#[derive(Deserialize)]
+struct RawGraphQlError {
+    #[serde(default)]
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct RawRepositoryProjectsData {
+    #[serde(default)]
+    repository: Option<RawRepositoryProjects>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawRepositoryProjects {
+    projects_v2: RawProjectConnection,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawProjectConnection {
+    #[serde(default)]
+    nodes: Vec<RawProject>,
+    page_info: RawPageInfo,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawProject {
+    id: String,
+    number: u64,
+    title: String,
+    url: String,
+    closed: bool,
+    updated_at: String,
+    items: RawProjectItemConnection,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawProjectItemConnection {
+    total_count: u64,
+    #[serde(default)]
+    nodes: Vec<RawProjectItem>,
+    page_info: RawPageInfo,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawPageInfo {
+    has_next_page: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawProjectItem {
+    id: String,
+    #[serde(default)]
+    updated_at: Option<String>,
+    #[serde(default)]
+    field_values: RawFieldValueConnection,
+    #[serde(default)]
+    content: Option<RawProjectContent>,
+}
+
+#[derive(Deserialize, Default)]
+struct RawFieldValueConnection {
+    #[serde(default)]
+    nodes: Vec<RawFieldValue>,
+}
+
+#[derive(Deserialize)]
+struct RawFieldValue {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    field: Option<RawFieldReference>,
+}
+
+#[derive(Deserialize)]
+struct RawFieldReference {
+    #[serde(default)]
+    name: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawProjectContent {
+    #[serde(rename = "__typename")]
+    typename: String,
+    #[serde(default)]
+    number: Option<u64>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    updated_at: Option<String>,
+}
+
+fn parse_repository_projects_response(
+    body: &str,
+    token: &GitHubToken,
+) -> Result<GitHubProjectOverview, GitHubError> {
+    let response: RawGraphQlResponse = serde_json::from_str(body)
+        .map_err(|error| GitHubError::InvalidResponse(error.to_string()))?;
+    if !response.errors.is_empty() {
+        let message = response
+            .errors
+            .first()
+            .map(|error| redact_secret(&safe_graphql_error(&error.message), Some(token)))
+            .filter(|message| !message.is_empty())
+            .unwrap_or_else(|| "unknown GraphQL error".to_owned());
+        return Err(GitHubError::InvalidResponse(format!(
+            "GitHub Projects query failed: {message}"
+        )));
+    }
+    let data = response.data.ok_or_else(|| {
+        GitHubError::InvalidResponse("GitHub Projects data is missing".to_owned())
+    })?;
+    let repository = data.repository.ok_or_else(|| {
+        GitHubError::InvalidResponse("GitHub repository is unavailable to this token".to_owned())
+    })?;
+    if repository.projects_v2.nodes.len() > MAX_GITHUB_PROJECTS {
+        return Err(GitHubError::InvalidResponse(format!(
+            "GitHub Projects response exceeds {MAX_GITHUB_PROJECTS} projects"
+        )));
+    }
+    let truncated = repository.projects_v2.page_info.has_next_page;
+    let projects = repository
+        .projects_v2
+        .nodes
+        .into_iter()
+        .map(parse_project)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(GitHubProjectOverview {
+        projects,
+        truncated,
+    })
+}
+
+fn parse_project(raw: RawProject) -> Result<GitHubProject, GitHubError> {
+    validate_project_node_id(&raw.id, "project")?;
+    if raw.number == 0 {
+        return Err(GitHubError::InvalidResponse(
+            "project number must be greater than zero".to_owned(),
+        ));
+    }
+    validate_project_text(&raw.title, "project title", MAX_GITHUB_PROJECT_TITLE_CHARS)?;
+    let html_url = validate_github_project_url("project URL", &raw.url)?;
+    validate_issue_timestamp(&raw.updated_at)?;
+    if raw.items.nodes.len() > MAX_GITHUB_PROJECT_ITEMS {
+        return Err(GitHubError::InvalidResponse(format!(
+            "GitHub project item response exceeds {MAX_GITHUB_PROJECT_ITEMS} items"
+        )));
+    }
+    let item_count = raw.items.nodes.len();
+    let items = raw
+        .items
+        .nodes
+        .into_iter()
+        .map(parse_project_item)
+        .collect::<Result<Vec<_>, _>>()?;
+    let truncated = raw.items.page_info.has_next_page
+        || raw.items.total_count > u64::try_from(item_count).unwrap_or(u64::MAX);
+    Ok(GitHubProject {
+        id: raw.id.trim().to_owned(),
+        number: raw.number,
+        title: raw.title.trim().to_owned(),
+        html_url,
+        closed: raw.closed,
+        updated_at: raw.updated_at.trim().to_owned(),
+        total_items: raw.items.total_count,
+        items,
+        truncated,
+    })
+}
+
+fn parse_project_item(raw: RawProjectItem) -> Result<GitHubProjectItem, GitHubError> {
+    validate_project_node_id(&raw.id, "project item")?;
+    let updated_at = raw
+        .updated_at
+        .as_deref()
+        .map(|value| {
+            validate_issue_timestamp(value)?;
+            Ok(value.trim().to_owned())
+        })
+        .transpose()?;
+    let mut fields = Vec::new();
+    for field in raw
+        .field_values
+        .nodes
+        .into_iter()
+        .take(MAX_GITHUB_PROJECT_FIELDS)
+    {
+        let Some(field_name) = field.field.and_then(|reference| reference.name) else {
+            continue;
+        };
+        let Some(value) = field.name else {
+            continue;
+        };
+        if field_name.trim().is_empty() || value.trim().is_empty() {
+            continue;
+        }
+        validate_project_text(
+            &field_name,
+            "project field name",
+            MAX_GITHUB_PROJECT_FIELD_CHARS,
+        )?;
+        validate_project_text(
+            &value,
+            "project field value",
+            MAX_GITHUB_PROJECT_FIELD_CHARS,
+        )?;
+        fields.push(GitHubProjectField {
+            name: field_name.trim().to_owned(),
+            value: value.trim().to_owned(),
+        });
+    }
+    let Some(content) = raw.content else {
+        return Ok(GitHubProjectItem {
+            id: raw.id.trim().to_owned(),
+            kind: GitHubProjectItemKind::Unavailable,
+            number: None,
+            title: "无法读取的项目条目".to_owned(),
+            state: None,
+            html_url: None,
+            updated_at,
+            fields,
+        });
+    };
+    let kind = match content.typename.as_str() {
+        "Issue" => GitHubProjectItemKind::Issue,
+        "PullRequest" => GitHubProjectItemKind::PullRequest,
+        "DraftIssue" => GitHubProjectItemKind::DraftIssue,
+        _ => GitHubProjectItemKind::Unavailable,
+    };
+    let title = content
+        .title
+        .as_deref()
+        .unwrap_or(if kind == GitHubProjectItemKind::Unavailable {
+            "无法读取的项目条目"
+        } else {
+            "未命名条目"
+        });
+    validate_project_text(
+        title,
+        "project item title",
+        MAX_GITHUB_PROJECT_ITEM_TITLE_CHARS,
+    )?;
+    let state = content
+        .state
+        .as_deref()
+        .map(parse_project_item_state)
+        .transpose()?;
+    let number = content.number.filter(|number| *number > 0);
+    let html_url = content
+        .url
+        .as_deref()
+        .map(|url| validate_github_project_url("project item URL", url))
+        .transpose()?;
+    let updated_at = match (updated_at, content.updated_at.as_deref()) {
+        (Some(value), _) => Some(value),
+        (None, Some(value)) => {
+            validate_issue_timestamp(value)?;
+            Some(value.trim().to_owned())
+        }
+        (None, None) => None,
+    };
+    Ok(GitHubProjectItem {
+        id: raw.id.trim().to_owned(),
+        kind,
+        number,
+        title: title.trim().to_owned(),
+        state,
+        html_url,
+        updated_at,
+        fields,
+    })
+}
+
+fn parse_project_item_state(value: &str) -> Result<GitHubProjectItemState, GitHubError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "open" => Ok(GitHubProjectItemState::Open),
+        "closed" => Ok(GitHubProjectItemState::Closed),
+        "merged" => Ok(GitHubProjectItemState::Merged),
+        _ => Err(GitHubError::InvalidResponse(
+            "project item state is invalid".to_owned(),
+        )),
+    }
+}
+
+fn validate_project_node_id(value: &str, field: &str) -> Result<(), GitHubError> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.chars().count() > MAX_GITHUB_PROJECT_NODE_ID_CHARS
+        || value.chars().any(char::is_control)
+    {
+        return Err(GitHubError::InvalidResponse(format!(
+            "{field} ID is invalid"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_project_text(value: &str, field: &str, limit: usize) -> Result<(), GitHubError> {
+    if value.trim().is_empty()
+        || value.chars().count() > limit
+        || value.chars().any(char::is_control)
+    {
+        return Err(GitHubError::InvalidResponse(format!("{field} is invalid")));
+    }
+    Ok(())
+}
+
+fn validate_github_project_url(field: &str, value: &str) -> Result<String, GitHubError> {
+    validate_optional_https_url(field, Some(value))?;
+    let value = value.trim();
+    if !value.starts_with("https://github.com/") {
+        return Err(GitHubError::InvalidResponse(format!(
+            "{field} must use github.com HTTPS"
+        )));
+    }
+    Ok(value.to_owned())
+}
+
+fn safe_graphql_error(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(MAX_ERROR_BODY_CHARS)
+        .collect()
 }
 
 fn split_scopes(value: Option<&str>) -> Vec<String> {

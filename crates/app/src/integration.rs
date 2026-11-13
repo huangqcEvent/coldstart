@@ -426,7 +426,7 @@ impl IntegrationService {
 
     pub fn start_github_device_flow(&self, client_id: &str) -> Result<DeviceFlowView, AppError> {
         let client = self.github.as_ref().ok_or(AppError::GitHubNotConfigured)?;
-        let flow = client.start_device_flow(client_id, &["repo", "read:org"])?;
+        let flow = client.start_device_flow(client_id, &["repo", "read:org", "read:project"])?;
         let session_id = Uuid::new_v4().to_string();
         let mut flows = self
             .pending_device_flows

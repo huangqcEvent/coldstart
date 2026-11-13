@@ -686,6 +686,49 @@ export interface GitHubIssueListView {
   truncated: boolean;
 }
 
+export type GitHubProjectItemKind =
+  | 'issue'
+  | 'pull_request'
+  | 'draft_issue'
+  | 'unavailable';
+export type GitHubProjectItemState = 'open' | 'closed' | 'merged';
+
+export interface GitHubProjectFieldView {
+  name: string;
+  value: string;
+}
+
+export interface GitHubProjectItemView {
+  id: string;
+  kind: GitHubProjectItemKind;
+  number: number | null;
+  title: string;
+  state: GitHubProjectItemState | null;
+  htmlUrl: string | null;
+  updatedAt: string | null;
+  fields: GitHubProjectFieldView[];
+}
+
+export interface GitHubProjectView {
+  id: string;
+  number: number;
+  title: string;
+  htmlUrl: string;
+  closed: boolean;
+  updatedAt: string;
+  totalItems: number;
+  items: GitHubProjectItemView[];
+  truncated: boolean;
+}
+
+export interface GitHubProjectOverviewView {
+  repositoryKey: string;
+  repositoryName: string;
+  repositoryLabel: string;
+  projects: GitHubProjectView[];
+  truncated: boolean;
+}
+
 export type ReviewSeverity = 'critical' | 'high' | 'medium' | 'low';
 
 export type ReviewCategory =

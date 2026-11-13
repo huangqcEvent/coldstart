@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from './App';
+import * as githubProjectApi from './api/githubProjectApi';
 import * as integrationApi from './api/integrationApi';
 import * as issueApi from './api/issueApi';
 import * as memoryApi from './api/memoryApi';
@@ -17,6 +18,7 @@ import type {
   CredentialMetadata,
   DocumentAnchor,
   GitHubIssueListView,
+  GitHubProjectOverviewView,
   GitSyncRecord,
   InfoRequest,
   IntegrationWorkspace,
@@ -84,6 +86,10 @@ vi.mock('./api/integrationApi', () => ({
 vi.mock('./api/issueApi', () => ({
   listGitHubIssues: vi.fn(),
   importGitHubIssue: vi.fn(),
+}));
+
+vi.mock('./api/githubProjectApi', () => ({
+  listGitHubProjects: vi.fn(),
 }));
 
 vi.mock('./api/reviewApi', () => ({
@@ -830,6 +836,7 @@ beforeEach(() => {
   vi.mocked(integrationApi.createGitHubPrivateRepository).mockReset();
   vi.mocked(issueApi.listGitHubIssues).mockReset();
   vi.mocked(issueApi.importGitHubIssue).mockReset();
+  vi.mocked(githubProjectApi.listGitHubProjects).mockReset();
   vi.mocked(integrationApi.readIntegrationWorkspace).mockResolvedValue(
     makeIntegrationWorkspace(),
   );
@@ -1203,6 +1210,82 @@ describe('ColdStart project workspace', () => {
     expect(screen.queryByText('导出 CSV 需求')).not.toBeInTheDocument();
     expect(screen.getByText('历史数据导入')).toBeInTheDocument();
     expect(screen.getByText('报表优化')).toBeInTheDocument();
+  });
+
+  it('loads a read-only GitHub Project overview with bounded items and fields', async () => {
+    const user = await openProject(makeWorkspace());
+    const overview: GitHubProjectOverviewView = {
+      repositoryKey: 'web',
+      repositoryName: 'Web 前台',
+      repositoryLabel: 'octocat/demo',
+      truncated: false,
+      projects: [
+        {
+          id: 'PVT_kwDO_project_1',
+          number: 3,
+          title: '冷启动开发计划',
+          htmlUrl: 'https://github.com/orgs/octocat/projects/3',
+          closed: false,
+          updatedAt: '2026-11-13T12:00:00Z',
+          totalItems: 12,
+          truncated: true,
+          items: [
+            {
+              id: 'PVTI_kwDO_item_1',
+              kind: 'issue',
+              number: 7,
+              title: '历史项目新增导出需求',
+              state: 'open',
+              htmlUrl: 'https://github.com/octocat/demo/issues/7',
+              updatedAt: '2026-11-13T11:30:00Z',
+              fields: [{ name: 'Status', value: '进行中' }],
+            },
+          ],
+        },
+      ],
+    };
+    vi.mocked(githubProjectApi.listGitHubProjects).mockResolvedValue(overview);
+
+    await user.click(screen.getByRole('button', { name: '需求导入' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('Project 仓库')).toHaveValue('web');
+    });
+    await user.click(screen.getByRole('button', { name: '读取 Project' }));
+
+    expect(githubProjectApi.listGitHubProjects).toHaveBeenCalledWith(projectPath, 'web');
+    const panel = screen.getByRole('region', { name: 'GitHub Project 只读概览' });
+    expect(within(panel).getByText('只读')).toBeInTheDocument();
+    expect(await within(panel).findByText('冷启动开发计划')).toBeInTheDocument();
+    expect(within(panel).getByText('进行中')).toBeInTheDocument();
+    expect(within(panel).getByText('Status')).toBeInTheDocument();
+    expect(within(panel).getByText(/当前仅显示前 30 个/)).toBeInTheDocument();
+    expect(within(panel).getByRole('link', { name: '历史项目新增导出需求' })).toHaveAttribute(
+      'href',
+      'https://github.com/octocat/demo/issues/7',
+    );
+  });
+
+  it('shows a stable error when GitHub Projects cannot be read', async () => {
+    const user = await openProject(makeWorkspace());
+    vi.mocked(githubProjectApi.listGitHubProjects).mockRejectedValue({
+      code: 'github_response_invalid',
+      message: 'GitHub Projects query failed: Resource not accessible by personal access token',
+    });
+
+    await user.click(screen.getByRole('button', { name: '需求导入' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('Project 仓库')).toHaveValue('web');
+    });
+    await user.click(screen.getByRole('button', { name: '读取 Project' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText('Project 读取失败')).toBeInTheDocument();
+    expect(
+      within(alert).getByText(
+        'GitHub Projects query failed: Resource not accessible by personal access token',
+      ),
+    ).toBeInTheDocument();
+    expect(within(alert).getByText('github_response_invalid')).toBeInTheDocument();
   });
 
   it('requires explicit model consent before generating and then shows the draft', async () => {

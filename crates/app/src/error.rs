@@ -176,6 +176,8 @@ pub enum AppError {
     GitHubIssueIneligible(String, String),
     #[error("GitHub issue {repository}#{number} has already been imported")]
     GitHubIssueAlreadyImported { repository: String, number: u64 },
+    #[error("GitHub projects cannot be read from repository {0}: {1}")]
+    GitHubProjectIneligible(String, String),
 }
 
 impl AppError {
@@ -294,6 +296,7 @@ impl AppError {
             Self::InvalidPullRequest(_) => "pull_request_invalid",
             Self::GitHubIssueIneligible(_, _) => "github_issue_ineligible",
             Self::GitHubIssueAlreadyImported { .. } => "github_issue_already_imported",
+            Self::GitHubProjectIneligible(_, _) => "github_project_ineligible",
         }
     }
 
