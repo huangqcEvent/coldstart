@@ -245,6 +245,19 @@ Codex 通过 MCP 主动领取下一个可执行任务，读取编译后的上下
 
 对于历史项目，最重要的不是让模型重写过去，而是明确“这次改什么、不能碰什么、如何验证、谁来提供必要信息”。
 
+## 真实项目实战验收
+
+2026-11-13 使用一份真实历史项目的隔离副本完成了端到端验收，原始仓库未被修改。验收覆盖：
+
+- 导入 6 份真实需求、测试用例和架构约束，人工收敛并发布蓝图。
+- 配置隔离 Git 远程、服务端仓库、Maven 定向验证、OSS 测试凭据和仓库级代码规范。
+- 将模板计划收敛为单一真实任务，由安装版 Codex MCP 主动领取。
+- 先补失败测试确认 RED，再修复组织负责人兼容接口并确认 GREEN。
+- 提交报告后由 ColdStart 独立执行 JUnit 验证、调用 AI Review 并推送任务分支。
+- 重启客户端后核对 `done` 状态、无活动租约、报告状态和完整项目记忆。
+
+本轮 Review 使用本机 OpenAI 兼容测试端点，证明的是 Review 流程、快照、状态机和门禁集成，不代表模型评审质量。完整证据与限制见[阶段 10 执行记录](.superpowers/sdd/2026-11-13-coldstart-real-project-acceptance/progress.md)。
+
 ## 项目记忆与变更审计
 
 项目记忆不是第二套业务状态，而是对已有 `events` 表的产品化读取。它让用户和后续维护者能够回答：
@@ -577,6 +590,10 @@ pnpm --dir apps/desktop build:installer
 - [第五阶段：仓库、能力与发布门禁](docs/superpowers/plans/2026-10-30-coldstart-05-git-capabilities-release.md)
 - [第六阶段：集成、重规划与安全加固](docs/superpowers/plans/2026-10-30-coldstart-06-integration-hardening.md)
 - [第七阶段：本地命令验证与完成门禁](docs/superpowers/plans/2026-10-30-coldstart-07-command-verification.md)
+- [第八阶段：AI Review 与代码规范](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
+- [第九阶段：项目记忆与变更审计](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
+- [第十阶段：真实项目实战验收](docs/superpowers/plans/2026-11-13-coldstart-real-project-acceptance.md)
+- [第十阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-real-project-acceptance/progress.md)
 
 ## 技术形态
 
