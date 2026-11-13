@@ -68,6 +68,28 @@ fn remembering_the_same_path_updates_one_entry_and_orders_newest_first() {
 }
 
 #[test]
+fn remembering_a_wrapped_home_stores_the_resolved_project_root() {
+    let temp = TempDir::new().expect("temporary directory must exist");
+    let wrapper = temp.path().join("acceptance");
+    let project_home = wrapper.join("control");
+    let store = ProjectHistoryStore::new(temp.path().join("app-data"));
+    ProjectService::new()
+        .create_project("nested", project_home.clone())
+        .expect("nested project must initialize");
+
+    let history = store
+        .remember(&wrapper)
+        .expect("the wrapped project must be remembered");
+
+    let resolved = std::path::absolute(&project_home)
+        .expect("project home must be absolute")
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(history.projects[0].root_path, resolved);
+    assert_eq!(history.last_project_path, Some(resolved));
+}
+
+#[test]
 fn missing_project_directories_stay_visible_but_marked_unavailable() {
     let temp = TempDir::new().expect("temporary directory must exist");
     let project_home = create_project(temp.path().join("projects").as_path(), "alpha");

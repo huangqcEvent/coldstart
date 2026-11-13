@@ -103,11 +103,12 @@ impl ProjectHistoryStore {
     /// 校验项目目录后将其置于最近列表首位，并记录为上次打开项目。
     pub fn remember(&self, project_home: &Path) -> Result<ProjectHistoryView, AppError> {
         let _guard = self.lock()?;
-        let canonical = dunce::canonicalize(project_home)?;
-        let status = ProjectService::new().read_status(canonical.clone())?;
-        let root_path = canonical
+        let requested = dunce::canonicalize(project_home)?;
+        let status = ProjectService::new().read_status(requested)?;
+        let root_path = status
+            .root_path
             .to_str()
-            .ok_or_else(|| AppError::NonUtf8Path(canonical.clone()))?
+            .ok_or_else(|| AppError::NonUtf8Path(status.root_path.clone()))?
             .to_owned();
 
         let mut stored = self.read_stored_unlocked();

@@ -39,6 +39,23 @@ impl ProjectHome {
         Self { root: root.into() }
     }
 
+    /// 定位项目主目录，并在所选目录没有清单时尝试唯一一层子项目。
+    ///
+    /// 用户经常选择包含 `control`、`server` 等子目录的上层容器；只有恰好一个
+    /// 直接子目录包含清单时才自动下钻，存在多个候选时仍返回清单缺失，避免误开。
+    pub fn resolve(root: impl Into<PathBuf>) -> Result<Self, AppError> {
+        let root = std::path::absolute(root.into())?;
+        if root.join(MANIFEST_FILE).is_file() {
+            return Ok(Self::at(root));
+        }
+
+        let mut candidates = immediate_child_projects(&root)?;
+        if candidates.len() == 1 {
+            return Ok(Self::at(candidates.remove(0)));
+        }
+        Err(AppError::ManifestMissing(root.join(MANIFEST_FILE)))
+    }
+
     /// 创建项目清单、数据库和能力目录；失败时回滚本次初始化产生的文件。
     pub fn initialize(&self, name: &str) -> Result<Project, AppError> {
         if self.root.exists() && !self.root.is_dir() {
@@ -119,6 +136,22 @@ impl ProjectHome {
     fn manifest_path(&self) -> PathBuf {
         self.root.join(MANIFEST_FILE)
     }
+}
+
+fn immediate_child_projects(root: &Path) -> Result<Vec<PathBuf>, AppError> {
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut candidates = Vec::new();
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() && path.join(MANIFEST_FILE).is_file() {
+            candidates.push(path);
+        }
+    }
+    Ok(candidates)
 }
 
 fn write_manifest_temp(root: &Path, encoded: &[u8]) -> Result<NamedTempFile, AppError> {

@@ -42,6 +42,43 @@ fn read_status_uses_the_current_project_home_after_a_move() {
 }
 
 #[test]
+fn read_status_resolves_a_unique_wrapped_project_home() {
+    let temp = TempDir::new().unwrap();
+    let wrapper = temp.path().join("acceptance");
+    let project_home = wrapper.join("control");
+    let service = ProjectService::new();
+    let created = service
+        .create_project("Wrapped Project", project_home.clone())
+        .expect("project must initialize");
+
+    let status = service
+        .read_status(wrapper)
+        .expect("the unique nested project must be discovered");
+
+    assert_eq!(status.project_id, created.project_id);
+    assert_eq!(status.root_path, std::path::absolute(project_home).unwrap());
+}
+
+#[test]
+fn read_status_does_not_guess_between_multiple_wrapped_projects() {
+    let temp = TempDir::new().unwrap();
+    let wrapper = temp.path().join("acceptance");
+    let service = ProjectService::new();
+    service
+        .create_project("Alpha", wrapper.join("alpha"))
+        .expect("alpha project must initialize");
+    service
+        .create_project("Beta", wrapper.join("beta"))
+        .expect("beta project must initialize");
+
+    let error = service
+        .read_status(wrapper)
+        .expect_err("multiple nested projects must require an explicit choice");
+
+    assert!(matches!(error, AppError::ManifestMissing(_)));
+}
+
+#[test]
 fn create_project_reports_a_missing_manifest_with_a_stable_code() {
     let temp = TempDir::new().unwrap();
     let error = ProjectService::new()

@@ -16,7 +16,7 @@ pub(crate) struct OpenProject {
 
 impl OpenProject {
     pub(crate) fn open(project_home: std::path::PathBuf) -> Result<Self, AppError> {
-        let home = ProjectHome::at(project_home);
+        let home = ProjectHome::resolve(project_home)?;
         let root = home.absolute_root()?;
         let manifest = home.load_manifest()?;
         let project = manifest.to_project(root)?;

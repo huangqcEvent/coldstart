@@ -138,6 +138,8 @@ D:\work\your-project
 2. 选择“新建项目”，输入名称并选择项目主目录。
 3. 或选择“打开项目”，定位已有 ColdStart 主目录。
 
+如果误选的是只包含一个 ColdStart 子项目的上层容器目录，客户端会自动定位该唯一子项目；若上层目录下存在多个项目清单，仍会要求进入具体项目目录，避免打开错误项目。
+
 项目清单、SQLite 状态、规范文件和执行记录都在本地。清单不保存机器绝对路径，项目整体移动后根路径由清单所在目录重新推导；当前 CLI 的 JSON 状态输出仍要求根路径是 UTF-8。
 
 ### 最近项目与多项目切换
@@ -624,7 +626,7 @@ your-project/
 
 ### 打开项目提示清单或数据库缺失
 
-- `manifest_missing`：目标目录下没有 `coldstart.project.json`，确认选择了 ColdStart 项目主目录，而不是业务仓库根目录。
+- `manifest_missing`：目标目录下没有 `coldstart.project.json`。如果只包含一个直接子项目，客户端会自动定位；如果包含多个候选，请选择具体项目目录（例如 `...\control`），不要选择业务仓库根目录。
 - `database_missing`：`.coldstart/state.db` 不存在或被移动，恢复完整项目备份。
 - `project_metadata_mismatch`：项目清单与 SQLite 元数据不属于同一项目，不要强行混用。
 
