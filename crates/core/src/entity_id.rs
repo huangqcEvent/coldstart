@@ -50,6 +50,7 @@ uuid_id!(InfoRequestId);
 uuid_id!(LeaseId);
 uuid_id!(PlanRevisionId);
 uuid_id!(ProjectFactId);
+uuid_id!(PullRequestId);
 uuid_id!(RepositoryId);
 uuid_id!(ReviewStandardId);
 uuid_id!(ReviewStandardRevisionId);

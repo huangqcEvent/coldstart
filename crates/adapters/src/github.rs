@@ -1,5 +1,6 @@
 use std::{fmt, process::Command, time::Duration};
 
+use coldstart_core::{MAX_PULL_REQUEST_TITLE_CHARS, validate_branch_name};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -8,6 +9,7 @@ const DEFAULT_API_BASE: &str = "https://api.github.com";
 const DEFAULT_OAUTH_BASE: &str = "https://github.com";
 const GITHUB_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_ERROR_BODY_CHARS: usize = 600;
+const MAX_PULL_REQUEST_BODY_CHARS: usize = 60_000;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct GitHubToken(String);
@@ -103,6 +105,89 @@ pub struct GitHubRepository {
     pub ssh_url: String,
     pub html_url: String,
     pub default_branch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitHubRepositoryCoordinates {
+    pub owner: String,
+    pub repository: String,
+}
+
+impl GitHubRepositoryCoordinates {
+    pub fn from_remote_url(value: &str) -> Result<Self, GitHubError> {
+        let value = value.trim();
+        let (host, path) = if let Some(rest) = value.strip_prefix("git@") {
+            rest.split_once(':').ok_or_else(|| {
+                GitHubError::UnsupportedRemote("SSH remote is missing a repository path".to_owned())
+            })?
+        } else if let Some(rest) = value.strip_prefix("ssh://") {
+            let rest = rest.strip_prefix("git@").unwrap_or(rest);
+            rest.split_once('/').ok_or_else(|| {
+                GitHubError::UnsupportedRemote("SSH remote is missing a repository path".to_owned())
+            })?
+        } else if let Some(rest) = value.strip_prefix("https://") {
+            rest.split_once('/').ok_or_else(|| {
+                GitHubError::UnsupportedRemote(
+                    "HTTPS remote is missing a repository path".to_owned(),
+                )
+            })?
+        } else {
+            return Err(GitHubError::UnsupportedRemote(
+                "remote must use a GitHub HTTPS or SSH URL".to_owned(),
+            ));
+        };
+        if !host.eq_ignore_ascii_case("github.com") {
+            return Err(GitHubError::UnsupportedRemote(format!(
+                "unsupported GitHub host: {host}"
+            )));
+        }
+        let path = path.trim_end_matches('/');
+        let path = path.strip_suffix(".git").unwrap_or(path);
+        let (owner, repository) = path.split_once('/').ok_or_else(|| {
+            GitHubError::UnsupportedRemote("remote is missing an owner or repository".to_owned())
+        })?;
+        if repository.contains('/') {
+            return Err(GitHubError::UnsupportedRemote(
+                "remote contains extra path segments".to_owned(),
+            ));
+        }
+        validate_owner(owner)?;
+        validate_repository_name(repository)?;
+        Ok(Self {
+            owner: owner.to_owned(),
+            repository: repository.to_owned(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateDraftPullRequestRequest {
+    pub owner: String,
+    pub repository: String,
+    pub title: String,
+    pub body: String,
+    pub head: String,
+    pub base: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GitHubPullRequestBranch {
+    #[serde(rename = "ref")]
+    pub reference: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GitHubPullRequest {
+    pub number: u64,
+    pub html_url: String,
+    pub state: String,
+    #[serde(default)]
+    pub draft: bool,
+    #[serde(default)]
+    pub merged: bool,
+    pub title: String,
+    pub head: GitHubPullRequestBranch,
+    pub base: GitHubPullRequestBranch,
 }
 
 pub struct GitHubClient {
@@ -275,6 +360,65 @@ impl GitHubClient {
         Ok(repository)
     }
 
+    pub fn create_draft_pull_request(
+        &self,
+        token: &GitHubToken,
+        request: &CreateDraftPullRequestRequest,
+    ) -> Result<GitHubPullRequest, GitHubError> {
+        validate_owner(&request.owner)?;
+        validate_repository_name(&request.repository)?;
+        validate_pull_request_fields(&request.title, &request.body, &request.head, &request.base)?;
+        let path = format!(
+            "/repos/{}/{}/pulls",
+            request.owner.trim(),
+            request.repository.trim()
+        );
+        let body = serde_json::json!({
+            "title": request.title.trim(),
+            "body": request.body.trim(),
+            "head": request.head.trim(),
+            "base": request.base.trim(),
+            "draft": true,
+        });
+        let response = self.post_json(&self.api_base, &path, &body, Some(token))?;
+        if !(200..300).contains(&response.status) {
+            return Err(GitHubError::HttpStatus {
+                status: response.status,
+                body: truncate_error(&redact_secret(&response.body, Some(token))),
+            });
+        }
+        parse_pull_request_response(&response.body)
+    }
+
+    pub fn pull_request(
+        &self,
+        token: &GitHubToken,
+        owner: &str,
+        repository: &str,
+        number: u64,
+    ) -> Result<GitHubPullRequest, GitHubError> {
+        validate_owner(owner)?;
+        validate_repository_name(repository)?;
+        if number == 0 {
+            return Err(GitHubError::InvalidPullRequest(
+                "pull request number must be greater than zero".to_owned(),
+            ));
+        }
+        let path = format!(
+            "/repos/{owner}/{repository}/pulls/{number}",
+            owner = owner.trim(),
+            repository = repository.trim(),
+        );
+        let response = self.get_json(&path, Some(token))?;
+        if !(200..300).contains(&response.status) {
+            return Err(GitHubError::HttpStatus {
+                status: response.status,
+                body: truncate_error(&redact_secret(&response.body, Some(token))),
+            });
+        }
+        parse_pull_request_response(&response.body)
+    }
+
     fn post_json(
         &self,
         base: &str,
@@ -420,6 +564,68 @@ fn validate_repository_name(name: &str) -> Result<(), GitHubError> {
     }
 }
 
+fn validate_owner(owner: &str) -> Result<(), GitHubError> {
+    let owner = owner.trim();
+    let valid = !owner.is_empty()
+        && owner.len() <= 100
+        && !owner.starts_with('-')
+        && !owner.ends_with('-')
+        && owner
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-');
+    if valid {
+        Ok(())
+    } else {
+        Err(GitHubError::InvalidRepositoryName(owner.to_owned()))
+    }
+}
+
+fn validate_pull_request_fields(
+    title: &str,
+    body: &str,
+    head: &str,
+    base: &str,
+) -> Result<(), GitHubError> {
+    let title = title.trim();
+    if title.is_empty() || title.chars().count() > MAX_PULL_REQUEST_TITLE_CHARS {
+        return Err(GitHubError::InvalidPullRequest(format!(
+            "title must contain between 1 and {MAX_PULL_REQUEST_TITLE_CHARS} characters"
+        )));
+    }
+    if body.chars().count() > MAX_PULL_REQUEST_BODY_CHARS {
+        return Err(GitHubError::InvalidPullRequest(format!(
+            "body must be at most {MAX_PULL_REQUEST_BODY_CHARS} characters"
+        )));
+    }
+    validate_branch_name(head.trim())
+        .map_err(|_| GitHubError::InvalidPullRequest("head branch is invalid".to_owned()))?;
+    validate_branch_name(base.trim())
+        .map_err(|_| GitHubError::InvalidPullRequest("base branch is invalid".to_owned()))?;
+    if head.trim() == base.trim() {
+        return Err(GitHubError::InvalidPullRequest(
+            "head and base branches must differ".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn parse_pull_request_response(body: &str) -> Result<GitHubPullRequest, GitHubError> {
+    let pull_request: GitHubPullRequest = serde_json::from_str(body)
+        .map_err(|error| GitHubError::InvalidResponse(error.to_string()))?;
+    if pull_request.number == 0
+        || !pull_request.html_url.starts_with("https://")
+        || pull_request.title.trim().is_empty()
+        || pull_request.head.reference.trim().is_empty()
+        || pull_request.base.reference.trim().is_empty()
+        || !matches!(pull_request.state.as_str(), "open" | "closed")
+    {
+        return Err(GitHubError::InvalidResponse(
+            "pull request response omitted required fields".to_owned(),
+        ));
+    }
+    Ok(pull_request)
+}
+
 fn split_scopes(value: Option<&str>) -> Vec<String> {
     value
         .unwrap_or_default()
@@ -465,6 +671,10 @@ pub enum GitHubError {
     InvalidGhToken,
     #[error("invalid GitHub repository name: {0}")]
     InvalidRepositoryName(String),
+    #[error("unsupported GitHub remote: {0}")]
+    UnsupportedRemote(String),
+    #[error("invalid pull request: {0}")]
+    InvalidPullRequest(String),
     #[error("GitHub request failed: {0}")]
     Request(String),
     #[error("GitHub returned HTTP {status}: {body}")]
@@ -483,6 +693,8 @@ impl GitHubError {
             Self::GhUnavailable => "github_cli_unavailable",
             Self::GhNotAuthenticated => "github_cli_not_authenticated",
             Self::InvalidRepositoryName(_) => "github_repository_name_invalid",
+            Self::UnsupportedRemote(_) => "github_remote_unsupported",
+            Self::InvalidPullRequest(_) => "pull_request_invalid",
             Self::Request(_) | Self::HttpStatus { .. } => "github_request_failed",
             Self::InvalidResponse(_) => "github_response_invalid",
             Self::DeviceFlow { .. } => "github_device_flow_failed",

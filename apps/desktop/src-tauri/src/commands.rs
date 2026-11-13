@@ -4,16 +4,16 @@ use coldstart_adapters::{ModelConfig, OpenAiCompatibleModel};
 use coldstart_app::{
     CreatePrivateRepositoryInput, DeviceFlowView, GitHubDevicePollView, GitHubSessionView,
     IntegrationService, IntegrationWorkspace, PlanService, ProjectMemoryPage, ProjectMemoryService,
-    ProjectService, ProjectStatus, ProjectWorkspace, RepositoryDraft, RepositoryValidationView,
-    RequirementsService, ReviewService, ReviewStandardContent, ReviewStandardImport,
-    ReviewStandardManualInput, ReviewStandardRevisionInput, ReviewStandardView, ReviewWorkspace,
-    SaveCredentialInput,
+    ProjectService, ProjectStatus, ProjectWorkspace, PullRequestService, RepositoryDraft,
+    RepositoryValidationView, RequirementsService, ReviewService, ReviewStandardContent,
+    ReviewStandardImport, ReviewStandardManualInput, ReviewStandardRevisionInput,
+    ReviewStandardView, ReviewWorkspace, SaveCredentialInput,
 };
 use coldstart_core::{
     BlueprintContent, BlueprintEntityId, BlueprintRevisionId, CapabilityStatus, CredentialId,
-    InfoRequestId, PlanContent, PlanPublishPreview, PlanRevisionId, RepositoryVerificationCommand,
-    ReviewConfiguration, ReviewConfigurationInput, ReviewStandardId, WorkItemId, WorkReportId,
-    WorkReportRecord,
+    InfoRequestId, PlanContent, PlanPublishPreview, PlanRevisionId, PullRequestId,
+    PullRequestRecord, RepositoryVerificationCommand, ReviewConfiguration,
+    ReviewConfigurationInput, ReviewStandardId, WorkItemId, WorkReportId, WorkReportRecord,
 };
 use tauri::State;
 
@@ -832,6 +832,46 @@ pub async fn waive_work_review(
     .map_err(join_error)?
 }
 
+pub fn create_draft_pull_request_sync(
+    path: String,
+    report_id: String,
+) -> Result<PullRequestRecord, CommandError> {
+    let report_id = parse_work_report_id(&report_id)?;
+    PullRequestService::new()
+        .create_draft(PathBuf::from(path), report_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn create_draft_pull_request(
+    path: String,
+    report_id: String,
+) -> Result<PullRequestRecord, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || create_draft_pull_request_sync(path, report_id))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn refresh_pull_request_sync(
+    path: String,
+    pull_request_id: String,
+) -> Result<PullRequestRecord, CommandError> {
+    let pull_request_id = parse_pull_request_id(&pull_request_id)?;
+    PullRequestService::new()
+        .refresh(PathBuf::from(path), pull_request_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn refresh_pull_request(
+    path: String,
+    pull_request_id: String,
+) -> Result<PullRequestRecord, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || refresh_pull_request_sync(path, pull_request_id))
+        .await
+        .map_err(join_error)?
+}
+
 fn parse_revision_id(value: &str) -> Result<BlueprintRevisionId, CommandError> {
     value.parse().map_err(|_| CommandError {
         code: "invalid_id".to_owned(),
@@ -885,6 +925,13 @@ fn parse_work_report_id(value: &str) -> Result<WorkReportId, CommandError> {
     value.parse().map_err(|_| CommandError {
         code: "invalid_id".to_owned(),
         message: "工作报告 ID 无效".to_owned(),
+    })
+}
+
+fn parse_pull_request_id(value: &str) -> Result<PullRequestId, CommandError> {
+    value.parse().map_err(|_| CommandError {
+        code: "invalid_id".to_owned(),
+        message: "Pull Request ID 无效".to_owned(),
     })
 }
 

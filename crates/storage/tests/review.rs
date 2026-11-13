@@ -175,7 +175,7 @@ fn result_for(
 #[test]
 fn versions_project_and_repository_standards_for_the_next_claim() {
     let mut fixture = PlanFixture::new(vec![agent_task("foundation:demo", &[])]);
-    assert_eq!(fixture.database.schema_version().expect("schema"), 7);
+    assert_eq!(fixture.database.schema_version().expect("schema"), 8);
     let common_id = ReviewStandardId::new();
     let common = add_standard(
         &mut fixture,

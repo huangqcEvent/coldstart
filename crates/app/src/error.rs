@@ -3,7 +3,8 @@ use std::{io, path::PathBuf};
 use coldstart_adapters::{DocumentError, GitError, GitHubError, ModelError, SecretStoreError};
 use coldstart_core::{
     BlueprintRevisionId, CredentialId, InfoRequestId, IntegrationValidationError, ManifestError,
-    PlanCompileError, PlanRevisionId, ProjectError, ProjectId, RepositoryId, WorkItemId,
+    PlanCompileError, PlanRevisionId, ProjectError, ProjectId, PullRequestId,
+    PullRequestValidationError, RepositoryId, WorkItemId, WorkReportId,
 };
 use coldstart_storage::StorageError;
 use thiserror::Error;
@@ -163,6 +164,14 @@ pub enum AppError {
     InvalidMemoryLimit { limit: u32, min: u32, max: u32 },
     #[error("project memory cursor must be greater than zero; found {0}")]
     InvalidMemoryCursor(i64),
+    #[error("work report {0} does not exist in the project")]
+    PullRequestReportNotFound(WorkReportId),
+    #[error("pull request {0} does not exist in the project")]
+    PullRequestNotFound(PullRequestId),
+    #[error("this work report cannot create a draft pull request: {0}")]
+    PullRequestIneligible(String),
+    #[error("invalid pull request: {0}")]
+    InvalidPullRequest(#[from] PullRequestValidationError),
 }
 
 impl AppError {
@@ -275,6 +284,10 @@ impl AppError {
             Self::ReviewWaiverInvalid(_) => "review_waiver_invalid",
             Self::InvalidMemoryLimit { .. } => "invalid_memory_limit",
             Self::InvalidMemoryCursor(_) => "invalid_memory_cursor",
+            Self::PullRequestReportNotFound(_) => "pull_request_report_not_found",
+            Self::PullRequestNotFound(_) => "pull_request_not_found",
+            Self::PullRequestIneligible(_) => "pull_request_ineligible",
+            Self::InvalidPullRequest(_) => "pull_request_invalid",
         }
     }
 

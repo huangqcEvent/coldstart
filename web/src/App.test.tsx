@@ -26,6 +26,7 @@ import type {
   ProjectMemoryPage,
   ProjectStatus,
   ProjectWorkspace,
+  PullRequestRecord,
   Repository,
   RepositoryVerificationCommand,
   ReviewConfiguration,
@@ -88,6 +89,8 @@ vi.mock('./api/reviewApi', () => ({
   deleteReviewStandard: vi.fn(),
   readReviewStandard: vi.fn(),
   waiveWorkReview: vi.fn(),
+  createDraftPullRequest: vi.fn(),
+  refreshPullRequest: vi.fn(),
   pickReviewStandardFile: vi.fn(),
 }));
 
@@ -560,6 +563,7 @@ function makeReviewHistory(
           durationMs: 5000,
         },
     waiver: null,
+    pullRequest: null,
     createdAt: '2026-11-02T09:10:06Z',
     ...overrides,
   };
@@ -573,6 +577,30 @@ function makeReviewWorkspace(
     configuration: reviewConfiguration,
     standards: [reviewStandard],
     recentReviews: [],
+    ...overrides,
+  };
+}
+
+const pullRequestUrl = ['https:', '', 'github.com', 'octocat', 'demo', 'pull', '21'].join('/');
+
+function makePullRequest(
+  overrides: Partial<PullRequestRecord> = {},
+): PullRequestRecord {
+  return {
+    id: '16161616-1616-4616-8616-161616161616',
+    projectId: status.projectId,
+    workItemId: '55555555-5555-4555-8555-555555555555',
+    reportId: '14141414-1414-4414-8414-141414141414',
+    repositoryId: '17171717-1717-4717-8717-171717171717',
+    number: 21,
+    htmlUrl: pullRequestUrl,
+    title: '[slice:order:web] 完成订单页面',
+    headBranch: 'codex/slice-order-web',
+    baseBranch: 'main',
+    state: 'open',
+    draft: true,
+    createdAt: '2026-11-13T08:00:00Z',
+    updatedAt: '2026-11-13T08:01:00Z',
     ...overrides,
   };
 }
@@ -721,6 +749,8 @@ beforeEach(() => {
   vi.mocked(reviewApi.deleteReviewStandard).mockReset();
   vi.mocked(reviewApi.readReviewStandard).mockReset();
   vi.mocked(reviewApi.waiveWorkReview).mockReset();
+  vi.mocked(reviewApi.createDraftPullRequest).mockReset();
+  vi.mocked(reviewApi.refreshPullRequest).mockReset();
   vi.mocked(reviewApi.pickReviewStandardFile).mockReset();
   vi.mocked(memoryApi.readProjectMemory).mockReset();
   vi.mocked(integrationApi.readIntegrationWorkspace).mockReset();
@@ -1691,6 +1721,63 @@ describe('ColdStart project workspace', () => {
       }),
     );
     expect(await screen.findByText('Web 团队规范')).toBeInTheDocument();
+  });
+
+  it('creates a draft pull request only for a review that passed the gates', async () => {
+    const passed = makeReviewHistory('passed');
+    const blocked = makeReviewHistory('blocked', {
+      reportId: '18181818-1818-4818-8818-181818181818',
+      taskKey: 'slice:order:blocked',
+    });
+    const created = makePullRequest();
+    vi.mocked(reviewApi.createDraftPullRequest).mockResolvedValue(created);
+    const user = await openReviewView(
+      makeReviewWorkspace({ recentReviews: [passed, blocked] }),
+    );
+    expect(
+      screen.getAllByRole('button', { name: '创建草稿 PR' }),
+    ).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: '创建草稿 PR' }));
+    await waitFor(() =>
+      expect(reviewApi.createDraftPullRequest).toHaveBeenCalledWith(
+        projectPath,
+        passed.reportId,
+      ),
+    );
+    expect(
+      await screen.findByText('草稿 PR #21 已创建；ColdStart 不会自动合并或创建 Release。'),
+    ).toBeInTheDocument();
+  });
+
+  it('opens and refreshes an existing draft pull request', async () => {
+    const draft = makePullRequest();
+    const passed = makeReviewHistory('passed', { pullRequest: draft });
+    const merged = makePullRequest({ state: 'merged', draft: false });
+    vi.mocked(reviewApi.refreshPullRequest).mockResolvedValue(merged);
+    const user = await openReviewView(
+      makeReviewWorkspace({ recentReviews: [passed] }),
+    );
+    const link = screen.getByRole('link', { name: '在 GitHub 打开' });
+    expect(link).toHaveAttribute('href', draft.htmlUrl);
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noreferrer');
+    expect(screen.getByText('草稿 PR · 开放')).toBeInTheDocument();
+    vi.mocked(reviewApi.readReviewWorkspace).mockResolvedValue(
+      makeReviewWorkspace({
+        recentReviews: [{ ...passed, pullRequest: merged }],
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: '刷新状态' }));
+    await waitFor(() =>
+      expect(reviewApi.refreshPullRequest).toHaveBeenCalledWith(
+        projectPath,
+        draft.id,
+      ),
+    );
+    expect(await screen.findByText('PR · 已合并')).toBeInTheDocument();
+    expect(
+      await screen.findByText('PR #21 状态已刷新。'),
+    ).toBeInTheDocument();
   });
 
   it('offers a two-step audit waiver only for blocked reviews', async () => {

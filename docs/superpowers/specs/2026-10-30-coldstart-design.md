@@ -3,7 +3,7 @@
 - 日期：2026-10-30
 - 产品名：ColdStart / 冷启动
 - 仓库：`huangqcEvent/coldstart`
-- 状态：已确认架构；阶段 1-11 已实现，后续边界见各阶段独立设计
+- 状态：已确认架构；阶段 1-12 已实现，后续边界见各阶段独立设计
 - 文档范围：产品边界、系统架构、领域模型、MCP 协议、安全规则和 MVP 验收标准
 
 ## 1. 背景与目标
@@ -40,7 +40,7 @@ ColdStart 不生成业务代码，不自动启动 Agent，不替代 App 商店�
 
 ### 2.3 明确不做
 
-- 不运行或重跑 Agent 的测试来验证完成结果。
+- 不运行 Agent 本身，也不接受 Agent 自报的完成结果；ColdStart 会独立执行仓库配置的本地验证命令。
 - 不自动合并受保护分支、不自动部署生产环境。
 - 不自动完成 App Store、应用商店或小程序提审。
 - 不提供通用 CI/CD、云构建或线上监控平台。
@@ -58,6 +58,7 @@ ColdStart 不生成业务代码，不自动启动 Agent，不替代 App 商店�
 - 生产部署、App/小程序提审、受保护分支写入、破坏性数据库操作必须人工确认。
 - GitHub 私有仓库通过 OAuth Device Flow 和 REST API 创建，不依赖浏览器页面自动化。
 - 代码任务在独立任务分支完成；报告通过后自动推送任务分支。
+- 任务分支推送成功后，可由桌面端人工创建 GitHub 草稿 PR；MCP 不提供 PR 写工具。
 - 不自动合并主分支、不强制推送、不自动删除远程分支。
 
 ## 4. 人工介入模型
@@ -466,8 +467,7 @@ MVP 验收场景：
 
 ## 26. 后续版本范围
 
-- 命令自动验证和完整 CI Runner。
-- PR、Review 和 Issue 平台集成。
+- GitHub PR Checks、Review 评论、冲突状态和 Issue 平台集成；草稿 PR 创建与只读状态刷新已在阶段 12 完成。
 - App/小程序发布自动化。
 - 团队协作、云同步和多机迁移。
 - 可签名的模板与插件生态。
@@ -717,3 +717,38 @@ MVP 验收场景：
 - 执行 `.cmd`、`.bat`、`.ps1`、Shell 片段、管道、重定向或动态环境变量。
 - 注入 Credential Manager Secret、下载外部命令、远程命令签名或构建产物上传。
 - 自动部署、App 打包、商店提审、小程序发布、自动合并或 Release Tag。
+
+## 31. 阶段 12：GitHub 草稿 PR 交付
+
+实现状态：已完成（2026-11-13）。详细设计见 `docs/superpowers/specs/2026-11-13-coldstart-draft-pull-request-design.md`。
+
+阶段 12 在现有“验证、Review、推送任务分支”闭环之后，增加人工触发的 GitHub 草稿 PR 出口。它不改变 MCP 主动领取协议，也不把 Agent 报告当作可合并证据。
+
+### 31.1 创建条件
+
+- 编码任务为 `done`，报告已接受且结果为 `completed`。
+- Review 状态为 `not_required`、`passed` 或 `waived`。
+- 报告分支与 Commit 存在匹配的成功推送记录。
+- 仓库远程为 GitHub.com 的 HTTPS 或 SSH 地址。
+- 仓库使用 GitHub OAuth Token 或 Personal Access Token 凭据。
+
+### 31.2 数据与事件
+
+- SQLite 架构升级到 8，新增 `pull_requests`；同一报告只允许一个 PR，同一仓库内编号唯一。
+- 保存编号、HTTPS 链接、标题、分支、状态、草稿标记和更新时间。
+- 记录 PR 打开和状态变更事件；状态只在状态或草稿标记变化时写事件。
+- 项目记忆只投影编号、状态和稳定引用，不返回 Token、请求正文或本地路径。
+
+### 31.3 人工与安全边界
+
+- 创建与刷新只由桌面端人工触发，MCP 工具总数仍为 11，不增加 PR 写工具。
+- 请求固定 `draft: true`；不合并、不关闭、不转正式 PR、不写评论、不读取 Checks、不创建 Tag。
+- PR 正文由服务端从任务和报告生成，限制数量与长度，复用验证输出脱敏器。
+- Token 只进入 Rust HTTP Authorization 头，不进入 SQLite、事件、Tauri 响应、前端状态、日志或错误。
+- 重复创建返回本地已有记录，不重复调用 GitHub。
+
+### 31.4 验收与限制
+
+- 适配器、存储、应用、前端和真实本地 Git 推送闭环均有自动化测试。
+- 支持 GitHub.com，不支持 Enterprise Server、PR Checks、Review 评论、冲突检测或自动合并。
+- 如果 GitHub 创建成功但本地保存失败，重试可能产生重复远程 PR；当前以本地幂等为主。

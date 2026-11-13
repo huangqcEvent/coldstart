@@ -470,6 +470,7 @@ export type MemoryReferenceType =
   | 'credential'
   | 'capability'
   | 'git_sync'
+  | 'pull_request'
   | 'project_setting';
 
 export interface ProjectMemoryReference {
@@ -782,6 +783,25 @@ export interface ReviewWaiver {
   standardsHash: string;
 }
 
+export type PullRequestState = 'open' | 'closed' | 'merged';
+
+export interface PullRequestRecord {
+  id: string;
+  projectId: string;
+  workItemId: string;
+  reportId: string;
+  repositoryId: string;
+  number: number;
+  htmlUrl: string;
+  title: string;
+  headBranch: string;
+  baseBranch: string;
+  state: PullRequestState;
+  draft: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ReviewHistoryView {
   reportId: string;
   workItemId: string;
@@ -789,6 +809,7 @@ export interface ReviewHistoryView {
   reviewStatus: ReviewStatus;
   review: ReviewResult | null;
   waiver: ReviewWaiver | null;
+  pullRequest: PullRequestRecord | null;
   createdAt: string;
 }
 

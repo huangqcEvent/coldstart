@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use crate::{
     ArtifactId, BlueprintRevisionId, CredentialId, GenerationSource, GitSyncId, InfoRequestId,
-    LeaseId, PlanRevisionId, Project, ProjectFactId, ProjectId, RepositoryId, WorkItemId,
-    WorkReportId,
+    LeaseId, PlanRevisionId, Project, ProjectFactId, ProjectId, PullRequestId, RepositoryId,
+    WorkItemId, WorkReportId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -203,6 +203,20 @@ pub enum DomainEventKind {
         repository_id: RepositoryId,
         status: String,
     },
+    PullRequestOpened {
+        pull_request_id: PullRequestId,
+        work_item_id: WorkItemId,
+        repository_id: RepositoryId,
+        number: u64,
+        state: String,
+    },
+    PullRequestStateChanged {
+        pull_request_id: PullRequestId,
+        work_item_id: WorkItemId,
+        number: u64,
+        previous_state: String,
+        state: String,
+    },
     ProjectSettingUpdated {
         setting_key: String,
     },
@@ -247,6 +261,8 @@ impl DomainEventKind {
             Self::CredentialDeleted { .. } => "credential_deleted",
             Self::CapabilityUpdated { .. } => "capability_updated",
             Self::GitSyncRecorded { .. } => "git_sync_recorded",
+            Self::PullRequestOpened { .. } => "pull_request_opened",
+            Self::PullRequestStateChanged { .. } => "pull_request_state_changed",
             Self::ProjectSettingUpdated { .. } => "project_setting_updated",
         }
     }

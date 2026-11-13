@@ -3,6 +3,7 @@ mod event_store;
 mod integration_store;
 mod migrations;
 mod plan_store;
+mod pull_request_store;
 mod review_store;
 mod verification_store;
 

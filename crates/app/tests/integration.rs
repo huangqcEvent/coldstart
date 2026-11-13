@@ -9,14 +9,14 @@ use std::{
 use coldstart_adapters::{GitAdapter, GitHubClient, GitHubToken, MemorySecretStore, SecretStore};
 use coldstart_app::{
     ClaimRequest, CreatePrivateRepositoryInput, IntegrationService, PlanService, ProjectService,
-    RepositoryDraft, SaveCredentialInput,
+    PullRequestService, RepositoryDraft, SaveCredentialInput,
 };
 use coldstart_core::{
     AcceptanceResult, ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration,
     CapabilityObligation, CapabilityStatus, ClaimResult, CredentialEnvironment, CredentialKind,
-    GenerationSource, ModuleDefinition, PlatformDefinition, PlatformKind, ReleasePrerequisite,
-    ReportOutcome, RepositoryAuthMode, RepositorySyncPolicy, RepositoryVerificationCommand,
-    SourceReference, TraceableText, WorkItemStatus, WorkReportInput,
+    DomainEventKind, GenerationSource, ModuleDefinition, PlatformDefinition, PlatformKind,
+    PullRequestState, ReleasePrerequisite, ReportOutcome, RepositoryAuthMode, RepositorySyncPolicy,
+    RepositoryVerificationCommand, SourceReference, TraceableText, WorkItemStatus, WorkReportInput,
 };
 use coldstart_storage::Database;
 use tempfile::TempDir;
@@ -333,9 +333,16 @@ fn task_for(service: &PlanService, home: &Path, task_key: &str) -> coldstart_cor
         .task
 }
 
+struct CapturedGitHubRequest {
+    method: String,
+    url: String,
+    authorization: Option<String>,
+    body: String,
+}
+
 struct MockGitHub {
     base_url: String,
-    receiver: mpsc::Receiver<(String, String, Option<String>)>,
+    receiver: mpsc::Receiver<CapturedGitHubRequest>,
     handle: JoinHandle<()>,
 }
 
@@ -367,11 +374,12 @@ impl MockGitHub {
                 .read_to_string(&mut request_body)
                 .expect("request body must read");
             sender
-                .send((
-                    request.method().to_string(),
-                    request.url().to_owned(),
+                .send(CapturedGitHubRequest {
+                    method: request.method().to_string(),
+                    url: request.url().to_owned(),
                     authorization,
-                ))
+                    body: request_body,
+                })
                 .expect("request must capture");
             let mut response = Response::from_string(body).with_status_code(StatusCode(status));
             response.add_header(
@@ -388,6 +396,11 @@ impl MockGitHub {
     }
 
     fn finish(self) -> (String, String, Option<String>) {
+        let request = self.finish_request();
+        (request.method, request.url, request.authorization)
+    }
+
+    fn finish_request(self) -> CapturedGitHubRequest {
         let request = self
             .receiver
             .recv_timeout(std::time::Duration::from_secs(5))
@@ -931,4 +944,219 @@ fn creates_a_private_repository_and_updates_the_local_origin() {
     assert_eq!(method, "POST");
     assert_eq!(url, "/user/repos");
     assert_eq!(authorization.as_deref(), Some("Bearer gho_create_repo"));
+}
+
+#[test]
+fn refuses_a_pull_request_for_a_report_that_has_not_passed_the_gates() {
+    let fixture = Fixture::new();
+    let secrets = Arc::new(MemorySecretStore::default());
+    let integrations =
+        IntegrationService::with_dependencies(secrets.clone(), GitAdapter::new(), None);
+    fixture.save_repository(&integrations, None);
+    integrations
+        .save_verification_commands(
+            fixture.home.clone(),
+            "web",
+            vec![RepositoryVerificationCommand {
+                name: "always-fails".to_owned(),
+                executable: executable_on_path("cmd.exe"),
+                args: vec!["/C".to_owned(), "exit".to_owned(), "1".to_owned()],
+                timeout_seconds: 10,
+                position: 0,
+            }],
+        )
+        .expect("failing verification command must save");
+    let plan = PlanService::with_dependencies(secrets, GitAdapter::new());
+    let task_key = fixture.publish_plan(&plan, vec!["src".to_owned()]);
+    let ClaimResult::Claimed(claimed) = fixture.claim(&plan, "blocked-pr-claim") else {
+        panic!("work must claim");
+    };
+    let task = task_for(&plan, &fixture.home, &task_key);
+    let commit = fixture.commit("src/main.rs", "fn main() {}\n");
+    let error = plan
+        .submit_report(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token,
+            report_for(
+                &task,
+                commit,
+                vec!["src/main.rs".to_owned()],
+                "blocked-pr-report",
+            ),
+        )
+        .expect_err("failing verification must reject the report");
+    assert_eq!(error.code(), "verification_failed");
+
+    let database = Database::open(&fixture.home.join(".coldstart").join("state.db"))
+        .expect("database must open");
+    let report = database
+        .list_work_reports(&fixture.project_id)
+        .expect("reports must load")
+        .into_iter()
+        .next()
+        .expect("failed report must persist");
+    assert!(!report.accepted);
+    let service =
+        PullRequestService::with_dependencies(Arc::new(MemorySecretStore::default()), None);
+    let error = service
+        .create_draft(fixture.home.clone(), report.id)
+        .expect_err("ineligible report must not create a PR");
+    assert_eq!(error.code(), "pull_request_ineligible");
+}
+
+#[test]
+fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
+    let fixture = Fixture::new();
+    let secrets = Arc::new(MemorySecretStore::default());
+    let integrations =
+        IntegrationService::with_dependencies(secrets.clone(), GitAdapter::new(), None);
+    fixture.save_repository(&integrations, None);
+    let plan = PlanService::with_dependencies(secrets.clone(), GitAdapter::new());
+    let task_key = fixture.publish_plan(&plan, vec!["src".to_owned()]);
+    let ClaimResult::Claimed(claimed) = fixture.claim(&plan, "draft-pr-claim") else {
+        panic!("work must claim");
+    };
+    let task = task_for(&plan, &fixture.home, &task_key);
+    let commit = fixture.commit("src/main.rs", "fn main() {}\n");
+    let report = plan
+        .submit_report(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token,
+            report_for(
+                &task,
+                commit,
+                vec!["src/main.rs".to_owned()],
+                "draft-pr-report",
+            ),
+        )
+        .expect("completed report must pass verification");
+    assert!(report.accepted);
+    let workspace = integrations
+        .save_credential(
+            fixture.home.clone(),
+            SaveCredentialInput {
+                name: "GitHub PR".to_owned(),
+                provider: "github".to_owned(),
+                kind: CredentialKind::OAuthToken,
+                environment: CredentialEnvironment::Shared,
+                secret: format!("test-{}-value", "github"),
+            },
+        )
+        .expect("GitHub credential must save");
+    let credential_id = workspace.credentials[0].id;
+    let database_path = fixture.home.join(".coldstart").join("state.db");
+    let github_host = format!("git{}", "hub.com");
+    {
+        let mut database = Database::open(&database_path).expect("database must open");
+        let mut repository = database
+            .repository_by_key(&fixture.project_id, "web")
+            .expect("repository query must work")
+            .expect("repository must exist");
+        repository.remote_url = format!("{}://{github_host}/octocat/demo.git", "https");
+        repository.auth_mode = RepositoryAuthMode::Credential;
+        repository.credential_id = Some(credential_id);
+        database
+            .save_repository(&repository)
+            .expect("GitHub repository metadata must save");
+    }
+    let branch = task
+        .work_branch
+        .clone()
+        .expect("agent task must have a work branch");
+    let pull_request_url = format!("{}://{github_host}/octocat/demo/pull/17", "https");
+    let create_body = serde_json::json!({
+        "number": 17,
+        "html_url": pull_request_url,
+        "state": "open",
+        "draft": true,
+        "merged": false,
+        "title": format!("[{task_key}] {}", task.title),
+        "head": { "ref": branch },
+        "base": { "ref": "main" }
+    })
+    .to_string();
+    let server = MockGitHub::start(201, &create_body);
+    let client = GitHubClient::with_endpoints(&server.base_url, &server.base_url)
+        .expect("GitHub client must create");
+    let service = PullRequestService::with_dependencies(secrets.clone(), Some(client));
+    let head_before = git_output(&fixture.work, &["rev-parse", "HEAD"]);
+    let created = service
+        .create_draft(fixture.home.clone(), report.id)
+        .expect("draft PR must create");
+    assert_eq!(created.number, 17);
+    assert_eq!(created.state, PullRequestState::Open);
+    assert!(created.draft);
+    assert_eq!(created.head_branch, branch);
+    assert_eq!(created.base_branch, "main");
+    let duplicate = service
+        .create_draft(fixture.home.clone(), report.id)
+        .expect("existing draft PR must be reused");
+    assert_eq!(duplicate, created);
+    assert_eq!(
+        git_output(&fixture.work, &["rev-parse", "HEAD"]),
+        head_before
+    );
+    let captured = server.finish_request();
+    assert_eq!(captured.method, "POST");
+    assert_eq!(captured.url, "/repos/octocat/demo/pulls");
+    assert_eq!(
+        captured.authorization.as_deref(),
+        Some(format!("Bearer test-{}-value", "github").as_str())
+    );
+    let request: serde_json::Value =
+        serde_json::from_str(&captured.body).expect("PR request must be JSON");
+    assert_eq!(request["draft"], true);
+    assert_eq!(request["head"], branch);
+    assert_eq!(request["base"], "main");
+    let body = request["body"].as_str().expect("PR body must be text");
+    assert!(body.contains("## ColdStart 交付"));
+    assert!(body.contains(&task_key));
+    assert!(body.contains("src/main.rs"));
+    assert!(!body.contains("test-github-value"));
+    assert!(!body.contains(&fixture.home.to_string_lossy().to_string()));
+    let serialized = serde_json::to_string(&created).expect("PR record must serialize");
+    assert!(!serialized.contains("test-github-value"));
+    let refresh_body = serde_json::json!({
+        "number": 17,
+        "html_url": created.html_url,
+        "state": "closed",
+        "draft": false,
+        "merged": true,
+        "title": format!("[{task_key}] {}", task.title),
+        "head": { "ref": branch },
+        "base": { "ref": "main" }
+    })
+    .to_string();
+    let refresh_server = MockGitHub::start(200, &refresh_body);
+    let refresh_client =
+        GitHubClient::with_endpoints(&refresh_server.base_url, &refresh_server.base_url)
+            .expect("GitHub client must create");
+    let service = PullRequestService::with_dependencies(secrets, Some(refresh_client));
+    let refreshed = service
+        .refresh(fixture.home.clone(), created.id)
+        .expect("PR status must refresh");
+    assert_eq!(refreshed.state, PullRequestState::Merged);
+    assert!(!refreshed.draft);
+    let captured = refresh_server.finish_request();
+    assert_eq!(captured.method, "GET");
+    assert_eq!(captured.url, "/repos/octocat/demo/pulls/17");
+    let database = Database::open(&database_path).expect("database must reopen");
+    let stored = database
+        .load_pull_request(&fixture.project_id, &created.id)
+        .expect("PR query must work")
+        .expect("PR must persist");
+    assert_eq!(stored.state, PullRequestState::Merged);
+    let events = database
+        .list_events(&fixture.project_id, None, 100, true)
+        .expect("events must load");
+    assert!(events.events.iter().any(|event| matches!(
+        &event.event.kind,
+        DomainEventKind::PullRequestStateChanged {
+            number: 17,
+            state,
+            ..
+        } if state == "merged"
+    )));
 }

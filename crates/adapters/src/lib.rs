@@ -12,8 +12,9 @@ pub use document::{
 };
 pub use git::{GitAdapter, GitAuth, GitCommitVerification, GitError, GitRepositoryStatus};
 pub use github::{
-    CreatePrivateRepositoryRequest, DeviceFlowPoll, DeviceFlowStart, GitHubClient,
-    GitHubConnection, GitHubError, GitHubRepository, GitHubToken, import_gh_token,
+    CreateDraftPullRequestRequest, CreatePrivateRepositoryRequest, DeviceFlowPoll, DeviceFlowStart,
+    GitHubClient, GitHubConnection, GitHubError, GitHubPullRequest, GitHubPullRequestBranch,
+    GitHubRepository, GitHubRepositoryCoordinates, GitHubToken, import_gh_token,
 };
 pub use model::{
     BlueprintModel, ModelAnchor, ModelConfig, ModelError, ModelExtractionRequest, ModelSource,

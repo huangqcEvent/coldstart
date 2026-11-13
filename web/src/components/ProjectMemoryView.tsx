@@ -54,6 +54,8 @@ const eventTypeLabels: Record<string, string> = {
   credential_deleted: '凭据删除',
   capability_updated: '能力更新',
   git_sync_recorded: 'Git 同步',
+  pull_request_opened: 'PR 创建',
+  pull_request_state_changed: 'PR 状态',
   project_setting_updated: '项目设置',
 };
 

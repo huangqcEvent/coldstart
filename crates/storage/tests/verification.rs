@@ -87,9 +87,9 @@ fn failed(
 }
 
 #[test]
-fn migrates_to_v7_and_replaces_ordered_commands() {
+fn migrates_to_v8_and_replaces_ordered_commands() {
     let mut fixture = PlanFixture::new(vec![agent_task("foundation:demo", &[])]);
-    assert_eq!(fixture.database.schema_version().expect("version"), 7);
+    assert_eq!(fixture.database.schema_version().expect("version"), 8);
     let saved = fixture
         .database
         .replace_repository_verification_commands(

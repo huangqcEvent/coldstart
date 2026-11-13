@@ -43,6 +43,7 @@ pub enum MemoryReferenceType {
     Credential,
     Capability,
     GitSync,
+    PullRequest,
     ProjectSetting,
 }
 
@@ -702,6 +703,39 @@ fn describe_event(kind: &DomainEventKind) -> EventDescription {
             )),
             is_heartbeat: false,
         },
+        DomainEventKind::PullRequestOpened {
+            pull_request_id,
+            number,
+            state,
+            ..
+        } => EventDescription {
+            phase: MemoryPhase::VerificationReview,
+            title: "GitHub 草稿 PR 已创建",
+            summary: format!("PR #{number} · {state} · 未自动合并"),
+            reference: Some(reference(
+                MemoryReferenceType::PullRequest,
+                pull_request_id,
+                format!("PR #{number}"),
+            )),
+            is_heartbeat: false,
+        },
+        DomainEventKind::PullRequestStateChanged {
+            pull_request_id,
+            number,
+            previous_state,
+            state,
+            ..
+        } => EventDescription {
+            phase: MemoryPhase::VerificationReview,
+            title: "GitHub PR 状态已更新",
+            summary: format!("PR #{number} · {previous_state} -> {state}"),
+            reference: Some(reference(
+                MemoryReferenceType::PullRequest,
+                pull_request_id,
+                format!("PR #{number}"),
+            )),
+            is_heartbeat: false,
+        },
         DomainEventKind::ProjectSettingUpdated { setting_key } => EventDescription {
             phase: MemoryPhase::SystemConfiguration,
             title: "项目设置已更新",
@@ -745,7 +779,9 @@ fn phase_for_event_type(event_type: &str) -> MemoryPhase {
         | "review_blocked"
         | "review_failed"
         | "review_interrupted"
-        | "review_waived" => MemoryPhase::VerificationReview,
+        | "review_waived"
+        | "pull_request_opened"
+        | "pull_request_state_changed" => MemoryPhase::VerificationReview,
         "repository_saved"
         | "repository_verification_commands_updated"
         | "credential_saved"

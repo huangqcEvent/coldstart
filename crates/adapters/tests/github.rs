@@ -4,7 +4,8 @@ use std::{
 };
 
 use coldstart_adapters::{
-    CreatePrivateRepositoryRequest, DeviceFlowPoll, GitHubClient, GitHubError, GitHubToken,
+    CreateDraftPullRequestRequest, CreatePrivateRepositoryRequest, DeviceFlowPoll, GitHubClient,
+    GitHubError, GitHubRepositoryCoordinates, GitHubToken,
 };
 use tiny_http::{Header, Response, Server, StatusCode};
 
@@ -262,5 +263,121 @@ fn redacts_tokens_from_http_errors_and_rejects_invalid_tokens() {
     let message = error.to_string();
     assert!(!message.contains(TOKEN), "error leaked token: {message}");
     assert!(format!("{error:?}").contains("***"));
+    server.finish();
+}
+
+#[test]
+fn parses_supported_github_remotes_only() {
+    for remote in [
+        "https://github.com/octocat/demo.git",
+        "https://github.com/octocat/demo",
+        "git@github.com:octocat/demo.git",
+        "ssh://git@github.com/octocat/demo.git",
+    ] {
+        let coordinates = GitHubRepositoryCoordinates::from_remote_url(remote)
+            .expect("supported remote must parse");
+        assert_eq!(coordinates.owner, "octocat");
+        assert_eq!(coordinates.repository, "demo");
+    }
+    for remote in [
+        "https://gitlab.com/octocat/demo.git",
+        "https://github.com/octocat/demo/extra",
+        "file:///D:/repos/demo.git",
+        "https://user@github.com/octocat/demo.git",
+    ] {
+        assert!(
+            GitHubRepositoryCoordinates::from_remote_url(remote).is_err(),
+            "remote must be rejected: {remote}"
+        );
+    }
+}
+
+#[test]
+fn creates_a_draft_pull_request_with_an_explicit_branch_boundary() {
+    let body = serde_json::json!({
+        "number": 7,
+        "html_url": "https://github.com/octocat/demo/pull/7",
+        "state": "open",
+        "draft": true,
+        "merged": false,
+        "title": "[task] 完成订单",
+        "head": { "ref": "codex/task-one" },
+        "base": { "ref": "main" }
+    })
+    .to_string();
+    let server = MockServer::start(201, vec![], &body);
+    let token = GitHubToken::new(TOKEN).expect("token must be valid");
+    let pull_request = client(&server.base_url)
+        .create_draft_pull_request(
+            &token,
+            &CreateDraftPullRequestRequest {
+                owner: "octocat".to_owned(),
+                repository: "demo".to_owned(),
+                title: "[task] 完成订单".to_owned(),
+                body: "## ColdStart 交付\n".to_owned(),
+                head: "codex/task-one".to_owned(),
+                base: "main".to_owned(),
+            },
+        )
+        .expect("draft pull request must create");
+
+    assert_eq!(pull_request.number, 7);
+    assert!(pull_request.draft);
+    assert_eq!(pull_request.head.reference, "codex/task-one");
+    assert_eq!(pull_request.base.reference, "main");
+    let captured = server.finish();
+    assert_eq!(captured.method, "POST");
+    assert_eq!(captured.url, "/repos/octocat/demo/pulls");
+    assert_eq!(
+        captured.authorization.as_deref(),
+        Some("Bearer gho_sensitive_test_token")
+    );
+    let request: serde_json::Value =
+        serde_json::from_str(&captured.body).expect("request body must be JSON");
+    assert_eq!(request["draft"], true);
+    assert_eq!(request["head"], "codex/task-one");
+    assert_eq!(request["base"], "main");
+}
+
+#[test]
+fn refreshes_pull_request_state_and_rejects_non_https_urls() {
+    let body = serde_json::json!({
+        "number": 7,
+        "html_url": "https://github.com/octocat/demo/pull/7",
+        "state": "closed",
+        "draft": false,
+        "merged": true,
+        "title": "[task] 完成订单",
+        "head": { "ref": "codex/task-one" },
+        "base": { "ref": "main" }
+    })
+    .to_string();
+    let server = MockServer::start(200, vec![], &body);
+    let token = GitHubToken::new(TOKEN).expect("token must be valid");
+    let pull_request = client(&server.base_url)
+        .pull_request(&token, "octocat", "demo", 7)
+        .expect("pull request must load");
+    assert!(pull_request.merged);
+    assert!(!pull_request.draft);
+    let captured = server.finish();
+    assert_eq!(captured.method, "GET");
+    assert_eq!(captured.url, "/repos/octocat/demo/pulls/7");
+
+    let insecure = serde_json::json!({
+        "number": 7,
+        "html_url": "http://example.invalid/pull/7",
+        "state": "open",
+        "draft": true,
+        "merged": false,
+        "title": "demo",
+        "head": { "ref": "codex/task-one" },
+        "base": { "ref": "main" }
+    })
+    .to_string();
+    let server = MockServer::start(200, vec![], &insecure);
+    let error = client(&server.base_url)
+        .pull_request(&token, "octocat", "demo", 7)
+        .expect_err("non-HTTPS URL must be rejected");
+    assert!(matches!(error, GitHubError::InvalidResponse(_)));
     server.finish();
 }

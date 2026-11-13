@@ -3192,6 +3192,94 @@ html[data-theme="light"] .plan-task__verification-head span {
   color: #9b3349;
 }
 
+.review-pull-request,
+.review-pull-request__create {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 16px;
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.review-pull-request--open {
+  border-color: color-mix(in srgb, var(--success) 34%, var(--line));
+  background: color-mix(in srgb, var(--success-soft) 62%, var(--surface-2));
+}
+
+.review-pull-request--merged {
+  border-color: color-mix(in srgb, var(--blue) 42%, var(--line));
+  background: color-mix(in srgb, var(--blue) 9%, var(--surface-2));
+}
+
+.review-pull-request--closed {
+  border-color: color-mix(in srgb, var(--danger) 30%, var(--line));
+}
+
+.review-pull-request__summary {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.review-pull-request__summary strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.92rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-pull-request__summary small,
+.review-pull-request__create span {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+}
+
+.review-pull-request__state {
+  width: fit-content;
+  color: var(--success);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.review-pull-request--closed .review-pull-request__state {
+  color: var(--danger);
+}
+
+.review-pull-request--merged .review-pull-request__state {
+  color: var(--blue);
+}
+
+.review-pull-request__actions {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.review-pull-request__create span {
+  line-height: 1.55;
+  font-family: var(--font-ui);
+}
+
+@media (max-width: 760px) {
+  .review-pull-request,
+  .review-pull-request__create {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .review-pull-request__actions {
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 760px) {
   .theme-toggle__label {
     display: none;

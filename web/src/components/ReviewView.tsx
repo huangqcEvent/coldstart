@@ -5,6 +5,7 @@ import * as reviewApi from '../api/reviewApi';
 import type {
   CommandError,
   CredentialMetadata,
+  PullRequestRecord,
   ReviewConfiguration,
   ReviewHistoryView,
   ReviewScope,
@@ -63,6 +64,21 @@ const statusLabels = {
   waived: '人工豁免',
   interrupted: '已中断',
 } as const;
+
+const pullRequestStateLabels = {
+  open: '开放',
+  closed: '已关闭',
+  merged: '已合并',
+} as const;
+
+function canCreatePullRequest(item: ReviewHistoryView) {
+  return (
+    !item.pullRequest &&
+    (item.reviewStatus === 'passed' ||
+      item.reviewStatus === 'waived' ||
+      item.reviewStatus === 'not_required')
+  );
+}
 
 function normalizeCommandError(error: unknown): CommandError {
   if (typeof error === 'object' && error !== null) {
@@ -377,6 +393,44 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
       setNotice('人工豁免已记录；任务完成并进入推送流程。');
     } catch (waiverError) {
       setError(normalizeCommandError(waiverError));
+    } finally {
+      setBusyLabel(null);
+    }
+  }
+
+  async function createPullRequest(item: ReviewHistoryView) {
+    if (busyLabel || !canCreatePullRequest(item)) {
+      return;
+    }
+    setBusyLabel('正在创建 GitHub 草稿 PR');
+    setError(null);
+    setNotice(null);
+    try {
+      const pullRequest = await reviewApi.createDraftPullRequest(path, item.reportId);
+      await loadWorkspace(false);
+      setNotice(
+        `草稿 PR #${pullRequest.number} 已创建；ColdStart 不会自动合并或创建 Release。`,
+      );
+    } catch (pullRequestError) {
+      setError(normalizeCommandError(pullRequestError));
+    } finally {
+      setBusyLabel(null);
+    }
+  }
+
+  async function refreshPullRequest(pullRequest: PullRequestRecord) {
+    if (busyLabel) {
+      return;
+    }
+    setBusyLabel(`正在刷新 PR #${pullRequest.number}`);
+    setError(null);
+    setNotice(null);
+    try {
+      await reviewApi.refreshPullRequest(path, pullRequest.id);
+      await loadWorkspace(false);
+      setNotice(`PR #${pullRequest.number} 状态已刷新。`);
+    } catch (refreshError) {
+      setError(normalizeCommandError(refreshError));
     } finally {
       setBusyLabel(null);
     }
@@ -761,6 +815,55 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
                         <strong>已由 {item.waiver.waivedBy} 人工豁免</strong>
                         <p>{item.waiver.reason}</p>
                         <small>{formatTimestamp(item.waiver.waivedAt)}</small>
+                      </div>
+                    ) : null}
+
+                    {item.pullRequest ? (
+                      <div
+                        className={`review-pull-request review-pull-request--${item.pullRequest.state}`}
+                      >
+                        <div className="review-pull-request__summary">
+                          <span className="review-pull-request__state">
+                            {item.pullRequest.draft ? '草稿 PR' : 'PR'} ·{' '}
+                            {pullRequestStateLabels[item.pullRequest.state]}
+                          </span>
+                          <strong>
+                            #{item.pullRequest.number} {item.pullRequest.title}
+                          </strong>
+                          <small>
+                            {item.pullRequest.headBranch} → {item.pullRequest.baseBranch}
+                          </small>
+                        </div>
+                        <div className="review-pull-request__actions">
+                          <a
+                            className="button button--secondary button--compact"
+                            href={item.pullRequest.htmlUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            在 GitHub 打开
+                          </a>
+                          <button
+                            className="button button--ghost button--compact"
+                            type="button"
+                            onClick={() => void refreshPullRequest(item.pullRequest!)}
+                            disabled={busy}
+                          >
+                            刷新状态
+                          </button>
+                        </div>
+                      </div>
+                    ) : canCreatePullRequest(item) ? (
+                      <div className="review-pull-request__create">
+                        <span>任务已完成且门禁通过，可创建不含合并操作的草稿 PR。</span>
+                        <button
+                          className="button button--secondary button--compact"
+                          type="button"
+                          onClick={() => void createPullRequest(item)}
+                          disabled={busy}
+                        >
+                          创建草稿 PR
+                        </button>
                       </div>
                     ) : null}
 

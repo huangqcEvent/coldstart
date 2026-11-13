@@ -2,7 +2,7 @@
 
 > Vibe Coding 之前，先把项目冷启动。
 
-ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review、开发计划和项目记忆组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文和提交完成报告。
+ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review、GitHub 草稿 PR、开发计划和项目记忆组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文和提交完成报告。
 
 ColdStart 本身不生成业务代码，也不替你启动 Agent。它解决的是编码之前与编码之后最容易失真的问题：现在到底要做什么、依赖是否满足、密钥和提审材料是否就绪、Agent 是否真的完成了任务，以及本次改动是否值得进入主分支。
 
@@ -64,6 +64,8 @@ ColdStart 不会自动通读整个仓库并替你还原完整架构。历史项�
   -> ColdStart 校验真实 Git 变更并独立执行验证命令
   -> 从真实 diff 执行 AI Review
   -> passed / waived 后完成任务并推送任务分支
+  -> 人工在桌面端创建 GitHub 草稿 PR
+  -> 在 GitHub 人工审查并决定是否合并
   -> 解锁后继任务
   -> 在项目记忆中复盘每次变更与门禁结果
 ```
@@ -213,7 +215,23 @@ Codex 可以先通过 MCP 读取项目简报和项目记忆恢复上下文，再
 
 完成后 ColdStart 执行普通推送。推送失败不会回滚已完成任务，而是写入 Git 同步风险记录。禁止强推、删除远程分支和写入保护分支。
 
-### 9. 复盘项目记忆
+### 9. 创建 GitHub 草稿 PR
+
+任务分支成功推送后，可以到“AI 评审”历史中点击“创建草稿 PR”。创建由桌面端人工触发，固定为草稿状态，不会合并或创建 Release Tag。
+
+前置条件：
+
+1. 编码任务已经是 `done`，报告已接受。
+2. Review 状态为 `not_required`、`passed` 或 `waived`。
+3. 报告分支和 Commit 存在成功的推送记录。
+4. 仓库远程地址是 GitHub.com 的 HTTPS 或 SSH 地址。
+5. 仓库使用凭据认证，凭据类型为 OAuth Token 或 Personal Access Token。
+
+PR 正文包含任务、验收、验证、Review、变更文件和已知问题，并经过脱敏和长度限制。创建成功后可以打开 GitHub 链接，也可以回到 ColdStart 手动“刷新状态”；状态固定为开放、已关闭或已合并。
+
+ColdStart 不自动合并、不关闭 PR、不转正式 PR、不写评论、不读取 Checks，也不创建 Release Tag。
+
+### 10. 复盘项目记忆
 
 “项目记忆”把 SQLite 事件日志整理成只读时间线，覆盖需求导入、蓝图发布、计划发布、任务领取、心跳、阻塞、验证、AI Review、仓库与凭据配置、Git 同步等变更。
 
@@ -429,6 +447,8 @@ Codex 或兼容 MCP 客户端使用以下配置连接某个 ColdStart 项目：
 - `release_work`：释放无法继续的任务租约。
 - `get_capability_status`：读取能力与环境状态、提供方和凭据引用标识，永不返回 Secret。
 
+GitHub 草稿 PR 的创建与刷新只在桌面端开放，不属于 MCP 工具。Agent 仍只能提交任务报告，不能合并、关闭或刷新 PR。
+
 默认租约为 30 分钟，建议每 5 分钟心跳；默认上下文预算为 12,000 tokens。租约令牌是随机值，SQLite 只保存 SHA-256 哈希，不写入事件、日志、UI 或报告。
 
 ### Codex 的推荐执行循环
@@ -466,6 +486,8 @@ claim_next_work
 - 拒绝强推、删除远程分支和越过任务允许路径的变更。
 - 推送失败只记录风险，不伪造成功或回滚已完成状态。
 - 创建 GitHub 私有仓库需要桌面端二次确认。
+- 草稿 PR 只能由桌面端人工创建；请求正文由 ColdStart 生成，Token 不进入正文或本地记录。
+- PR 刷新只读 GitHub 状态，不执行合并、关闭、评论或 Checks 写入。
 
 ### 执行安全
 
@@ -506,6 +528,7 @@ your-project/
 - 历史项目不会自动还原完整架构，需要文档和人工收敛。
 - 没有团队权限、多人并发审批或云端同步。
 - 不自动部署、打包、提审、发布小程序、合并分支或创建 Release Tag。
+- GitHub 草稿 PR 只支持 GitHub.com 与人工触发；不读取 Checks、Review 评论或冲突状态。
 - Review 依赖外部 OpenAI 兼容模型；模型服务故障会失败关闭而不是跳过。
 - AI Review 不能证明代码没有漏洞，也不能替代人工安全审计。
 - MCP 项目简报只基于当前已发布计划；更早计划的历史需要通过项目记忆分页查看。
@@ -552,6 +575,17 @@ your-project/
 
 这是预期风险记录，不是任务回滚。到“仓库与能力”的 Git 同步记录查看错误摘要，修复远程认证后按正常 Git 流程处理。
 
+### 无法创建草稿 PR
+
+按以下顺序检查：
+
+1. 报告是否已接受、任务是否为 `done`、Review 是否为允许完成的状态。
+2. 报告分支和 Commit 是否有成功推送记录；仅本地提交不能创建 PR。
+3. 仓库远程是否为 GitHub.com，且仓库是否绑定 GitHub OAuth Token 或 PAT。
+4. 同一报告是否已有 PR；已有记录时按钮会替换为链接和刷新操作。
+
+常见错误码：`pull_request_ineligible`、`pull_request_report_not_found`、`pull_request_not_found`、`github_remote_unsupported`、`github_token_invalid` 和 `github_request_failed`。
+
 ### 安装后找不到 MCP
 
 安装版计划看板会优先定位桌面 EXE 同级的 `coldstart-mcp.exe`，也会识别 Tauri 的 `resources\coldstart-mcp.exe`。复制 MCP 配置前确认文件存在；源码运行时可先执行 `cargo build -p coldstart-mcp --release`。
@@ -589,6 +623,8 @@ pnpm --dir apps/desktop build:installer
 - [产品与系统架构规格](docs/superpowers/specs/2026-10-30-coldstart-design.md)
 - [AI Review 与规范库设计](docs/superpowers/specs/2026-11-02-coldstart-ai-review-design.md)
 - [项目记忆与变更审计设计](docs/superpowers/specs/2026-11-12-coldstart-project-memory-design.md)
+- [MCP 项目记忆与接力设计](docs/superpowers/specs/2026-11-13-coldstart-mcp-memory-handoff-design.md)
+- [GitHub 草稿 PR 交付设计](docs/superpowers/specs/2026-11-13-coldstart-draft-pull-request-design.md)
 - [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
 - [AI Review 实施计划](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
 - [项目记忆实施计划](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
@@ -603,7 +639,10 @@ pnpm --dir apps/desktop build:installer
 - [第九阶段：项目记忆与变更审计](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
 - [第十阶段：真实项目实战验收](docs/superpowers/plans/2026-11-13-coldstart-real-project-acceptance.md)
 - [第十阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-real-project-acceptance/progress.md)
+- [第十一阶段：MCP 项目记忆与接力](docs/superpowers/plans/2026-11-13-coldstart-mcp-memory-handoff.md)
+- [第十二阶段：GitHub 草稿 PR 交付](docs/superpowers/plans/2026-11-13-coldstart-draft-pull-request.md)
+- [第十二阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-draft-pull-request/progress.md)
 
 ## 技术形态
 
-Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。
+Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub 草稿 PR、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。

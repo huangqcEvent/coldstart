@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Component, Path, PathBuf},
 };
@@ -6,7 +7,7 @@ use std::{
 use chrono::Utc;
 use coldstart_adapters::{DocumentError, extract_document};
 use coldstart_core::{
-    ArtifactFormat, MAX_REVIEW_STANDARD_CHARS, MAX_REVIEW_STANDARDS, ProjectId,
+    ArtifactFormat, MAX_REVIEW_STANDARD_CHARS, MAX_REVIEW_STANDARDS, ProjectId, PullRequestRecord,
     ReviewConfiguration, ReviewConfigurationInput, ReviewScope, ReviewStandard, ReviewStandardId,
     ReviewStandardRevisionId, ReviewStandardSnapshot, ReviewStandardSource, ReviewStatus,
     ReviewWaiver, WorkItemId, WorkReportId, sha256_hex,
@@ -57,6 +58,7 @@ pub struct ReviewHistoryView {
     pub review_status: ReviewStatus,
     pub review: Option<coldstart_core::ReviewResult>,
     pub waiver: Option<ReviewWaiver>,
+    pub pull_request: Option<PullRequestRecord>,
     pub created_at: chrono::DateTime<Utc>,
 }
 
@@ -365,12 +367,22 @@ fn build_review_workspace(project: &OpenProject) -> Result<ReviewWorkspace, AppE
         .into_iter()
         .map(standard_view)
         .collect();
+    let pull_requests = project
+        .database
+        .list_pull_requests(&project.project.id)?
+        .into_iter()
+        .map(|record| (record.report_id, record))
+        .collect::<BTreeMap<_, _>>();
     let mut recent_reviews = Vec::new();
     for report in project
         .database
         .list_work_reports(&project.project.id)?
         .into_iter()
-        .filter(|report| report.review_status != ReviewStatus::NotRequired)
+        .filter(|report| {
+            report.review_status != ReviewStatus::NotRequired
+                || (report.accepted
+                    && report.report.status == coldstart_core::ReportOutcome::Completed)
+        })
         .take(MAX_RECENT_REVIEWS)
     {
         let task_key = project
@@ -378,6 +390,7 @@ fn build_review_workspace(project: &OpenProject) -> Result<ReviewWorkspace, AppE
             .load_work_item(&report.work_item_id)?
             .map(|item| item.task_key)
             .unwrap_or_else(|| report.work_item_id.to_string());
+        let pull_request = pull_requests.get(&report.id).cloned();
         recent_reviews.push(ReviewHistoryView {
             report_id: report.id,
             work_item_id: report.work_item_id,
@@ -385,6 +398,7 @@ fn build_review_workspace(project: &OpenProject) -> Result<ReviewWorkspace, AppE
             review_status: report.review_status,
             review: report.review,
             waiver: report.review_waiver,
+            pull_request,
             created_at: report.created_at,
         });
     }

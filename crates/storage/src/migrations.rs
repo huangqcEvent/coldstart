@@ -2,7 +2,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::StorageError;
 
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let current = read_schema_version(connection)?;
@@ -32,6 +32,7 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v5(&transaction)?;
             create_schema_v6(&transaction)?;
             create_schema_v7(&transaction)?;
+            create_schema_v8(&transaction)?;
         }
         1 => {
             migrate_v1_to_v2(&transaction)?;
@@ -40,6 +41,7 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v5(&transaction)?;
             create_schema_v6(&transaction)?;
             create_schema_v7(&transaction)?;
+            create_schema_v8(&transaction)?;
         }
         2 => {
             create_schema_v3(&transaction)?;
@@ -47,23 +49,31 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v5(&transaction)?;
             create_schema_v6(&transaction)?;
             create_schema_v7(&transaction)?;
+            create_schema_v8(&transaction)?;
         }
         3 => {
             create_schema_v4(&transaction)?;
             create_schema_v5(&transaction)?;
             create_schema_v6(&transaction)?;
             create_schema_v7(&transaction)?;
+            create_schema_v8(&transaction)?;
         }
         4 => {
             create_schema_v5(&transaction)?;
             create_schema_v6(&transaction)?;
             create_schema_v7(&transaction)?;
+            create_schema_v8(&transaction)?;
         }
         5 => {
             create_schema_v6(&transaction)?;
             create_schema_v7(&transaction)?;
+            create_schema_v8(&transaction)?;
         }
-        6 => create_schema_v7(&transaction)?,
+        6 => {
+            create_schema_v7(&transaction)?;
+            create_schema_v8(&transaction)?;
+        }
+        7 => create_schema_v8(&transaction)?,
         _ => return Err(unsupported_schema(current)),
     }
 
@@ -520,6 +530,38 @@ fn create_schema_v7(transaction: &Transaction<'_>) -> Result<(), StorageError> {
             CREATE UNIQUE INDEX work_reports_one_running_review
                 ON work_reports(work_item_id)
                 WHERE review_status = 'running';
+            ",
+    )?;
+    Ok(())
+}
+
+fn create_schema_v8(transaction: &Transaction<'_>) -> Result<(), StorageError> {
+    transaction.execute_batch(
+        "
+            CREATE TABLE pull_requests (
+                id TEXT PRIMARY KEY NOT NULL,
+                project_id TEXT NOT NULL,
+                work_item_id TEXT NOT NULL,
+                report_id TEXT NOT NULL UNIQUE,
+                repository_id TEXT NOT NULL,
+                number INTEGER NOT NULL CHECK (number > 0),
+                html_url TEXT NOT NULL,
+                title TEXT NOT NULL,
+                head_branch TEXT NOT NULL,
+                base_branch TEXT NOT NULL,
+                state TEXT NOT NULL,
+                draft INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(repository_id, number),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (work_item_id) REFERENCES work_items(id) ON DELETE CASCADE,
+                FOREIGN KEY (report_id) REFERENCES work_reports(id) ON DELETE CASCADE,
+                FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX pull_requests_by_project
+                ON pull_requests(project_id, updated_at DESC);
             ",
     )?;
     Ok(())

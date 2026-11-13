@@ -42,7 +42,9 @@ pub fn run() {
             commands::reorder_review_standards,
             commands::delete_review_standard,
             commands::read_review_standard,
-            commands::waive_work_review
+            commands::waive_work_review,
+            commands::create_draft_pull_request,
+            commands::refresh_pull_request
         ])
         .run(tauri::generate_context!())
         .expect("failed to run ColdStart desktop");

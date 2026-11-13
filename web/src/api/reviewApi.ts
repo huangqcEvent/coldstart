@@ -10,6 +10,7 @@ import type {
   ReviewStandardRevisionInput,
   ReviewStandardView,
   ReviewWorkspace,
+  PullRequestRecord,
   WorkReportRecord,
 } from './types';
 
@@ -100,6 +101,20 @@ export async function waiveWorkReview(
     workItemId,
     reportId,
     reason,
+  });
+}
+
+export async function createDraftPullRequest(path: string, reportId: string) {
+  return invoke<PullRequestRecord>('create_draft_pull_request', {
+    path,
+    reportId,
+  });
+}
+
+export async function refreshPullRequest(path: string, pullRequestId: string) {
+  return invoke<PullRequestRecord>('refresh_pull_request', {
+    path,
+    pullRequestId,
   });
 }
 

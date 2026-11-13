@@ -8,6 +8,7 @@ mod memory;
 mod plan;
 mod plan_workspace;
 mod project_home;
+mod pull_request;
 mod requirements;
 mod review;
 mod service;
@@ -34,6 +35,7 @@ pub use memory::{
 pub use plan::{ClaimRequest, PlanService};
 pub use plan_workspace::{McpConnectionInfo, PlanWorkspace, WorkItemView};
 pub use project_home::ProjectHome;
+pub use pull_request::PullRequestService;
 pub use requirements::{MAX_SOURCE_CONTEXT_CHARACTERS, RequirementsService};
 pub use review::{
     ReviewHistoryView, ReviewService, ReviewStandardContent, ReviewStandardImport,

@@ -14,7 +14,8 @@ use coldstart_core::{
     DocumentAnchor, DomainEvent, DomainEventKind, GenerationSource, InfoRequest,
     InfoRequestCategory, InfoRequestDraft, InfoRequestId, InfoRequestStatus,
     IntegrationValidationError, PlanRevisionId, PlanValidationError, Project, ProjectFact,
-    ProjectFactId, ProjectId, WorkItemId, validate_blueprint_structure,
+    ProjectFactId, ProjectId, PullRequestId, PullRequestValidationError, WorkItemId,
+    validate_blueprint_structure,
 };
 use rusqlite::{
     Connection, ErrorCode, OptionalExtension, Row, Transaction, TransactionBehavior, params,
@@ -140,6 +141,19 @@ pub enum StorageError {
     EmptyGitSyncFields,
     #[error("git sync repository or work item does not belong to project {0}")]
     GitSyncScopeMismatch(ProjectId),
+    #[error("pull request {0} does not exist in the project")]
+    PullRequestNotFound(PullRequestId),
+    #[error("pull request report, work item, or repository does not belong to project {0}")]
+    PullRequestScopeMismatch(ProjectId),
+    #[error("work report {0} is already linked to another pull request")]
+    PullRequestReportAlreadyLinked(coldstart_core::WorkReportId),
+    #[error("pull request number {number} is already linked to repository {repository_id}")]
+    PullRequestNumberAlreadyLinked {
+        repository_id: coldstart_core::RepositoryId,
+        number: u64,
+    },
+    #[error("invalid pull request: {0}")]
+    InvalidPullRequest(#[from] PullRequestValidationError),
     #[error("invalid blueprint: {0}")]
     InvalidBlueprint(#[from] BlueprintValidationError),
     #[error("invalid plan: {0}")]
