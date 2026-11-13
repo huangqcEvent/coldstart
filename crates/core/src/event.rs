@@ -217,6 +217,16 @@ pub enum DomainEventKind {
         previous_state: String,
         state: String,
     },
+    PullRequestInsightsSynced {
+        pull_request_id: PullRequestId,
+        work_item_id: WorkItemId,
+        number: u64,
+        checks_state: String,
+        checks_total: usize,
+        checks_failed: usize,
+        review_count: usize,
+        comment_count: usize,
+    },
     ProjectSettingUpdated {
         setting_key: String,
     },
@@ -263,6 +273,7 @@ impl DomainEventKind {
             Self::GitSyncRecorded { .. } => "git_sync_recorded",
             Self::PullRequestOpened { .. } => "pull_request_opened",
             Self::PullRequestStateChanged { .. } => "pull_request_state_changed",
+            Self::PullRequestInsightsSynced { .. } => "pull_request_insights_synced",
             Self::ProjectSettingUpdated { .. } => "project_setting_updated",
         }
     }

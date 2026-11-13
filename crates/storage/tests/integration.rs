@@ -81,6 +81,7 @@ fn migrates_v4_to_v8_and_persists_integration_state() {
              DROP TABLE review_standard_revisions;
              DROP TABLE review_standards;
              DROP TABLE review_configurations;
+             DROP TABLE pull_request_insights;
              DROP TABLE pull_requests;
              DROP TABLE repository_verification_commands;
              DROP TABLE capability_states;
@@ -95,7 +96,7 @@ fn migrates_v4_to_v8_and_persists_integration_state() {
     let mut database = Database::open(&database_path).expect("v4 migration must run");
     assert_eq!(
         database.schema_version().expect("schema version must load"),
-        8
+        9
     );
 
     let credential = credential(project_id);

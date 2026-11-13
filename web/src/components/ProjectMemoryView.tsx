@@ -56,6 +56,7 @@ const eventTypeLabels: Record<string, string> = {
   git_sync_recorded: 'Git 同步',
   pull_request_opened: 'PR 创建',
   pull_request_state_changed: 'PR 状态',
+  pull_request_insights_synced: 'PR 验收同步',
   project_setting_updated: '项目设置',
 };
 

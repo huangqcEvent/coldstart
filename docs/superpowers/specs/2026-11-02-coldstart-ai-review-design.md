@@ -22,7 +22,7 @@ ColdStart 已经能完成“需求 -> 蓝图 -> 计划 -> Codex/MCP 领取 -> Gi
 
 ## 3. 非目标
 
-- 不接入 GitHub Checks、PR 评论或第三方代码托管平台的 Review 机器人。
+- AI Review 判定不消费 GitHub Checks、PR 评论或第三方代码托管平台的 Review 机器人；阶段 13 只在桌面端另行提供这些信息的只读展示。
 - 不实现自动修复、自动提交修复、多轮 Agent 循环或 Review 通过率优化。
 - 不在本阶段实现部署、App 打包、商店提审、小程序发布、自动合并或 Release Tag。
 - 不提供通用 RAG、向量检索或对整个仓库建立语义索引。
@@ -460,10 +460,17 @@ README 不再以“第 1 至第 7 阶段”作为首屏结构；阶段历史保�
 
 ## 22. 明确不做
 
-- 不增加 GitHub Checks、PR 评论或平台状态回写；阶段 12 另行增加了人工触发的草稿 PR 创建与只读状态刷新。
+- 不把 GitHub Checks、PR 评论或平台状态回写纳入 Review 判定；阶段 12 增加了人工触发的草稿 PR 创建与状态刷新，阶段 13 增加了 Checks、Review 和行内评论的只读同步。
 - 不增加 MCP Review 管理工具或豁免工具。
 - 不自动修复 finding，不自动创建修复提交。
 - 不调用多个模型投票，不做模型路由或成本优化平台。
 - 不做自定义规则 DSL、AST 分析器或本地静态分析器集成。
 - 不上传整个仓库，不做向量检索。
 - 不在本阶段恢复已搁置的部署、打包、商店提审、小程序发布、自动合并和 Release Tag。
+
+## 23. 与 GitHub PR 验收同步的边界
+
+- ColdStart 自己的 AI Review 仍只读取任务分支上的真实 Git diff、任务验收标准、启用规范和脱敏验证摘要。
+- GitHub Checks、PR Review 和行内评论由阶段 13 单独同步，仅用于桌面端人工最终验收；它们不会反向改变 AI Review 的 `passed`、`blocked` 或 `waived` 结果。
+- 同步只执行 GitHub 只读请求，不回复评论、不重跑 Checks、不合并 PR、不创建 Tag，也不增加 MCP 工具。
+- 失败的 GitHub Checks 与要求修改的 Review 只显示当前状态，不会自动创建修复任务或自动重新提交报告。

@@ -7,10 +7,11 @@ use std::{
 use chrono::Utc;
 use coldstart_adapters::{DocumentError, extract_document};
 use coldstart_core::{
-    ArtifactFormat, MAX_REVIEW_STANDARD_CHARS, MAX_REVIEW_STANDARDS, ProjectId, PullRequestRecord,
-    ReviewConfiguration, ReviewConfigurationInput, ReviewScope, ReviewStandard, ReviewStandardId,
-    ReviewStandardRevisionId, ReviewStandardSnapshot, ReviewStandardSource, ReviewStatus,
-    ReviewWaiver, WorkItemId, WorkReportId, sha256_hex,
+    ArtifactFormat, MAX_REVIEW_STANDARD_CHARS, MAX_REVIEW_STANDARDS, ProjectId,
+    PullRequestInsights, PullRequestRecord, ReviewConfiguration, ReviewConfigurationInput,
+    ReviewScope, ReviewStandard, ReviewStandardId, ReviewStandardRevisionId,
+    ReviewStandardSnapshot, ReviewStandardSource, ReviewStatus, ReviewWaiver, WorkItemId,
+    WorkReportId, sha256_hex,
 };
 use coldstart_storage::NewReviewStandardRevision;
 use serde::{Deserialize, Serialize};
@@ -59,6 +60,7 @@ pub struct ReviewHistoryView {
     pub review: Option<coldstart_core::ReviewResult>,
     pub waiver: Option<ReviewWaiver>,
     pub pull_request: Option<PullRequestRecord>,
+    pub pull_request_insights: Option<PullRequestInsights>,
     pub created_at: chrono::DateTime<Utc>,
 }
 
@@ -391,6 +393,12 @@ fn build_review_workspace(project: &OpenProject) -> Result<ReviewWorkspace, AppE
             .map(|item| item.task_key)
             .unwrap_or_else(|| report.work_item_id.to_string());
         let pull_request = pull_requests.get(&report.id).cloned();
+        let pull_request_insights = match &pull_request {
+            Some(record) => project
+                .database
+                .load_pull_request_insights(&project.project.id, &record.id)?,
+            None => None,
+        };
         recent_reviews.push(ReviewHistoryView {
             report_id: report.id,
             work_item_id: report.work_item_id,
@@ -399,6 +407,7 @@ fn build_review_workspace(project: &OpenProject) -> Result<ReviewWorkspace, AppE
             review: report.review,
             waiver: report.review_waiver,
             pull_request,
+            pull_request_insights,
             created_at: report.created_at,
         });
     }

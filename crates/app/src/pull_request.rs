@@ -1,14 +1,19 @@
 use std::{path::PathBuf, sync::Arc};
 
+use chrono::Utc;
 use coldstart_adapters::{
-    CreateDraftPullRequestRequest, GitHubClient, GitHubError, GitHubPullRequest,
-    GitHubRepositoryCoordinates, GitHubToken, SecretStore, WindowsSecretStore,
-    sanitize_verification_output,
+    CreateDraftPullRequestRequest, GitHubCheckRun, GitHubClient, GitHubError, GitHubPullRequest,
+    GitHubPullRequestReview, GitHubPullRequestReviewComment, GitHubRepositoryCoordinates,
+    GitHubToken, SecretStore, WindowsSecretStore, sanitize_verification_output,
 };
 use coldstart_core::{
-    CredentialKind, GitSyncStatus, PullRequestId, PullRequestRecord, PullRequestState,
-    ReportOutcome, Repository, RepositoryAuthMode, ReviewStatus, TaskKind, TaskSpec,
-    WorkItemStatus, WorkReportId,
+    CredentialKind, GitSyncStatus, MAX_PULL_REQUEST_CHECK_APP_CHARS,
+    MAX_PULL_REQUEST_CHECK_NAME_CHARS, MAX_PULL_REQUEST_INSIGHT_AUTHOR_CHARS,
+    MAX_PULL_REQUEST_INSIGHT_PATH_CHARS, MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS, PullRequestCheck,
+    PullRequestCheckConclusion, PullRequestCheckStatus, PullRequestId, PullRequestInsights,
+    PullRequestRecord, PullRequestReview, PullRequestReviewComment, PullRequestReviewState,
+    PullRequestState, ReportOutcome, Repository, RepositoryAuthMode, ReviewStatus, TaskKind,
+    TaskSpec, WorkItemStatus, WorkReportId,
 };
 
 use crate::{AppError, context::OpenProject};
@@ -188,10 +193,30 @@ impl PullRequestService {
             &coordinates.repository,
             record.number,
         )?;
+        let check_runs = github.pull_request_checks(
+            &token,
+            &coordinates.owner,
+            &coordinates.repository,
+            &remote.head.sha,
+        )?;
+        let reviews = github.pull_request_reviews(
+            &token,
+            &coordinates.owner,
+            &coordinates.repository,
+            record.number,
+        )?;
+        let review_comments = github.pull_request_review_comments(
+            &token,
+            &coordinates.owner,
+            &coordinates.repository,
+            record.number,
+        )?;
+        let insights = pull_request_insights(record.id, check_runs, reviews, review_comments)?;
         let state = pull_request_state(&remote)?;
         if record.update_state(state, remote.draft)? {
             project.database.save_pull_request(&record)?;
         }
+        project.database.save_pull_request_insights(&insights)?;
         Ok(record)
     }
 
@@ -248,6 +273,90 @@ fn pull_request_state(remote: &GitHubPullRequest) -> Result<PullRequestState, Ap
         ))
         .into()
     })
+}
+
+fn pull_request_insights(
+    pull_request_id: PullRequestId,
+    check_runs: Vec<GitHubCheckRun>,
+    reviews: Vec<GitHubPullRequestReview>,
+    review_comments: Vec<GitHubPullRequestReviewComment>,
+) -> Result<PullRequestInsights, AppError> {
+    let checks = check_runs
+        .into_iter()
+        .map(|check| PullRequestCheck {
+            name: bounded_text(&check.name, MAX_PULL_REQUEST_CHECK_NAME_CHARS),
+            status: PullRequestCheckStatus::parse(&check.status),
+            conclusion: check
+                .conclusion
+                .as_deref()
+                .map(PullRequestCheckConclusion::parse),
+            details_url: safe_optional_url(check.details_url),
+            app_name: check
+                .app
+                .and_then(|app| app.name.or(app.slug))
+                .map(|value| bounded_text(&value, MAX_PULL_REQUEST_CHECK_APP_CHARS))
+                .filter(|value| !value.is_empty()),
+        })
+        .collect();
+    let reviews = reviews
+        .into_iter()
+        .map(|review| PullRequestReview {
+            author: insight_actor(review.user.map(|user| user.login)),
+            state: PullRequestReviewState::parse(&review.state),
+            body: bounded_text(
+                review.body.as_deref().unwrap_or_default(),
+                MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS,
+            ),
+            html_url: safe_optional_url(review.html_url),
+        })
+        .collect();
+    let review_comments = review_comments
+        .into_iter()
+        .map(|comment| PullRequestReviewComment {
+            author: insight_actor(comment.user.map(|user| user.login)),
+            path: insight_path(&comment.path),
+            line: comment.line.or(comment.original_line).map(u64::from),
+            body: bounded_text(
+                comment.body.as_deref().unwrap_or_default(),
+                MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS,
+            ),
+            html_url: safe_optional_url(comment.html_url),
+        })
+        .collect();
+    PullRequestInsights::new(
+        pull_request_id,
+        checks,
+        reviews,
+        review_comments,
+        Utc::now(),
+    )
+    .map_err(Into::into)
+}
+
+fn insight_actor(value: Option<String>) -> String {
+    value
+        .as_deref()
+        .map(|value| bounded_text(value, MAX_PULL_REQUEST_INSIGHT_AUTHOR_CHARS))
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn insight_path(value: &str) -> String {
+    let value = sanitize_verification_output(value)
+        .replace(['\r', '\n', '\t'], " ")
+        .trim()
+        .to_owned();
+    if value.is_empty() {
+        "unknown".to_owned()
+    } else {
+        truncate_chars(&value, MAX_PULL_REQUEST_INSIGHT_PATH_CHARS)
+    }
+}
+
+fn safe_optional_url(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 fn pull_request_title(task: &TaskSpec) -> String {

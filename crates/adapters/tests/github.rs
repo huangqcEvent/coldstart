@@ -301,8 +301,8 @@ fn creates_a_draft_pull_request_with_an_explicit_branch_boundary() {
         "draft": true,
         "merged": false,
         "title": "[task] 完成订单",
-        "head": { "ref": "codex/task-one" },
-        "base": { "ref": "main" }
+        "head": { "ref": "codex/task-one", "sha": "1111111111111111111111111111111111111111" },
+        "base": { "ref": "main", "sha": "2222222222222222222222222222222222222222" }
     })
     .to_string();
     let server = MockServer::start(201, vec![], &body);
@@ -348,8 +348,8 @@ fn refreshes_pull_request_state_and_rejects_non_https_urls() {
         "draft": false,
         "merged": true,
         "title": "[task] 完成订单",
-        "head": { "ref": "codex/task-one" },
-        "base": { "ref": "main" }
+        "head": { "ref": "codex/task-one", "sha": "1111111111111111111111111111111111111111" },
+        "base": { "ref": "main", "sha": "2222222222222222222222222222222222222222" }
     })
     .to_string();
     let server = MockServer::start(200, vec![], &body);
@@ -370,14 +370,145 @@ fn refreshes_pull_request_state_and_rejects_non_https_urls() {
         "draft": true,
         "merged": false,
         "title": "demo",
-        "head": { "ref": "codex/task-one" },
-        "base": { "ref": "main" }
+        "head": { "ref": "codex/task-one", "sha": "1111111111111111111111111111111111111111" },
+        "base": { "ref": "main", "sha": "2222222222222222222222222222222222222222" }
     })
     .to_string();
     let server = MockServer::start(200, vec![], &insecure);
     let error = client(&server.base_url)
         .pull_request(&token, "octocat", "demo", 7)
         .expect_err("non-HTTPS URL must be rejected");
+    assert!(matches!(error, GitHubError::InvalidResponse(_)));
+    server.finish();
+}
+
+#[test]
+fn reads_checks_reviews_and_review_comments_as_bounded_read_only_responses() {
+    let token = GitHubToken::new(TOKEN).expect("token must be valid");
+    let checks_body = serde_json::json!({
+        "total_count": 2,
+        "check_runs": [
+            {
+                "id": 1,
+                "name": "unit tests",
+                "status": "completed",
+                "conclusion": "success",
+                "details_url": "https://github.com/octocat/demo/runs/1",
+                "app": { "name": "GitHub Actions", "slug": "github-actions" }
+            },
+            {
+                "id": 2,
+                "name": "package",
+                "status": "in_progress",
+                "conclusion": null,
+                "details_url": null,
+                "app": null
+            }
+        ]
+    })
+    .to_string();
+    let server = MockServer::start(200, vec![], &checks_body);
+    let checks = client(&server.base_url)
+        .pull_request_checks(&token, "octocat", "demo", "abcdef1234567890")
+        .expect("checks must load");
+    assert_eq!(checks.len(), 2);
+    assert_eq!(checks[0].name, "unit tests");
+    assert_eq!(checks[0].conclusion.as_deref(), Some("success"));
+    assert_eq!(checks[1].status, "in_progress");
+    let captured = server.finish();
+    assert_eq!(captured.method, "GET");
+    assert_eq!(
+        captured.url,
+        "/repos/octocat/demo/commits/abcdef1234567890/check-runs?filter=all&per_page=100"
+    );
+    assert_eq!(
+        captured.authorization.as_deref(),
+        Some("Bearer gho_sensitive_test_token")
+    );
+
+    let reviews_body = serde_json::json!([
+        {
+            "id": 11,
+            "state": "CHANGES_REQUESTED",
+            "body": "请补充失败分支测试。",
+            "html_url": "https://github.com/octocat/demo/pull/7#pullrequestreview-11",
+            "user": { "login": "reviewer" }
+        }
+    ])
+    .to_string();
+    let server = MockServer::start(200, vec![], &reviews_body);
+    let reviews = client(&server.base_url)
+        .pull_request_reviews(&token, "octocat", "demo", 7)
+        .expect("reviews must load");
+    assert_eq!(reviews.len(), 1);
+    assert_eq!(reviews[0].state, "CHANGES_REQUESTED");
+    assert_eq!(
+        reviews[0].user.as_ref().map(|user| user.login.as_str()),
+        Some("reviewer")
+    );
+    let captured = server.finish();
+    assert_eq!(
+        captured.url,
+        "/repos/octocat/demo/pulls/7/reviews?per_page=100"
+    );
+
+    let comments_body = serde_json::json!([
+        {
+            "id": 21,
+            "path": "src/order.ts",
+            "line": 42,
+            "original_line": 40,
+            "body": "这里需要在失败时回滚。",
+            "html_url": "https://github.com/octocat/demo/pull/7#discussion_r21",
+            "user": { "login": "reviewer" }
+        }
+    ])
+    .to_string();
+    let server = MockServer::start(200, vec![], &comments_body);
+    let comments = client(&server.base_url)
+        .pull_request_review_comments(&token, "octocat", "demo", 7)
+        .expect("review comments must load");
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0].path, "src/order.ts");
+    assert_eq!(comments[0].line, Some(42));
+    let captured = server.finish();
+    assert_eq!(
+        captured.url,
+        "/repos/octocat/demo/pulls/7/comments?per_page=100"
+    );
+}
+
+#[test]
+fn rejects_insecure_check_links_and_more_than_one_hundred_insight_items() {
+    let token = GitHubToken::new(TOKEN).expect("token must be valid");
+    let insecure = serde_json::json!({
+        "check_runs": [{
+            "id": 1,
+            "name": "build",
+            "status": "completed",
+            "conclusion": "success",
+            "details_url": "http://example.invalid/run",
+            "app": null
+        }]
+    })
+    .to_string();
+    let server = MockServer::start(200, vec![], &insecure);
+    let error = client(&server.base_url)
+        .pull_request_checks(&token, "octocat", "demo", "abcdef1234567890")
+        .expect_err("insecure check URL must fail");
+    assert!(matches!(error, GitHubError::InvalidResponse(_)));
+    server.finish();
+
+    let oversized = serde_json::json!(
+        (0..=100)
+            .map(|id| serde_json::json!({ "id": id + 1, "state": "COMMENTED", "body": null, "html_url": null, "user": null }))
+            .collect::<Vec<_>>()
+    )
+    .to_string();
+    let server = MockServer::start(200, vec![], &oversized);
+    let error = client(&server.base_url)
+        .pull_request_reviews(&token, "octocat", "demo", 7)
+        .expect_err("oversized review list must fail");
     assert!(matches!(error, GitHubError::InvalidResponse(_)));
     server.finish();
 }

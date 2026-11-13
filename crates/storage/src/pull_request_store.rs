@@ -2,9 +2,11 @@ use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use coldstart_core::{
-    DomainEvent, DomainEventKind, ProjectId, PullRequestId, PullRequestRecord, PullRequestState,
+    DomainEvent, DomainEventKind, ProjectId, PullRequestId, PullRequestInsights, PullRequestRecord,
+    PullRequestState,
 };
 use rusqlite::{OptionalExtension, Row, Transaction, TransactionBehavior, params};
+use sha2::{Digest, Sha256};
 
 use crate::{
     Database, StorageError,
@@ -170,6 +172,117 @@ impl Database {
             .optional()?;
         row.map(StoredPullRequestRow::into_record).transpose()
     }
+
+    pub fn save_pull_request_insights(
+        &mut self,
+        insights: &PullRequestInsights,
+    ) -> Result<bool, StorageError> {
+        insights.validate()?;
+        let content_hash = insights_content_hash(insights)?;
+        let payload_json = serde_json::to_string(insights)?;
+        let transaction = self
+            .connection_mut()
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let pull_request = transaction
+            .query_row(
+                "SELECT project_id, work_item_id, number FROM pull_requests WHERE id = ?1",
+                [insights.pull_request_id.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((project_id, work_item_id, number)) = pull_request else {
+            return Err(StorageError::PullRequestNotFound(insights.pull_request_id));
+        };
+        let existing_hash = transaction
+            .query_row(
+                "SELECT content_hash FROM pull_request_insights WHERE pull_request_id = ?1",
+                [insights.pull_request_id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let changed = existing_hash.as_deref() != Some(content_hash.as_str());
+        transaction.execute(
+            "INSERT INTO pull_request_insights (
+                pull_request_id, project_id, payload_json, content_hash, synced_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(pull_request_id) DO UPDATE SET
+                payload_json = excluded.payload_json,
+                content_hash = excluded.content_hash,
+                synced_at = excluded.synced_at",
+            params![
+                insights.pull_request_id.to_string(),
+                project_id,
+                payload_json,
+                content_hash,
+                insights.synced_at.to_rfc3339(),
+            ],
+        )?;
+        if changed {
+            let project_id = parse_id(&project_id, "project")?;
+            let work_item_id = parse_id(&work_item_id, "work item")?;
+            let number = u64::try_from(number).map_err(|_| StorageError::InvalidId {
+                kind: "pull request number",
+                value: number.to_string(),
+            })?;
+            let summary = insights.check_summary();
+            insert_event(
+                &transaction,
+                &DomainEvent::new(
+                    project_id,
+                    DomainEventKind::PullRequestInsightsSynced {
+                        pull_request_id: insights.pull_request_id,
+                        work_item_id,
+                        number,
+                        checks_state: insights.checks_state().as_str().to_owned(),
+                        checks_total: summary.total,
+                        checks_failed: summary.failed,
+                        review_count: insights.reviews.len(),
+                        comment_count: insights.review_comments.len(),
+                    },
+                ),
+            )?;
+        }
+        transaction.commit()?;
+        Ok(changed)
+    }
+
+    pub fn load_pull_request_insights(
+        &self,
+        project_id: &ProjectId,
+        pull_request_id: &PullRequestId,
+    ) -> Result<Option<PullRequestInsights>, StorageError> {
+        let payload = self
+            .connection()
+            .query_row(
+                "SELECT payload_json FROM pull_request_insights
+                 WHERE project_id = ?1 AND pull_request_id = ?2",
+                params![project_id.to_string(), pull_request_id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let Some(payload) = payload else {
+            return Ok(None);
+        };
+        let insights: PullRequestInsights = serde_json::from_str(&payload)?;
+        insights.validate()?;
+        Ok(Some(insights))
+    }
+}
+
+fn insights_content_hash(insights: &PullRequestInsights) -> Result<String, StorageError> {
+    let content = serde_json::json!({
+        "checks": insights.checks,
+        "reviews": insights.reviews,
+        "reviewComments": insights.review_comments,
+    });
+    let bytes = serde_json::to_vec(&content)?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
 fn ensure_pull_request_scope(

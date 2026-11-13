@@ -3,7 +3,7 @@
 - 日期：2026-10-30
 - 产品名：ColdStart / 冷启动
 - 仓库：`huangqcEvent/coldstart`
-- 状态：已确认架构；阶段 1-12 已实现，后续边界见各阶段独立设计
+- 状态：已确认架构；阶段 1-13 已实现，后续边界见各阶段独立设计
 - 文档范围：产品边界、系统架构、领域模型、MCP 协议、安全规则和 MVP 验收标准
 
 ## 1. 背景与目标
@@ -59,6 +59,7 @@ ColdStart 不生成业务代码，不自动启动 Agent，不替代 App 商店�
 - GitHub 私有仓库通过 OAuth Device Flow 和 REST API 创建，不依赖浏览器页面自动化。
 - 代码任务在独立任务分支完成；报告通过后自动推送任务分支。
 - 任务分支推送成功后，可由桌面端人工创建 GitHub 草稿 PR；MCP 不提供 PR 写工具。
+- PR 状态、Checks、Review 与行内评论只能由桌面端人工刷新；同步全部使用 GET，MCP 不提供 PR 读取或写入工具。
 - 不自动合并主分支、不强制推送、不自动删除远程分支。
 
 ## 4. 人工介入模型
@@ -467,7 +468,7 @@ MVP 验收场景：
 
 ## 26. 后续版本范围
 
-- GitHub PR Checks、Review 评论、冲突状态和 Issue 平台集成；草稿 PR 创建与只读状态刷新已在阶段 12 完成。
+- GitHub PR 冲突状态、部署状态、Issue 与 Projects 平台集成；草稿 PR、只读状态刷新、Checks、Review 和行内评论同步已在阶段 12-13 完成。
 - App/小程序发布自动化。
 - 团队协作、云同步和多机迁移。
 - 可签名的模板与插件生态。
@@ -752,3 +753,40 @@ MVP 验收场景：
 - 适配器、存储、应用、前端和真实本地 Git 推送闭环均有自动化测试。
 - 支持 GitHub.com，不支持 Enterprise Server、PR Checks、Review 评论、冲突检测或自动合并。
 - 如果 GitHub 创建成功但本地保存失败，重试可能产生重复远程 PR；当前以本地幂等为主。
+- 阶段 13 在保留上述阶段 12 边界的前提下，另行增加了 Checks、Review 与行内评论的桌面端只读同步。
+
+## 32. 阶段 13：GitHub PR 验收信息只读同步
+
+实现状态：已完成（2026-11-13）。详细设计见 `docs/superpowers/specs/2026-11-13-coldstart-pr-insights-design.md`。
+
+阶段 13 为已存在的草稿 PR 增加人工触发的验收信息同步，使最终合并前可以在 ColdStart 内同时核对平台检查结果与历史 AI Review。它不把 GitHub 状态变成自动决策依据，也不改变任务状态机或 MCP 协议。
+
+### 32.1 同步范围
+
+- 使用四个只读 `GET`：PR 详情、当前 head 提交的 Checks、Review 列表和行内评论列表。
+- 只有桌面端人工点击“刷新状态”才访问 GitHub；MCP 工具总数仍为 11。
+- Checks 汇总分为 `none`、`pending`、`success` 和 `failure`；失败、超时、取消、启动失败与需要操作都归入 `failure`。
+- Review 与 Checks 的未知平台状态映射为 `unknown`，不推断为通过。
+- 每次最多读取 100 个 Checks、100 条 Review 和 100 条行内评论，只读取第一页，不自动翻页。
+
+### 32.2 持久化与界面
+
+- SQLite 架构升级到 9，新增 `pull_request_insights`；每个 PR 最多一份快照，删除 PR 或项目时级联删除。
+- 快照包含 Checks、Review、行内评论、内容哈希和同步时间；正文、作者、路径与链接先脱敏、限长和校验。
+- 内容变化时写入 `PullRequestInsightsSynced` 项目事件；重复刷新相同内容只更新时间，不制造重复事件。
+- “AI 评审”历史展示 Checks 汇总、Review 结论与正文、行内评论的文件路径和行号、同步时间及未同步提示。
+- 外部正文只按纯文本渲染，链接必须为 HTTPS，并使用安全的新窗口属性。
+
+### 32.3 安全边界
+
+- 不回复、解决或删除评论。
+- 不重跑 Checks，不创建 Check Run，不写 Commit Status。
+- 不合并、关闭、转正式 PR、更新分支或创建 Tag。
+- Token 只进入 Rust HTTP Authorization 头，不进入 SQLite、事件、Tauri 响应、前端状态、日志或错误。
+
+### 32.4 验收与限制
+
+- 领域、适配器、存储、应用和前端测试覆盖四接口读取、状态汇总、上限、脱敏、失败不落半套数据与幂等事件。
+- 现有项目数据库从架构 8 自动升级到 9，项目、工作项与既有 PR 数据保留。
+- 仅支持 GitHub.com；不读取冲突状态、部署状态、Issue 或 Projects。
+- 失败的 Checks 和 Review 只用于人工判断，不触发自动修复、自动重跑或自动合并。

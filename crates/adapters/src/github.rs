@@ -1,6 +1,9 @@
 use std::{fmt, process::Command, time::Duration};
 
-use coldstart_core::{MAX_PULL_REQUEST_TITLE_CHARS, validate_branch_name};
+use coldstart_core::{
+    MAX_PULL_REQUEST_CHECK_NAME_CHARS, MAX_PULL_REQUEST_INSIGHT_ITEMS,
+    MAX_PULL_REQUEST_TITLE_CHARS, MAX_PULL_REQUEST_URL_CHARS, validate_branch_name,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
@@ -174,6 +177,7 @@ pub struct CreateDraftPullRequestRequest {
 pub struct GitHubPullRequestBranch {
     #[serde(rename = "ref")]
     pub reference: String,
+    pub sha: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -188,6 +192,60 @@ pub struct GitHubPullRequest {
     pub title: String,
     pub head: GitHubPullRequestBranch,
     pub base: GitHubPullRequestBranch,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GitHubActor {
+    pub login: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GitHubCheckApp {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub slug: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GitHubCheckRun {
+    pub id: u64,
+    pub name: String,
+    pub status: String,
+    #[serde(default)]
+    pub conclusion: Option<String>,
+    #[serde(default)]
+    pub details_url: Option<String>,
+    #[serde(default)]
+    pub app: Option<GitHubCheckApp>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GitHubPullRequestReview {
+    pub id: u64,
+    pub state: String,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub html_url: Option<String>,
+    #[serde(default)]
+    pub user: Option<GitHubActor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GitHubPullRequestReviewComment {
+    pub id: u64,
+    pub path: String,
+    #[serde(default)]
+    pub line: Option<u32>,
+    #[serde(default)]
+    pub original_line: Option<u32>,
+    #[serde(default)]
+    pub body: Option<String>,
+    #[serde(default)]
+    pub html_url: Option<String>,
+    #[serde(default)]
+    pub user: Option<GitHubActor>,
 }
 
 pub struct GitHubClient {
@@ -419,6 +477,78 @@ impl GitHubClient {
         parse_pull_request_response(&response.body)
     }
 
+    pub fn pull_request_checks(
+        &self,
+        token: &GitHubToken,
+        owner: &str,
+        repository: &str,
+        head_sha: &str,
+    ) -> Result<Vec<GitHubCheckRun>, GitHubError> {
+        validate_owner(owner)?;
+        validate_repository_name(repository)?;
+        validate_commit_sha(head_sha)?;
+        let path = format!(
+            "/repos/{owner}/{repository}/commits/{head_sha}/check-runs?filter=all&per_page=100",
+            owner = owner.trim(),
+            repository = repository.trim(),
+            head_sha = head_sha.trim(),
+        );
+        let response = self.get_json(&path, Some(token))?;
+        if !(200..300).contains(&response.status) {
+            return Err(GitHubError::HttpStatus {
+                status: response.status,
+                body: truncate_error(&redact_secret(&response.body, Some(token))),
+            });
+        }
+        parse_check_runs_response(&response.body)
+    }
+
+    pub fn pull_request_reviews(
+        &self,
+        token: &GitHubToken,
+        owner: &str,
+        repository: &str,
+        number: u64,
+    ) -> Result<Vec<GitHubPullRequestReview>, GitHubError> {
+        validate_pull_request_number(number)?;
+        let path = format!(
+            "/repos/{owner}/{repository}/pulls/{number}/reviews?per_page=100",
+            owner = owner.trim(),
+            repository = repository.trim(),
+        );
+        let response = self.get_json(&path, Some(token))?;
+        if !(200..300).contains(&response.status) {
+            return Err(GitHubError::HttpStatus {
+                status: response.status,
+                body: truncate_error(&redact_secret(&response.body, Some(token))),
+            });
+        }
+        parse_pull_request_reviews_response(&response.body)
+    }
+
+    pub fn pull_request_review_comments(
+        &self,
+        token: &GitHubToken,
+        owner: &str,
+        repository: &str,
+        number: u64,
+    ) -> Result<Vec<GitHubPullRequestReviewComment>, GitHubError> {
+        validate_pull_request_number(number)?;
+        let path = format!(
+            "/repos/{owner}/{repository}/pulls/{number}/comments?per_page=100",
+            owner = owner.trim(),
+            repository = repository.trim(),
+        );
+        let response = self.get_json(&path, Some(token))?;
+        if !(200..300).contains(&response.status) {
+            return Err(GitHubError::HttpStatus {
+                status: response.status,
+                body: truncate_error(&redact_secret(&response.body, Some(token))),
+            });
+        }
+        parse_pull_request_review_comments_response(&response.body)
+    }
+
     fn post_json(
         &self,
         base: &str,
@@ -609,6 +739,46 @@ fn validate_pull_request_fields(
     Ok(())
 }
 
+fn validate_pull_request_number(number: u64) -> Result<(), GitHubError> {
+    if number == 0 {
+        Err(GitHubError::InvalidPullRequest(
+            "pull request number must be greater than zero".to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_commit_sha(value: &str) -> Result<(), GitHubError> {
+    let value = value.trim();
+    if (7..=64).contains(&value.len())
+        && value.chars().all(|character| character.is_ascii_hexdigit())
+    {
+        Ok(())
+    } else {
+        Err(GitHubError::InvalidResponse(
+            "commit SHA must contain 7 to 64 hexadecimal characters".to_owned(),
+        ))
+    }
+}
+
+fn validate_optional_https_url(field: &str, value: Option<&str>) -> Result<(), GitHubError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let value = value.trim();
+    if value.is_empty()
+        || !value.starts_with("https://")
+        || value.chars().count() > MAX_PULL_REQUEST_URL_CHARS
+        || value.chars().any(char::is_control)
+    {
+        return Err(GitHubError::InvalidResponse(format!(
+            "{field} must be a bounded HTTPS URL"
+        )));
+    }
+    Ok(())
+}
+
 fn parse_pull_request_response(body: &str) -> Result<GitHubPullRequest, GitHubError> {
     let pull_request: GitHubPullRequest = serde_json::from_str(body)
         .map_err(|error| GitHubError::InvalidResponse(error.to_string()))?;
@@ -623,7 +793,78 @@ fn parse_pull_request_response(body: &str) -> Result<GitHubPullRequest, GitHubEr
             "pull request response omitted required fields".to_owned(),
         ));
     }
+    validate_commit_sha(&pull_request.head.sha)?;
     Ok(pull_request)
+}
+
+fn parse_check_runs_response(body: &str) -> Result<Vec<GitHubCheckRun>, GitHubError> {
+    #[derive(Deserialize)]
+    struct CheckRunsResponse {
+        check_runs: Vec<GitHubCheckRun>,
+    }
+
+    let response: CheckRunsResponse = serde_json::from_str(body)
+        .map_err(|error| GitHubError::InvalidResponse(error.to_string()))?;
+    if response.check_runs.len() > MAX_PULL_REQUEST_INSIGHT_ITEMS {
+        return Err(GitHubError::InvalidResponse(format!(
+            "check run list exceeds {MAX_PULL_REQUEST_INSIGHT_ITEMS} items"
+        )));
+    }
+    for check in &response.check_runs {
+        if check.id == 0
+            || check.name.trim().is_empty()
+            || check.name.chars().count() > MAX_PULL_REQUEST_CHECK_NAME_CHARS
+            || check.status.trim().is_empty()
+        {
+            return Err(GitHubError::InvalidResponse(
+                "check run response omitted required fields".to_owned(),
+            ));
+        }
+        validate_optional_https_url("check details URL", check.details_url.as_deref())?;
+    }
+    Ok(response.check_runs)
+}
+
+fn parse_pull_request_reviews_response(
+    body: &str,
+) -> Result<Vec<GitHubPullRequestReview>, GitHubError> {
+    let reviews: Vec<GitHubPullRequestReview> = serde_json::from_str(body)
+        .map_err(|error| GitHubError::InvalidResponse(error.to_string()))?;
+    if reviews.len() > MAX_PULL_REQUEST_INSIGHT_ITEMS {
+        return Err(GitHubError::InvalidResponse(format!(
+            "review list exceeds {MAX_PULL_REQUEST_INSIGHT_ITEMS} items"
+        )));
+    }
+    for review in &reviews {
+        if review.id == 0 || review.state.trim().is_empty() {
+            return Err(GitHubError::InvalidResponse(
+                "review response omitted required fields".to_owned(),
+            ));
+        }
+        validate_optional_https_url("review URL", review.html_url.as_deref())?;
+    }
+    Ok(reviews)
+}
+
+fn parse_pull_request_review_comments_response(
+    body: &str,
+) -> Result<Vec<GitHubPullRequestReviewComment>, GitHubError> {
+    let comments: Vec<GitHubPullRequestReviewComment> = serde_json::from_str(body)
+        .map_err(|error| GitHubError::InvalidResponse(error.to_string()))?;
+    if comments.len() > MAX_PULL_REQUEST_INSIGHT_ITEMS {
+        return Err(GitHubError::InvalidResponse(format!(
+            "review comment list exceeds {MAX_PULL_REQUEST_INSIGHT_ITEMS} items"
+        )));
+    }
+    for comment in &comments {
+        if comment.id == 0 || comment.path.trim().is_empty() || comment.line == Some(0) {
+            return Err(GitHubError::InvalidResponse(
+                "review comment response omitted required fields".to_owned(),
+            ));
+        }
+        validate_optional_https_url("review comment URL", comment.html_url.as_deref())?;
+    }
+    Ok(comments)
 }
 
 fn split_scopes(value: Option<&str>) -> Vec<String> {

@@ -9,7 +9,7 @@ use std::{
 use coldstart_adapters::{GitAdapter, GitHubClient, GitHubToken, MemorySecretStore, SecretStore};
 use coldstart_app::{
     ClaimRequest, CreatePrivateRepositoryInput, IntegrationService, PlanService, ProjectService,
-    PullRequestService, RepositoryDraft, SaveCredentialInput,
+    PullRequestService, RepositoryDraft, ReviewService, SaveCredentialInput,
 };
 use coldstart_core::{
     AcceptanceResult, ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration,
@@ -348,6 +348,10 @@ struct MockGitHub {
 
 impl MockGitHub {
     fn start(status: u16, body: &str) -> Self {
+        Self::start_sequence(vec![(status, body.to_owned())])
+    }
+
+    fn start_sequence(responses: Vec<(u16, String)>) -> Self {
         let server = Server::http("127.0.0.1:0").expect("mock server must start");
         let port = server
             .server_addr()
@@ -355,38 +359,39 @@ impl MockGitHub {
             .expect("mock server must use TCP")
             .port();
         let (sender, receiver) = mpsc::channel();
-        let body = body.to_owned();
         let handle = thread::spawn(move || {
-            let mut request = server.recv().expect("mock server must receive a request");
-            let authorization = request
-                .headers()
-                .iter()
-                .find(|header| {
-                    header
-                        .field
-                        .to_string()
-                        .eq_ignore_ascii_case("authorization")
-                })
-                .map(|header| header.value.as_str().to_owned());
-            let mut request_body = String::new();
-            request
-                .as_reader()
-                .read_to_string(&mut request_body)
-                .expect("request body must read");
-            sender
-                .send(CapturedGitHubRequest {
-                    method: request.method().to_string(),
-                    url: request.url().to_owned(),
-                    authorization,
-                    body: request_body,
-                })
-                .expect("request must capture");
-            let mut response = Response::from_string(body).with_status_code(StatusCode(status));
-            response.add_header(
-                Header::from_bytes("Content-Type", "application/json")
-                    .expect("header must be valid"),
-            );
-            request.respond(response).expect("response must write");
+            for (status, body) in responses {
+                let mut request = server.recv().expect("mock server must receive a request");
+                let authorization = request
+                    .headers()
+                    .iter()
+                    .find(|header| {
+                        header
+                            .field
+                            .to_string()
+                            .eq_ignore_ascii_case("authorization")
+                    })
+                    .map(|header| header.value.as_str().to_owned());
+                let mut request_body = String::new();
+                request
+                    .as_reader()
+                    .read_to_string(&mut request_body)
+                    .expect("request body must read");
+                sender
+                    .send(CapturedGitHubRequest {
+                        method: request.method().to_string(),
+                        url: request.url().to_owned(),
+                        authorization,
+                        body: request_body,
+                    })
+                    .expect("request must capture");
+                let mut response = Response::from_string(body).with_status_code(StatusCode(status));
+                response.add_header(
+                    Header::from_bytes("Content-Type", "application/json")
+                        .expect("header must be valid"),
+                );
+                request.respond(response).expect("response must write");
+            }
         });
         Self {
             base_url: format!("http://127.0.0.1:{port}"),
@@ -407,6 +412,12 @@ impl MockGitHub {
             .expect("request must be captured");
         self.handle.join().expect("server must stop");
         request
+    }
+
+    fn finish_requests(self) -> Vec<CapturedGitHubRequest> {
+        let requests = self.receiver.iter().collect::<Vec<_>>();
+        self.handle.join().expect("server must stop");
+        requests
     }
 }
 
@@ -1026,7 +1037,7 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
             claimed.lease_token,
             report_for(
                 &task,
-                commit,
+                commit.clone(),
                 vec!["src/main.rs".to_owned()],
                 "draft-pr-report",
             ),
@@ -1073,8 +1084,8 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
         "draft": true,
         "merged": false,
         "title": format!("[{task_key}] {}", task.title),
-        "head": { "ref": branch },
-        "base": { "ref": "main" }
+        "head": { "ref": branch, "sha": commit.trim() },
+        "base": { "ref": "main", "sha": "2222222222222222222222222222222222222222" }
     })
     .to_string();
     let server = MockGitHub::start(201, &create_body);
@@ -1125,23 +1136,93 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
         "draft": false,
         "merged": true,
         "title": format!("[{task_key}] {}", task.title),
-        "head": { "ref": branch },
-        "base": { "ref": "main" }
+        "head": { "ref": branch, "sha": commit.trim() },
+        "base": { "ref": "main", "sha": "2222222222222222222222222222222222222222" }
     })
     .to_string();
-    let refresh_server = MockGitHub::start(200, &refresh_body);
+    let checks_body = serde_json::json!({
+        "total_count": 2,
+        "check_runs": [
+            {
+                "id": 1,
+                "name": "unit tests",
+                "status": "completed",
+                "conclusion": "success",
+                "details_url": "https://github.com/octocat/demo/runs/1",
+                "app": { "name": "GitHub Actions", "slug": "github-actions" }
+            },
+            {
+                "id": 2,
+                "name": "package",
+                "status": "in_progress",
+                "conclusion": null,
+                "details_url": null,
+                "app": null
+            }
+        ]
+    })
+    .to_string();
+    let reviews_body = serde_json::json!([
+        {
+            "id": 11,
+            "state": "CHANGES_REQUESTED",
+            "body": "token=test-github-value 请补充失败分支测试。",
+            "html_url": "https://github.com/octocat/demo/pull/17#pullrequestreview-11",
+            "user": { "login": "reviewer" }
+        }
+    ])
+    .to_string();
+    let comments_body = serde_json::json!([
+        {
+            "id": 21,
+            "path": "src/main.rs",
+            "line": 12,
+            "original_line": 10,
+            "body": "这里需要在失败时回滚。",
+            "html_url": "https://github.com/octocat/demo/pull/17#discussion_r21",
+            "user": { "login": "reviewer" }
+        }
+    ])
+    .to_string();
+    let refresh_server = MockGitHub::start_sequence(vec![
+        (200, refresh_body),
+        (200, checks_body),
+        (200, reviews_body),
+        (200, comments_body),
+    ]);
     let refresh_client =
         GitHubClient::with_endpoints(&refresh_server.base_url, &refresh_server.base_url)
             .expect("GitHub client must create");
-    let service = PullRequestService::with_dependencies(secrets, Some(refresh_client));
+    let service = PullRequestService::with_dependencies(secrets.clone(), Some(refresh_client));
     let refreshed = service
         .refresh(fixture.home.clone(), created.id)
         .expect("PR status must refresh");
     assert_eq!(refreshed.state, PullRequestState::Merged);
     assert!(!refreshed.draft);
-    let captured = refresh_server.finish_request();
-    assert_eq!(captured.method, "GET");
-    assert_eq!(captured.url, "/repos/octocat/demo/pulls/17");
+    let requests = refresh_server.finish_requests();
+    assert_eq!(requests.len(), 4);
+    assert!(requests.iter().all(|request| request.method == "GET"));
+    assert_eq!(requests[0].url, "/repos/octocat/demo/pulls/17");
+    assert_eq!(
+        requests[1].url,
+        format!(
+            "/repos/octocat/demo/commits/{}/check-runs?filter=all&per_page=100",
+            commit.trim()
+        )
+    );
+    assert_eq!(
+        requests[2].url,
+        "/repos/octocat/demo/pulls/17/reviews?per_page=100"
+    );
+    assert_eq!(
+        requests[3].url,
+        "/repos/octocat/demo/pulls/17/comments?per_page=100"
+    );
+    assert!(
+        requests.iter().all(|request| {
+            request.authorization.as_deref() == Some("Bearer test-github-value")
+        })
+    );
     let database = Database::open(&database_path).expect("database must reopen");
     let stored = database
         .load_pull_request(&fixture.project_id, &created.id)
@@ -1159,4 +1240,76 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
             ..
         } if state == "merged"
     )));
+    let insights = database
+        .load_pull_request_insights(&fixture.project_id, &created.id)
+        .expect("insights must load")
+        .expect("insights must persist");
+    assert_eq!(insights.checks.len(), 2);
+    assert_eq!(insights.reviews.len(), 1);
+    assert_eq!(insights.review_comments.len(), 1);
+    assert_eq!(insights.review_comments[0].line, Some(12));
+    let serialized_insights = serde_json::to_string(&insights).expect("insights must serialize");
+    assert!(!serialized_insights.contains("test-github-value"));
+    assert!(events.events.iter().any(|event| matches!(
+        &event.event.kind,
+        DomainEventKind::PullRequestInsightsSynced {
+            number: 17,
+            checks_total: 2,
+            review_count: 1,
+            comment_count: 1,
+            ..
+        }
+    )));
+    drop(database);
+    let review_workspace = ReviewService::new()
+        .load_workspace(fixture.home.clone())
+        .expect("review workspace must load");
+    let history = review_workspace
+        .recent_reviews
+        .iter()
+        .find(|item| item.report_id == report.id)
+        .expect("review history must exist");
+    assert_eq!(
+        history
+            .pull_request_insights
+            .as_ref()
+            .map(|snapshot| snapshot.review_comments.len()),
+        Some(1)
+    );
+
+    let failed_refresh = serde_json::json!({
+        "number": 17,
+        "html_url": created.html_url,
+        "state": "closed",
+        "draft": false,
+        "merged": false,
+        "title": format!("[{task_key}] {}", task.title),
+        "head": { "ref": branch, "sha": commit.trim() },
+        "base": { "ref": "main", "sha": "2222222222222222222222222222222222222222" }
+    })
+    .to_string();
+    let failed_server = MockGitHub::start_sequence(vec![
+        (200, failed_refresh),
+        (500, r#"{"message":"checks unavailable"}"#.to_owned()),
+    ]);
+    let failed_client =
+        GitHubClient::with_endpoints(&failed_server.base_url, &failed_server.base_url)
+            .expect("GitHub client must create");
+    let failed_service = PullRequestService::with_dependencies(secrets, Some(failed_client));
+    let error = failed_service
+        .refresh(fixture.home.clone(), created.id)
+        .expect_err("a failed checks request must abort the refresh");
+    assert_eq!(error.code(), "github_request_failed");
+    let failed_requests = failed_server.finish_requests();
+    assert_eq!(failed_requests.len(), 2);
+    let database = Database::open(&database_path).expect("database must reopen");
+    let stored = database
+        .load_pull_request(&fixture.project_id, &created.id)
+        .expect("PR query must work")
+        .expect("PR must persist");
+    assert_eq!(
+        stored.state,
+        PullRequestState::Merged,
+        "a failed refresh must not overwrite the previous state"
+    );
 }

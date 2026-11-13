@@ -15,6 +15,7 @@ import type {
   ReviewWorkspace,
 } from '../api/types';
 import { ErrorBanner } from './ErrorBanner';
+import { PullRequestInsights } from './PullRequestInsights';
 import { ReviewFindingList } from './ReviewFindingList';
 import {
   ReviewStandardEditor,
@@ -428,7 +429,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
     try {
       await reviewApi.refreshPullRequest(path, pullRequest.id);
       await loadWorkspace(false);
-      setNotice(`PR #${pullRequest.number} 状态已刷新。`);
+      setNotice(`PR #${pullRequest.number} 状态、Checks 与 Review 评论已刷新。`);
     } catch (refreshError) {
       setError(normalizeCommandError(refreshError));
     } finally {
@@ -851,6 +852,15 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
                           >
                             刷新状态
                           </button>
+                        </div>
+                        <div className="review-pull-request__insights">
+                          {item.pullRequestInsights ? (
+                            <PullRequestInsights insights={item.pullRequestInsights} />
+                          ) : (
+                            <p className="review-pull-request__insight-empty">
+                              尚未同步 Checks 与 Review 评论。点击“刷新状态”从 GitHub 只读获取。
+                            </p>
+                          )}
                         </div>
                       </div>
                     ) : canCreatePullRequest(item) ? (

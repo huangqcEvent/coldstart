@@ -1,13 +1,17 @@
 mod support;
 
 use chrono::{Duration, Utc};
-use coldstart_core::{ClaimResult, DomainEventKind, PullRequestRecord, PullRequestState};
+use coldstart_core::{
+    ClaimResult, DomainEventKind, PullRequestCheck, PullRequestCheckConclusion,
+    PullRequestCheckStatus, PullRequestInsights, PullRequestRecord, PullRequestReview,
+    PullRequestReviewComment, PullRequestReviewState, PullRequestState,
+};
 use support::{PlanFixture, agent_task, report_for};
 
 #[test]
 fn records_a_pull_request_and_its_state_changes_with_project_audit_events() {
     let mut fixture = PlanFixture::new(vec![agent_task("foundation-demo", &[])]);
-    assert_eq!(fixture.database.schema_version().expect("schema"), 8);
+    assert_eq!(fixture.database.schema_version().expect("schema"), 9);
     let claimed = fixture
         .database
         .claim_work(
@@ -100,4 +104,113 @@ fn records_a_pull_request_and_its_state_changes_with_project_audit_events() {
             ..
         } if state == "merged"
     )));
+
+    let insights = PullRequestInsights::new(
+        pull_request.id,
+        vec![PullRequestCheck {
+            name: "unit tests".to_owned(),
+            status: PullRequestCheckStatus::Completed,
+            conclusion: Some(PullRequestCheckConclusion::Success),
+            details_url: Some("https://github.com/octocat/demo/runs/1".to_owned()),
+            app_name: Some("GitHub Actions".to_owned()),
+        }],
+        vec![PullRequestReview {
+            author: "reviewer".to_owned(),
+            state: PullRequestReviewState::Approved,
+            body: "可以合并。".to_owned(),
+            html_url: Some(
+                "https://github.com/octocat/demo/pull/17#pullrequestreview-1".to_owned(),
+            ),
+        }],
+        vec![PullRequestReviewComment {
+            author: "reviewer".to_owned(),
+            path: "src/lib.rs".to_owned(),
+            line: Some(12),
+            body: "建议补充注释。".to_owned(),
+            html_url: Some("https://github.com/octocat/demo/pull/17#discussion_r1".to_owned()),
+        }],
+        Utc::now(),
+    )
+    .expect("insights must validate");
+    assert!(
+        fixture
+            .database
+            .save_pull_request_insights(&insights)
+            .expect("insights must save")
+    );
+    assert_eq!(
+        fixture
+            .database
+            .load_pull_request_insights(&fixture.project_id, &pull_request.id)
+            .expect("insights must load"),
+        Some(insights.clone())
+    );
+
+    let mut unchanged_refresh = insights.clone();
+    unchanged_refresh.synced_at += Duration::minutes(1);
+    assert!(
+        !fixture
+            .database
+            .save_pull_request_insights(&unchanged_refresh)
+            .expect("unchanged refresh must save")
+    );
+    let events = fixture
+        .database
+        .list_events(&fixture.project_id, None, 100, true)
+        .expect("events must reload");
+    assert_eq!(
+        events
+            .events
+            .iter()
+            .filter(|event| matches!(
+                event.event.kind,
+                DomainEventKind::PullRequestInsightsSynced { number: 17, .. }
+            ))
+            .count(),
+        1,
+        "an unchanged refresh must not create a duplicate audit event"
+    );
+
+    unchanged_refresh.checks[0].conclusion = Some(PullRequestCheckConclusion::Failure);
+    assert!(
+        fixture
+            .database
+            .save_pull_request_insights(&unchanged_refresh)
+            .expect("changed insights must save")
+    );
+    let events = fixture
+        .database
+        .list_events(&fixture.project_id, None, 100, true)
+        .expect("events must reload");
+    assert!(events.events.iter().any(|event| matches!(
+        &event.event.kind,
+        DomainEventKind::PullRequestInsightsSynced {
+            number: 17,
+            checks_state,
+            checks_failed: 1,
+            ..
+        } if checks_state == "failure"
+    )));
+
+    let database_path = fixture.database_path.clone();
+    drop(fixture.database);
+    let connection = rusqlite::Connection::open(database_path).expect("database must reopen");
+    connection
+        .execute_batch("PRAGMA foreign_keys = ON;")
+        .expect("foreign keys must enable");
+    connection
+        .execute(
+            "DELETE FROM pull_requests WHERE id = ?1",
+            [pull_request.id.to_string()],
+        )
+        .expect("pull request must delete");
+    let remaining: i64 = connection
+        .query_row("SELECT COUNT(*) FROM pull_request_insights", [], |row| {
+            row.get(0)
+        })
+        .expect("insight count must load");
+    assert_eq!(
+        remaining, 0,
+        "deleting a PR must cascade its insight snapshot"
+    );
 }

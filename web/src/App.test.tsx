@@ -26,6 +26,7 @@ import type {
   ProjectMemoryPage,
   ProjectStatus,
   ProjectWorkspace,
+  PullRequestInsights,
   PullRequestRecord,
   Repository,
   RepositoryVerificationCommand,
@@ -564,6 +565,7 @@ function makeReviewHistory(
         },
     waiver: null,
     pullRequest: null,
+    pullRequestInsights: null,
     createdAt: '2026-11-02T09:10:06Z',
     ...overrides,
   };
@@ -601,6 +603,42 @@ function makePullRequest(
     draft: true,
     createdAt: '2026-11-13T08:00:00Z',
     updatedAt: '2026-11-13T08:01:00Z',
+    ...overrides,
+  };
+}
+
+function makePullRequestInsights(
+  overrides: Partial<PullRequestInsights> = {},
+): PullRequestInsights {
+  return {
+    pullRequestId: '16161616-1616-4616-8616-161616161616',
+    checks: [
+      {
+        name: 'unit tests',
+        status: 'completed',
+        conclusion: 'success',
+        detailsUrl: `${pullRequestUrl.replace('/pull/21', '')}/actions/runs/1`,
+        appName: 'GitHub Actions',
+      },
+    ],
+    reviews: [
+      {
+        author: 'reviewer',
+        state: 'changes_requested',
+        body: '请补充失败分支测试。',
+        htmlUrl: `${pullRequestUrl}#pullrequestreview-1`,
+      },
+    ],
+    reviewComments: [
+      {
+        author: 'reviewer',
+        path: 'src/order.ts',
+        line: 42,
+        body: '这里需要在失败时回滚。',
+        htmlUrl: `${pullRequestUrl}#discussion_r1`,
+      },
+    ],
+    syncedAt: '2026-11-13T08:05:00Z',
     ...overrides,
   };
 }
@@ -1753,6 +1791,7 @@ describe('ColdStart project workspace', () => {
     const draft = makePullRequest();
     const passed = makeReviewHistory('passed', { pullRequest: draft });
     const merged = makePullRequest({ state: 'merged', draft: false });
+    const insights = makePullRequestInsights();
     vi.mocked(reviewApi.refreshPullRequest).mockResolvedValue(merged);
     const user = await openReviewView(
       makeReviewWorkspace({ recentReviews: [passed] }),
@@ -1762,9 +1801,12 @@ describe('ColdStart project workspace', () => {
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noreferrer');
     expect(screen.getByText('草稿 PR · 开放')).toBeInTheDocument();
+    expect(
+      screen.getByText('尚未同步 Checks 与 Review 评论。点击“刷新状态”从 GitHub 只读获取。'),
+    ).toBeInTheDocument();
     vi.mocked(reviewApi.readReviewWorkspace).mockResolvedValue(
       makeReviewWorkspace({
-        recentReviews: [{ ...passed, pullRequest: merged }],
+        recentReviews: [{ ...passed, pullRequest: merged, pullRequestInsights: insights }],
       }),
     );
     await user.click(screen.getByRole('button', { name: '刷新状态' }));
@@ -1776,8 +1818,32 @@ describe('ColdStart project workspace', () => {
     );
     expect(await screen.findByText('PR · 已合并')).toBeInTheDocument();
     expect(
-      await screen.findByText('PR #21 状态已刷新。'),
+      await screen.findByText('PR #21 状态、Checks 与 Review 评论已刷新。'),
     ).toBeInTheDocument();
+    expect(screen.getByText('Checks 全部通过')).toBeInTheDocument();
+    expect(screen.getByText('1 项要求修改')).toBeInTheDocument();
+  });
+
+  it('shows synced checks, review conclusions and inline comments as read-only data', async () => {
+    const passed = makeReviewHistory('passed', {
+      pullRequest: makePullRequest(),
+      pullRequestInsights: makePullRequestInsights(),
+    });
+    const user = await openReviewView(
+      makeReviewWorkspace({ recentReviews: [passed] }),
+    );
+    await user.click(screen.getByText('查看 Checks、Review 与评论'));
+    expect(screen.queryByText('1 项 Checks 失败')).not.toBeInTheDocument();
+    expect(screen.getByText('请补充失败分支测试。')).toBeInTheDocument();
+    expect(screen.getByText('这里需要在失败时回滚。')).toBeInTheDocument();
+    expect(screen.getByText('src/order.ts:42')).toBeInTheDocument();
+    const commentLink = screen.getByRole('link', { name: '查看评论' });
+    expect(commentLink).toHaveAttribute(
+      'href',
+      `${pullRequestUrl}#discussion_r1`,
+    );
+    expect(commentLink).toHaveAttribute('target', '_blank');
+    expect(commentLink).toHaveAttribute('rel', 'noreferrer');
   });
 
   it('offers a two-step audit waiver only for blocked reviews', async () => {

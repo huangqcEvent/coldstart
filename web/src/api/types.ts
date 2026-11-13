@@ -785,6 +785,68 @@ export interface ReviewWaiver {
 
 export type PullRequestState = 'open' | 'closed' | 'merged';
 
+export type PullRequestCheckStatus =
+  | 'queued'
+  | 'in_progress'
+  | 'completed'
+  | 'waiting'
+  | 'requested'
+  | 'pending'
+  | 'unknown';
+
+export type PullRequestCheckConclusion =
+  | 'success'
+  | 'failure'
+  | 'neutral'
+  | 'cancelled'
+  | 'skipped'
+  | 'timed_out'
+  | 'action_required'
+  | 'startup_failure'
+  | 'stale'
+  | 'unknown';
+
+export type PullRequestChecksState = 'none' | 'pending' | 'success' | 'failure';
+
+export type PullRequestReviewState =
+  | 'approved'
+  | 'changes_requested'
+  | 'commented'
+  | 'dismissed'
+  | 'pending'
+  | 'unknown';
+
+export interface PullRequestCheck {
+  name: string;
+  status: PullRequestCheckStatus;
+  conclusion: PullRequestCheckConclusion | null;
+  detailsUrl: string | null;
+  appName: string | null;
+}
+
+export interface PullRequestReview {
+  author: string;
+  state: PullRequestReviewState;
+  body: string;
+  htmlUrl: string | null;
+}
+
+export interface PullRequestReviewComment {
+  author: string;
+  path: string;
+  line: number | null;
+  body: string;
+  htmlUrl: string | null;
+}
+
+export interface PullRequestInsights {
+  pullRequestId: string;
+  checks: PullRequestCheck[];
+  reviews: PullRequestReview[];
+  reviewComments: PullRequestReviewComment[];
+  syncedAt: string;
+}
+
 export interface PullRequestRecord {
   id: string;
   projectId: string;
@@ -810,6 +872,7 @@ export interface ReviewHistoryView {
   review: ReviewResult | null;
   waiver: ReviewWaiver | null;
   pullRequest: PullRequestRecord | null;
+  pullRequestInsights: PullRequestInsights | null;
   createdAt: string;
 }
 

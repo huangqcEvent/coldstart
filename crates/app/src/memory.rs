@@ -736,6 +736,28 @@ fn describe_event(kind: &DomainEventKind) -> EventDescription {
             )),
             is_heartbeat: false,
         },
+        DomainEventKind::PullRequestInsightsSynced {
+            pull_request_id,
+            number,
+            checks_state,
+            checks_total,
+            checks_failed,
+            review_count,
+            comment_count,
+            ..
+        } => EventDescription {
+            phase: MemoryPhase::VerificationReview,
+            title: "GitHub PR 验收信息已同步",
+            summary: format!(
+                "PR #{number} · Checks {checks_state} {checks_total} 项（失败 {checks_failed}）· 评审 {review_count} 条 · 评论 {comment_count} 条"
+            ),
+            reference: Some(reference(
+                MemoryReferenceType::PullRequest,
+                pull_request_id,
+                format!("PR #{number}"),
+            )),
+            is_heartbeat: false,
+        },
         DomainEventKind::ProjectSettingUpdated { setting_key } => EventDescription {
             phase: MemoryPhase::SystemConfiguration,
             title: "项目设置已更新",
@@ -781,7 +803,8 @@ fn phase_for_event_type(event_type: &str) -> MemoryPhase {
         | "review_interrupted"
         | "review_waived"
         | "pull_request_opened"
-        | "pull_request_state_changed" => MemoryPhase::VerificationReview,
+        | "pull_request_state_changed"
+        | "pull_request_insights_synced" => MemoryPhase::VerificationReview,
         "repository_saved"
         | "repository_verification_commands_updated"
         | "credential_saved"

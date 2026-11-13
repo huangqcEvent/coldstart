@@ -8,6 +8,12 @@ use crate::{
 
 pub const MAX_PULL_REQUEST_TITLE_CHARS: usize = 200;
 pub const MAX_PULL_REQUEST_URL_CHARS: usize = 2_048;
+pub const MAX_PULL_REQUEST_INSIGHT_ITEMS: usize = 100;
+pub const MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS: usize = 8_000;
+pub const MAX_PULL_REQUEST_INSIGHT_AUTHOR_CHARS: usize = 100;
+pub const MAX_PULL_REQUEST_INSIGHT_PATH_CHARS: usize = 1_024;
+pub const MAX_PULL_REQUEST_CHECK_NAME_CHARS: usize = 200;
+pub const MAX_PULL_REQUEST_CHECK_APP_CHARS: usize = 100;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,6 +38,299 @@ impl PullRequestState {
             "closed" => Some(Self::Closed),
             "merged" => Some(Self::Merged),
             _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestCheckStatus {
+    Queued,
+    InProgress,
+    Completed,
+    Waiting,
+    Requested,
+    Pending,
+    Unknown,
+}
+
+impl PullRequestCheckStatus {
+    pub fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "queued" => Self::Queued,
+            "in_progress" => Self::InProgress,
+            "completed" => Self::Completed,
+            "waiting" => Self::Waiting,
+            "requested" => Self::Requested,
+            "pending" => Self::Pending,
+            _ => Self::Unknown,
+        }
+    }
+
+    pub fn is_completed(self) -> bool {
+        self == Self::Completed
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestCheckConclusion {
+    Success,
+    Failure,
+    Neutral,
+    Cancelled,
+    Skipped,
+    TimedOut,
+    ActionRequired,
+    StartupFailure,
+    Stale,
+    Unknown,
+}
+
+impl PullRequestCheckConclusion {
+    pub fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "success" => Self::Success,
+            "failure" => Self::Failure,
+            "neutral" => Self::Neutral,
+            "cancelled" => Self::Cancelled,
+            "skipped" => Self::Skipped,
+            "timed_out" => Self::TimedOut,
+            "action_required" => Self::ActionRequired,
+            "startup_failure" => Self::StartupFailure,
+            "stale" => Self::Stale,
+            _ => Self::Unknown,
+        }
+    }
+
+    pub fn is_failed(self) -> bool {
+        matches!(
+            self,
+            Self::Failure
+                | Self::Cancelled
+                | Self::TimedOut
+                | Self::ActionRequired
+                | Self::StartupFailure
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestCheck {
+    pub name: String,
+    pub status: PullRequestCheckStatus,
+    pub conclusion: Option<PullRequestCheckConclusion>,
+    pub details_url: Option<String>,
+    pub app_name: Option<String>,
+}
+
+impl PullRequestCheck {
+    pub fn validate(&self) -> Result<(), PullRequestValidationError> {
+        validate_required_insight_text(
+            "check name",
+            &self.name,
+            MAX_PULL_REQUEST_CHECK_NAME_CHARS,
+        )?;
+        validate_optional_insight_text(
+            "check app name",
+            self.app_name.as_deref(),
+            MAX_PULL_REQUEST_CHECK_APP_CHARS,
+        )?;
+        validate_optional_insight_url("check details URL", self.details_url.as_deref())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestReviewState {
+    Approved,
+    ChangesRequested,
+    Commented,
+    Dismissed,
+    Pending,
+    Unknown,
+}
+
+impl PullRequestReviewState {
+    pub fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "approved" => Self::Approved,
+            "changes_requested" => Self::ChangesRequested,
+            "commented" => Self::Commented,
+            "dismissed" => Self::Dismissed,
+            "pending" => Self::Pending,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestReview {
+    pub author: String,
+    pub state: PullRequestReviewState,
+    pub body: String,
+    pub html_url: Option<String>,
+}
+
+impl PullRequestReview {
+    pub fn validate(&self) -> Result<(), PullRequestValidationError> {
+        validate_required_insight_text(
+            "review author",
+            &self.author,
+            MAX_PULL_REQUEST_INSIGHT_AUTHOR_CHARS,
+        )?;
+        validate_bounded_insight_text("review body", &self.body)?;
+        validate_optional_insight_url("review URL", self.html_url.as_deref())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestReviewComment {
+    pub author: String,
+    pub path: String,
+    pub line: Option<u64>,
+    pub body: String,
+    pub html_url: Option<String>,
+}
+
+impl PullRequestReviewComment {
+    pub fn validate(&self) -> Result<(), PullRequestValidationError> {
+        validate_required_insight_text(
+            "review comment author",
+            &self.author,
+            MAX_PULL_REQUEST_INSIGHT_AUTHOR_CHARS,
+        )?;
+        validate_required_insight_text(
+            "review comment path",
+            &self.path,
+            MAX_PULL_REQUEST_INSIGHT_PATH_CHARS,
+        )?;
+        if self.path.chars().any(char::is_control) {
+            return Err(PullRequestValidationError::InvalidInsightText {
+                field: "review comment path",
+            });
+        }
+        if self.line == Some(0) {
+            return Err(PullRequestValidationError::InvalidInsightLine);
+        }
+        validate_bounded_insight_text("review comment body", &self.body)?;
+        validate_optional_insight_url("review comment URL", self.html_url.as_deref())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestChecksState {
+    None,
+    Pending,
+    Success,
+    Failure,
+}
+
+impl PullRequestChecksState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Pending => "pending",
+            Self::Success => "success",
+            Self::Failure => "failure",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PullRequestCheckSummary {
+    pub total: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub pending: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestInsights {
+    pub pull_request_id: PullRequestId,
+    pub checks: Vec<PullRequestCheck>,
+    pub reviews: Vec<PullRequestReview>,
+    pub review_comments: Vec<PullRequestReviewComment>,
+    pub synced_at: DateTime<Utc>,
+}
+
+impl PullRequestInsights {
+    pub fn new(
+        pull_request_id: PullRequestId,
+        checks: Vec<PullRequestCheck>,
+        reviews: Vec<PullRequestReview>,
+        review_comments: Vec<PullRequestReviewComment>,
+        synced_at: DateTime<Utc>,
+    ) -> Result<Self, PullRequestValidationError> {
+        let insights = Self {
+            pull_request_id,
+            checks,
+            reviews,
+            review_comments,
+            synced_at,
+        };
+        insights.validate()?;
+        Ok(insights)
+    }
+
+    pub fn validate(&self) -> Result<(), PullRequestValidationError> {
+        validate_insight_count("checks", self.checks.len())?;
+        validate_insight_count("reviews", self.reviews.len())?;
+        validate_insight_count("review comments", self.review_comments.len())?;
+        for check in &self.checks {
+            check.validate()?;
+        }
+        for review in &self.reviews {
+            review.validate()?;
+        }
+        for comment in &self.review_comments {
+            comment.validate()?;
+        }
+        Ok(())
+    }
+
+    pub fn check_summary(&self) -> PullRequestCheckSummary {
+        let failed = self
+            .checks
+            .iter()
+            .filter(|check| {
+                check
+                    .conclusion
+                    .is_some_and(PullRequestCheckConclusion::is_failed)
+            })
+            .count();
+        let pending = self
+            .checks
+            .iter()
+            .filter(|check| !check.status.is_completed())
+            .count();
+        PullRequestCheckSummary {
+            total: self.checks.len(),
+            passed: self
+                .checks
+                .len()
+                .saturating_sub(failed)
+                .saturating_sub(pending),
+            failed,
+            pending,
+        }
+    }
+
+    pub fn checks_state(&self) -> PullRequestChecksState {
+        let summary = self.check_summary();
+        if summary.total == 0 {
+            PullRequestChecksState::None
+        } else if summary.failed > 0 {
+            PullRequestChecksState::Failure
+        } else if summary.pending > 0 {
+            PullRequestChecksState::Pending
+        } else {
+            PullRequestChecksState::Success
         }
     }
 }
@@ -161,6 +460,98 @@ pub enum PullRequestValidationError {
     InvalidBranch(String),
     #[error("pull request head and base branches must differ")]
     SameBranch,
+    #[error("pull request insight list {field} exceeds {MAX_PULL_REQUEST_INSIGHT_ITEMS} items")]
+    InsightListTooLong { field: &'static str },
+    #[error("pull request insight text {field} exceeds {limit} characters")]
+    InsightTextTooLong { field: &'static str, limit: usize },
+    #[error("pull request insight field {field} cannot be empty")]
+    EmptyInsightText { field: &'static str },
+    #[error("pull request insight field {field} contains invalid characters")]
+    InvalidInsightText { field: &'static str },
+    #[error("pull request insight field {field} must use HTTPS")]
+    InsecureInsightUrl { field: &'static str },
+    #[error("pull request insight line number must be greater than zero")]
+    InvalidInsightLine,
+}
+
+fn validate_insight_count(
+    field: &'static str,
+    count: usize,
+) -> Result<(), PullRequestValidationError> {
+    if count > MAX_PULL_REQUEST_INSIGHT_ITEMS {
+        Err(PullRequestValidationError::InsightListTooLong { field })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_required_insight_text(
+    field: &'static str,
+    value: &str,
+    limit: usize,
+) -> Result<(), PullRequestValidationError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(PullRequestValidationError::EmptyInsightText { field });
+    }
+    if value.chars().count() > limit {
+        return Err(PullRequestValidationError::InsightTextTooLong { field, limit });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(PullRequestValidationError::InvalidInsightText { field });
+    }
+    Ok(())
+}
+
+fn validate_optional_insight_text(
+    field: &'static str,
+    value: Option<&str>,
+    limit: usize,
+) -> Result<(), PullRequestValidationError> {
+    if let Some(value) = value {
+        validate_required_insight_text(field, value, limit)?;
+    }
+    Ok(())
+}
+
+fn validate_bounded_insight_text(
+    field: &'static str,
+    value: &str,
+) -> Result<(), PullRequestValidationError> {
+    if value.chars().count() > MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS {
+        Err(PullRequestValidationError::InsightTextTooLong {
+            field,
+            limit: MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS,
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_optional_insight_url(
+    field: &'static str,
+    value: Option<&str>,
+) -> Result<(), PullRequestValidationError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(PullRequestValidationError::EmptyInsightText { field });
+    }
+    if value.chars().count() > MAX_PULL_REQUEST_URL_CHARS {
+        return Err(PullRequestValidationError::InsightTextTooLong {
+            field,
+            limit: MAX_PULL_REQUEST_URL_CHARS,
+        });
+    }
+    if !value.starts_with("https://") {
+        return Err(PullRequestValidationError::InsecureInsightUrl { field });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(PullRequestValidationError::InvalidInsightText { field });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -216,5 +607,146 @@ mod tests {
         );
         assert_eq!(value.state, PullRequestState::Merged);
         assert!(value.updated_at >= value.created_at);
+    }
+
+    fn check(
+        name: &str,
+        status: PullRequestCheckStatus,
+        conclusion: Option<PullRequestCheckConclusion>,
+    ) -> PullRequestCheck {
+        PullRequestCheck {
+            name: name.to_owned(),
+            status,
+            conclusion,
+            details_url: Some("https://github.com/octocat/demo/runs/1".to_owned()),
+            app_name: Some("GitHub Actions".to_owned()),
+        }
+    }
+
+    #[test]
+    fn insights_summarize_checks_without_treating_pending_as_success() {
+        let insights = PullRequestInsights::new(
+            PullRequestId::new(),
+            vec![
+                check(
+                    "format",
+                    PullRequestCheckStatus::Completed,
+                    Some(PullRequestCheckConclusion::Success),
+                ),
+                check(
+                    "test",
+                    PullRequestCheckStatus::Completed,
+                    Some(PullRequestCheckConclusion::Success),
+                ),
+                check(
+                    "lint",
+                    PullRequestCheckStatus::Completed,
+                    Some(PullRequestCheckConclusion::Failure),
+                ),
+                check("build", PullRequestCheckStatus::InProgress, None),
+            ],
+            vec![],
+            vec![],
+            Utc::now(),
+        )
+        .expect("insights must validate");
+
+        let summary = insights.check_summary();
+        assert_eq!(summary.total, 4);
+        assert_eq!(summary.passed, 2);
+        assert_eq!(summary.failed, 1);
+        assert_eq!(summary.pending, 1);
+        assert_eq!(insights.checks_state(), PullRequestChecksState::Failure);
+    }
+
+    #[test]
+    fn insights_distinguish_none_pending_and_success() {
+        let empty =
+            PullRequestInsights::new(PullRequestId::new(), vec![], vec![], vec![], Utc::now())
+                .expect("empty insights must validate");
+        assert_eq!(empty.checks_state(), PullRequestChecksState::None);
+
+        let pending = PullRequestInsights::new(
+            PullRequestId::new(),
+            vec![check("build", PullRequestCheckStatus::Queued, None)],
+            vec![],
+            vec![],
+            Utc::now(),
+        )
+        .expect("pending insights must validate");
+        assert_eq!(pending.checks_state(), PullRequestChecksState::Pending);
+
+        let success = PullRequestInsights::new(
+            PullRequestId::new(),
+            vec![check(
+                "build",
+                PullRequestCheckStatus::Completed,
+                Some(PullRequestCheckConclusion::Success),
+            )],
+            vec![],
+            vec![],
+            Utc::now(),
+        )
+        .expect("successful insights must validate");
+        assert_eq!(success.checks_state(), PullRequestChecksState::Success);
+    }
+
+    #[test]
+    fn insights_reject_insecure_urls_oversized_text_and_more_than_one_hundred_items() {
+        let mut insecure = check(
+            "build",
+            PullRequestCheckStatus::Completed,
+            Some(PullRequestCheckConclusion::Success),
+        );
+        insecure.details_url = Some("http://github.com/octocat/demo".to_owned());
+        let error = PullRequestInsights::new(
+            PullRequestId::new(),
+            vec![insecure],
+            vec![],
+            vec![],
+            Utc::now(),
+        )
+        .expect_err("insecure URL must fail");
+        assert!(matches!(
+            error,
+            PullRequestValidationError::InsecureInsightUrl { .. }
+        ));
+
+        let oversized = PullRequestReviewComment {
+            author: "reviewer".to_owned(),
+            path: "src/main.ts".to_owned(),
+            line: Some(12),
+            body: "x".repeat(MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS + 1),
+            html_url: None,
+        };
+        let error = PullRequestInsights::new(
+            PullRequestId::new(),
+            vec![],
+            vec![],
+            vec![oversized],
+            Utc::now(),
+        )
+        .expect_err("oversized comment must fail");
+        assert!(matches!(
+            error,
+            PullRequestValidationError::InsightTextTooLong { .. }
+        ));
+
+        let too_many = (0..=MAX_PULL_REQUEST_INSIGHT_ITEMS)
+            .map(|index| {
+                check(
+                    &format!("check-{index}"),
+                    PullRequestCheckStatus::Completed,
+                    Some(PullRequestCheckConclusion::Success),
+                )
+            })
+            .collect();
+        let error =
+            PullRequestInsights::new(PullRequestId::new(), too_many, vec![], vec![], Utc::now())
+                .expect_err("item cap must be enforced");
+        assert!(matches!(
+            error,
+            PullRequestValidationError::InsightListTooLong { field: "checks" }
+        ));
     }
 }
