@@ -1,6 +1,8 @@
 import type {
   PullRequestCheck,
   PullRequestInsights as PullRequestInsightsData,
+  PullRequestMergeability,
+  PullRequestRecord,
   PullRequestReviewState,
 } from '../api/types';
 
@@ -34,6 +36,20 @@ const reviewStateLabels: Record<PullRequestReviewState, string> = {
   dismissed: '已驳回',
   pending: '等待中',
   unknown: '未知状态',
+};
+
+const mergeabilityLabels: Record<
+  PullRequestMergeability,
+  { label: string; tone: string }
+> = {
+  mergeable: { label: '合并状态：可合并', tone: 'success' },
+  conflicted: { label: '合并冲突', tone: 'failure' },
+  blocked: { label: '合并状态：暂不可合并', tone: 'failure' },
+  behind: { label: '分支落后目标分支', tone: 'pending' },
+  unstable: { label: '合并状态不稳定', tone: 'pending' },
+  draft: { label: '草稿 PR', tone: 'none' },
+  checking: { label: 'GitHub 正在计算合并状态', tone: 'pending' },
+  unknown: { label: '合并状态未知', tone: 'none' },
 };
 
 function failedChecks(insights: PullRequestInsightsData) {
@@ -80,6 +96,76 @@ function reviewBadge(insights: PullRequestInsightsData) {
   return { label: '暂无 Review', tone: 'none' };
 }
 
+function mergeabilityBadge(
+  insights: PullRequestInsightsData,
+  pullRequest: PullRequestRecord,
+) {
+  if (pullRequest.state === 'merged') {
+    return { label: 'PR 已合并', tone: 'success' };
+  }
+  if (pullRequest.state === 'closed') {
+    return { label: 'PR 已关闭', tone: 'none' };
+  }
+  return mergeabilityLabels[insights.mergeability];
+}
+
+function mergeReadiness(
+  insights: PullRequestInsightsData,
+  pullRequest: PullRequestRecord,
+) {
+  if (pullRequest.state === 'merged') {
+    return { label: 'PR 已合并，无需合并前检查', tone: 'success', blockers: [] };
+  }
+  if (pullRequest.state === 'closed') {
+    return { label: 'PR 已关闭，无需合并前检查', tone: 'none', blockers: [] };
+  }
+
+  const blockers = new Set<string>();
+  if (insights.mergeability === 'conflicted') {
+    blockers.add('存在合并冲突');
+  } else if (insights.mergeability === 'blocked') {
+    blockers.add('GitHub 标记为暂不可合并');
+  } else if (insights.mergeability === 'behind') {
+    blockers.add('任务分支落后于目标分支');
+  } else if (insights.mergeability === 'unstable') {
+    blockers.add('GitHub 合并状态不稳定');
+  } else if (insights.mergeability === 'checking') {
+    blockers.add('GitHub 正在计算合并状态');
+  } else if (insights.mergeability === 'unknown') {
+    blockers.add('GitHub 合并状态未知');
+  }
+
+  if (pullRequest.draft || insights.mergeability === 'draft') {
+    blockers.add('PR 仍为草稿');
+  }
+  const failed = failedChecks(insights);
+  if (failed > 0) {
+    blockers.add(`${failed} 项 Checks 失败`);
+  }
+  const pending = pendingChecks(insights);
+  if (pending > 0) {
+    blockers.add(`${pending} 项 Checks 尚未完成`);
+  }
+  const changesRequested = insights.reviews.filter(
+    (review) => review.state === 'changes_requested',
+  ).length;
+  if (changesRequested > 0) {
+    blockers.add(`${changesRequested} 项 Review 要求修改`);
+  }
+
+  return blockers.size > 0
+    ? {
+        label: `合并前检查 · ${blockers.size} 项待人工确认`,
+        tone: 'pending',
+        blockers: [...blockers],
+      }
+    : {
+        label: '合并前检查 · 当前快照未发现阻塞项',
+        tone: 'success',
+        blockers: [],
+      };
+}
+
 function formatSyncedAt(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -88,7 +174,15 @@ function formatSyncedAt(value: string) {
   return date.toLocaleString('zh-CN', { hour12: false });
 }
 
-export function PullRequestInsights({ insights }: { insights: PullRequestInsightsData }) {
+export function PullRequestInsights({
+  insights,
+  pullRequest,
+}: {
+  insights: PullRequestInsightsData;
+  pullRequest: PullRequestRecord;
+}) {
+  const mergeability = mergeabilityBadge(insights, pullRequest);
+  const readiness = mergeReadiness(insights, pullRequest);
   const checks = checksBadge(insights);
   const reviews = reviewBadge(insights);
 
@@ -96,6 +190,9 @@ export function PullRequestInsights({ insights }: { insights: PullRequestInsight
     <section className="pr-insights" aria-label="GitHub PR 验收信息">
       <header className="pr-insights__header">
         <div className="pr-insights__badges">
+          <span className={`pr-insights__badge pr-insights__badge--${mergeability.tone}`}>
+            {mergeability.label}
+          </span>
           <span className={`pr-insights__badge pr-insights__badge--${checks.tone}`}>
             {checks.label}
           </span>
@@ -108,6 +205,19 @@ export function PullRequestInsights({ insights }: { insights: PullRequestInsight
         </div>
         <small>同步于 {formatSyncedAt(insights.syncedAt)}</small>
       </header>
+
+      <div className={`pr-insights__readiness pr-insights__readiness--${readiness.tone}`}>
+        <strong>{readiness.label}</strong>
+        {readiness.blockers.length > 0 ? (
+          <ul>
+            {readiness.blockers.map((blocker) => (
+              <li key={blocker}>{blocker}</li>
+            ))}
+          </ul>
+        ) : (
+          <span>只读提示，不构成自动合并许可；最终仍受分支保护、审批与 CI 规则约束。</span>
+        )}
+      </div>
 
       <details className="pr-insights__details">
         <summary>查看 Checks、Review 与评论</summary>
@@ -194,7 +304,7 @@ export function PullRequestInsights({ insights }: { insights: PullRequestInsight
           </section>
         </div>
         <p className="pr-insights__limit">
-          ColdStart 只读取 GitHub 第一页数据，每类最多 100 项；不会回复评论、重跑 Checks 或写回任何状态。
+          ColdStart 只读取 GitHub 第一页数据，每类最多 100 项；合并状态与评论只供人工验收，不会重跑 Checks、回复评论、合并 PR 或写回任何状态。
         </p>
       </details>
     </section>

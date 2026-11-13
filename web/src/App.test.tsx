@@ -612,6 +612,7 @@ function makePullRequestInsights(
 ): PullRequestInsights {
   return {
     pullRequestId: '16161616-1616-4616-8616-161616161616',
+    mergeability: 'conflicted',
     checks: [
       {
         name: 'unit tests',
@@ -1802,7 +1803,7 @@ describe('ColdStart project workspace', () => {
     expect(link).toHaveAttribute('rel', 'noreferrer');
     expect(screen.getByText('草稿 PR · 开放')).toBeInTheDocument();
     expect(
-      screen.getByText('尚未同步 Checks 与 Review 评论。点击“刷新状态”从 GitHub 只读获取。'),
+      screen.getByText('尚未同步合并就绪、Checks 与 Review 评论。点击“刷新状态”从 GitHub 只读获取。'),
     ).toBeInTheDocument();
     vi.mocked(reviewApi.readReviewWorkspace).mockResolvedValue(
       makeReviewWorkspace({
@@ -1818,15 +1819,16 @@ describe('ColdStart project workspace', () => {
     );
     expect(await screen.findByText('PR · 已合并')).toBeInTheDocument();
     expect(
-      await screen.findByText('PR #21 状态、Checks 与 Review 评论已刷新。'),
+      await screen.findByText('PR #21 状态、合并就绪、Checks 与 Review 评论已刷新。'),
     ).toBeInTheDocument();
+    expect(screen.getByText('PR 已合并，无需合并前检查')).toBeInTheDocument();
     expect(screen.getByText('Checks 全部通过')).toBeInTheDocument();
     expect(screen.getByText('1 项要求修改')).toBeInTheDocument();
   });
 
   it('shows synced checks, review conclusions and inline comments as read-only data', async () => {
     const passed = makeReviewHistory('passed', {
-      pullRequest: makePullRequest(),
+      pullRequest: makePullRequest({ draft: false }),
       pullRequestInsights: makePullRequestInsights(),
     });
     const user = await openReviewView(
@@ -1834,6 +1836,10 @@ describe('ColdStart project workspace', () => {
     );
     await user.click(screen.getByText('查看 Checks、Review 与评论'));
     expect(screen.queryByText('1 项 Checks 失败')).not.toBeInTheDocument();
+    expect(screen.getByText('合并冲突')).toBeInTheDocument();
+    expect(screen.getByText('合并前检查 · 2 项待人工确认')).toBeInTheDocument();
+    expect(screen.getByText('存在合并冲突')).toBeInTheDocument();
+    expect(screen.getAllByText('1 项 Review 要求修改').length).toBeGreaterThan(0);
     expect(screen.getByText('请补充失败分支测试。')).toBeInTheDocument();
     expect(screen.getByText('这里需要在失败时回滚。')).toBeInTheDocument();
     expect(screen.getByText('src/order.ts:42')).toBeInTheDocument();

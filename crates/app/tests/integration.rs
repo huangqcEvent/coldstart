@@ -15,8 +15,9 @@ use coldstart_core::{
     AcceptanceResult, ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration,
     CapabilityObligation, CapabilityStatus, ClaimResult, CredentialEnvironment, CredentialKind,
     DomainEventKind, GenerationSource, ModuleDefinition, PlatformDefinition, PlatformKind,
-    PullRequestState, ReleasePrerequisite, ReportOutcome, RepositoryAuthMode, RepositorySyncPolicy,
-    RepositoryVerificationCommand, SourceReference, TraceableText, WorkItemStatus, WorkReportInput,
+    PullRequestMergeability, PullRequestState, ReleasePrerequisite, ReportOutcome,
+    RepositoryAuthMode, RepositorySyncPolicy, RepositoryVerificationCommand, SourceReference,
+    TraceableText, WorkItemStatus, WorkReportInput,
 };
 use coldstart_storage::Database;
 use tempfile::TempDir;
@@ -1137,7 +1138,9 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
         "merged": true,
         "title": format!("[{task_key}] {}", task.title),
         "head": { "ref": branch, "sha": commit.trim() },
-        "base": { "ref": "main", "sha": "2222222222222222222222222222222222222222" }
+        "base": { "ref": "main", "sha": "2222222222222222222222222222222222222222" },
+        "mergeable": true,
+        "mergeable_state": "clean"
     })
     .to_string();
     let checks_body = serde_json::json!({
@@ -1248,6 +1251,7 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
     assert_eq!(insights.reviews.len(), 1);
     assert_eq!(insights.review_comments.len(), 1);
     assert_eq!(insights.review_comments[0].line, Some(12));
+    assert_eq!(insights.mergeability, PullRequestMergeability::Mergeable);
     let serialized_insights = serde_json::to_string(&insights).expect("insights must serialize");
     assert!(!serialized_insights.contains("test-github-value"));
     assert!(events.events.iter().any(|event| matches!(

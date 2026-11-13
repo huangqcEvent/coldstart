@@ -808,6 +808,16 @@ export type PullRequestCheckConclusion =
 
 export type PullRequestChecksState = 'none' | 'pending' | 'success' | 'failure';
 
+export type PullRequestMergeability =
+  | 'mergeable'
+  | 'conflicted'
+  | 'blocked'
+  | 'behind'
+  | 'unstable'
+  | 'draft'
+  | 'checking'
+  | 'unknown';
+
 export type PullRequestReviewState =
   | 'approved'
   | 'changes_requested'
@@ -841,6 +851,7 @@ export interface PullRequestReviewComment {
 
 export interface PullRequestInsights {
   pullRequestId: string;
+  mergeability: PullRequestMergeability;
   checks: PullRequestCheck[];
   reviews: PullRequestReview[];
   reviewComments: PullRequestReviewComment[];

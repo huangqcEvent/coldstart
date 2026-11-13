@@ -383,6 +383,39 @@ fn refreshes_pull_request_state_and_rejects_non_https_urls() {
 }
 
 #[test]
+fn reads_pull_request_mergeability_and_rejects_oversized_state_labels() {
+    let body = serde_json::json!({
+        "number": 7,
+        "html_url": "https://github.com/octocat/demo/pull/7",
+        "state": "open",
+        "draft": false,
+        "merged": false,
+        "title": "[task] 完成订单",
+        "head": { "ref": "codex/task-one", "sha": "1111111111111111111111111111111111111111" },
+        "base": { "ref": "main", "sha": "2222222222222222222222222222222222222222" },
+        "mergeable": false,
+        "mergeable_state": "dirty"
+    })
+    .to_string();
+    let server = MockServer::start(200, vec![], &body);
+    let token = GitHubToken::new(TOKEN).expect("token must be valid");
+    let pull_request = client(&server.base_url)
+        .pull_request(&token, "octocat", "demo", 7)
+        .expect("pull request must load");
+    assert_eq!(pull_request.mergeable, Some(false));
+    assert_eq!(pull_request.mergeable_state.as_deref(), Some("dirty"));
+    server.finish();
+
+    let invalid = body.replace("dirty", &"x".repeat(41));
+    let server = MockServer::start(200, vec![], &invalid);
+    let error = client(&server.base_url)
+        .pull_request(&token, "octocat", "demo", 7)
+        .expect_err("oversized mergeable state must fail");
+    assert!(matches!(error, GitHubError::InvalidResponse(_)));
+    server.finish();
+}
+
+#[test]
 fn reads_checks_reviews_and_review_comments_as_bounded_read_only_responses() {
     let token = GitHubToken::new(TOKEN).expect("token must be valid");
     let checks_body = serde_json::json!({

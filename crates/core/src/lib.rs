@@ -37,8 +37,9 @@ pub use pull_request::{
     MAX_PULL_REQUEST_INSIGHT_PATH_CHARS, MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS,
     MAX_PULL_REQUEST_TITLE_CHARS, MAX_PULL_REQUEST_URL_CHARS, PullRequestCheck,
     PullRequestCheckConclusion, PullRequestCheckStatus, PullRequestCheckSummary,
-    PullRequestChecksState, PullRequestInsights, PullRequestRecord, PullRequestReview,
-    PullRequestReviewComment, PullRequestReviewState, PullRequestState, PullRequestValidationError,
+    PullRequestChecksState, PullRequestInsights, PullRequestMergeability, PullRequestRecord,
+    PullRequestReview, PullRequestReviewComment, PullRequestReviewState, PullRequestState,
+    PullRequestValidationError,
 };
 pub use review::*;
 pub use source_reference::SourceReference;

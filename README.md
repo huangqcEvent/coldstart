@@ -65,7 +65,7 @@ ColdStart 不会自动通读整个仓库并替你还原完整架构。历史项�
   -> 从真实 diff 执行 AI Review
   -> passed / waived 后完成任务并推送任务分支
   -> 人工在桌面端创建 GitHub 草稿 PR
-  -> 手动刷新 PR 状态、Checks、Review 与行内评论
+  -> 手动刷新 PR 合并就绪、Checks、Review 与行内评论
   -> 在 GitHub 人工审查并决定是否合并
   -> 解锁后继任务
   -> 在项目记忆中复盘每次变更与门禁结果
@@ -232,16 +232,18 @@ PR 正文包含任务、验收、验证、Review、变更文件和已知问题�
 
 每次刷新会以 PR 当前 head 提交为边界，发起四个只读 `GET` 请求，读取并保存：
 
-1. PR 开放、关闭、已合并状态与草稿标记。
+1. PR 开放、关闭、已合并状态、草稿标记与合并状态。
 2. 该提交上的 GitHub Checks。
 3. PR Review 结论与正文。
 4. PR 行内 Review 评论、文件路径和行号。
 
 四个请求全部成功后才写入本地快照；任一步失败时，本次刷新不覆盖已有 PR 状态或验收信息。Checks 汇总区会分别显示无 Checks、运行中、失败与全部通过；失败或待处理状态只用于人工判断，不会触发自动修复、重跑或合并。
 
+PR 卡片还会展示 GitHub 合并状态与“合并前检查”。合并冲突、暂不可合并、分支落后、草稿、GitHub 正在计算、Checks 失败或未完成、Review 要求修改都会列为待人工确认项。没有已知阻塞项也不代表已获准合并；最终仍受 GitHub 分支保护、审批和 Checks 规则约束。已合并或已关闭 PR 显示终态，不再执行合并前检查。
+
 每个列表只读取第一页，最多展示 100 项；外部正文按纯文本显示，详情链接只接受 HTTPS。GitHub 返回未知状态时显示“未知”，ColdStart 不推断为通过。
 
-ColdStart 不自动合并、不关闭 PR、不转正式 PR、不写评论、不重跑 Checks、不创建 Commit Status，也不创建 Release Tag。PR、Checks 和评论同步只能在桌面端人工触发，不属于 MCP 工具。
+ColdStart 不自动合并、不关闭 PR、不转正式 PR、不写评论、不重跑 Checks、不创建 Commit Status，也不创建 Release Tag。PR、合并状态、Checks 和评论同步只能在桌面端人工触发，不属于 MCP 工具。
 
 ### 10. 复盘项目记忆
 
@@ -499,7 +501,7 @@ claim_next_work
 - 推送失败只记录风险，不伪造成功或回滚已完成状态。
 - 创建 GitHub 私有仓库需要桌面端二次确认。
 - 草稿 PR 只能由桌面端人工创建；请求正文由 ColdStart 生成，Token 不进入正文或本地记录。
-- PR 刷新只通过只读请求同步状态、Checks、Review 与行内评论，不执行合并、关闭、评论、重跑或 Checks 写入。
+- PR 刷新只通过只读请求同步状态、合并就绪、Checks、Review 与行内评论，不执行合并、关闭、评论、重跑或 Checks 写入。
 
 ### 执行安全
 
@@ -541,7 +543,7 @@ your-project/
 - 没有团队权限、多人并发审批或云端同步。
 - 不自动部署、打包、提审、发布小程序、合并分支或创建 Release Tag。
 - GitHub 草稿 PR 与验收信息同步只支持 GitHub.com 和桌面端人工触发；每次最多读取 100 个 Checks、100 条 Review、100 条行内评论，不自动翻页。
-- 不读取冲突状态、部署状态、Issue 或 Projects，也不会根据失败的 Checks 自动修复、重跑或合并。
+- 只读取 PR 详情中的合并状态，不展示具体冲突文件；不读取部署状态、Issue 或 Projects，也不会根据失败的 Checks 自动修复、重跑或合并。
 - Review 依赖外部 OpenAI 兼容模型；模型服务故障会失败关闭而不是跳过。
 - AI Review 不能证明代码没有漏洞，也不能替代人工安全审计。
 - MCP 项目简报只基于当前已发布计划；更早计划的历史需要通过项目记忆分页查看。
@@ -650,6 +652,7 @@ pnpm --dir apps/desktop build:installer
 - [MCP 项目记忆与接力设计](docs/superpowers/specs/2026-11-13-coldstart-mcp-memory-handoff-design.md)
 - [GitHub 草稿 PR 交付设计](docs/superpowers/specs/2026-11-13-coldstart-draft-pull-request-design.md)
 - [GitHub PR 验收信息只读同步设计](docs/superpowers/specs/2026-11-13-coldstart-pr-insights-design.md)
+- [GitHub PR 合并就绪只读展示设计](docs/superpowers/specs/2026-11-13-coldstart-pr-merge-readiness-design.md)
 - [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
 - [AI Review 实施计划](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
 - [项目记忆实施计划](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
@@ -669,7 +672,9 @@ pnpm --dir apps/desktop build:installer
 - [第十二阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-draft-pull-request/progress.md)
 - [第十三阶段：GitHub PR 验收信息只读同步](docs/superpowers/plans/2026-11-13-coldstart-pr-insights.md)
 - [第十三阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-pr-insights/progress.md)
+- [第十四阶段：GitHub PR 合并就绪只读展示](docs/superpowers/plans/2026-11-13-coldstart-pr-merge-readiness.md)
+- [第十四阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-pr-merge-readiness/progress.md)
 
 ## 技术形态
 
-Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub 草稿 PR 与验收同步、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。
+Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub 草稿 PR、验收同步与合并就绪、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。

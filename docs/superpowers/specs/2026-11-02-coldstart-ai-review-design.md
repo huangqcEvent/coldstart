@@ -471,6 +471,6 @@ README 不再以“第 1 至第 7 阶段”作为首屏结构；阶段历史保�
 ## 23. 与 GitHub PR 验收同步的边界
 
 - ColdStart 自己的 AI Review 仍只读取任务分支上的真实 Git diff、任务验收标准、启用规范和脱敏验证摘要。
-- GitHub Checks、PR Review 和行内评论由阶段 13 单独同步，仅用于桌面端人工最终验收；它们不会反向改变 AI Review 的 `passed`、`blocked` 或 `waived` 结果。
+- GitHub Checks、PR Review、行内评论与合并状态由阶段 13-14 单独同步，仅用于桌面端人工最终验收；它们不会反向改变 AI Review 的 `passed`、`blocked` 或 `waived` 结果。
 - 同步只执行 GitHub 只读请求，不回复评论、不重跑 Checks、不合并 PR、不创建 Tag，也不增加 MCP 工具。
 - 失败的 GitHub Checks 与要求修改的 Review 只显示当前状态，不会自动创建修复任务或自动重新提交报告。

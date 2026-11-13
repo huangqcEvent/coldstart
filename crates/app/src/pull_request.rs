@@ -11,9 +11,9 @@ use coldstart_core::{
     MAX_PULL_REQUEST_CHECK_NAME_CHARS, MAX_PULL_REQUEST_INSIGHT_AUTHOR_CHARS,
     MAX_PULL_REQUEST_INSIGHT_PATH_CHARS, MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS, PullRequestCheck,
     PullRequestCheckConclusion, PullRequestCheckStatus, PullRequestId, PullRequestInsights,
-    PullRequestRecord, PullRequestReview, PullRequestReviewComment, PullRequestReviewState,
-    PullRequestState, ReportOutcome, Repository, RepositoryAuthMode, ReviewStatus, TaskKind,
-    TaskSpec, WorkItemStatus, WorkReportId,
+    PullRequestMergeability, PullRequestRecord, PullRequestReview, PullRequestReviewComment,
+    PullRequestReviewState, PullRequestState, ReportOutcome, Repository, RepositoryAuthMode,
+    ReviewStatus, TaskKind, TaskSpec, WorkItemStatus, WorkReportId,
 };
 
 use crate::{AppError, context::OpenProject};
@@ -211,7 +211,17 @@ impl PullRequestService {
             &coordinates.repository,
             record.number,
         )?;
-        let insights = pull_request_insights(record.id, check_runs, reviews, review_comments)?;
+        let mergeability = PullRequestMergeability::from_signals(
+            remote.mergeable,
+            remote.mergeable_state.as_deref(),
+        );
+        let insights = pull_request_insights(
+            record.id,
+            mergeability,
+            check_runs,
+            reviews,
+            review_comments,
+        )?;
         let state = pull_request_state(&remote)?;
         if record.update_state(state, remote.draft)? {
             project.database.save_pull_request(&record)?;
@@ -277,6 +287,7 @@ fn pull_request_state(remote: &GitHubPullRequest) -> Result<PullRequestState, Ap
 
 fn pull_request_insights(
     pull_request_id: PullRequestId,
+    mergeability: PullRequestMergeability,
     check_runs: Vec<GitHubCheckRun>,
     reviews: Vec<GitHubPullRequestReview>,
     review_comments: Vec<GitHubPullRequestReviewComment>,
@@ -330,6 +341,7 @@ fn pull_request_insights(
         review_comments,
         Utc::now(),
     )
+    .map(|insights| insights.with_mergeability(mergeability))
     .map_err(Into::into)
 }
 

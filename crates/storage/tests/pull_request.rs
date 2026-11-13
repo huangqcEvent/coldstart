@@ -3,8 +3,8 @@ mod support;
 use chrono::{Duration, Utc};
 use coldstart_core::{
     ClaimResult, DomainEventKind, PullRequestCheck, PullRequestCheckConclusion,
-    PullRequestCheckStatus, PullRequestInsights, PullRequestRecord, PullRequestReview,
-    PullRequestReviewComment, PullRequestReviewState, PullRequestState,
+    PullRequestCheckStatus, PullRequestInsights, PullRequestMergeability, PullRequestRecord,
+    PullRequestReview, PullRequestReviewComment, PullRequestReviewState, PullRequestState,
 };
 use support::{PlanFixture, agent_task, report_for};
 
@@ -131,7 +131,8 @@ fn records_a_pull_request_and_its_state_changes_with_project_audit_events() {
         }],
         Utc::now(),
     )
-    .expect("insights must validate");
+    .expect("insights must validate")
+    .with_mergeability(PullRequestMergeability::Conflicted);
     assert!(
         fixture
             .database

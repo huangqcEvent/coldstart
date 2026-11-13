@@ -42,6 +42,57 @@ impl PullRequestState {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestMergeability {
+    Mergeable,
+    Conflicted,
+    Blocked,
+    Behind,
+    Unstable,
+    Draft,
+    Checking,
+    #[default]
+    Unknown,
+}
+
+impl PullRequestMergeability {
+    pub fn from_signals(mergeable: Option<bool>, state: Option<&str>) -> Self {
+        match state
+            .map(str::trim)
+            .filter(|state| !state.is_empty())
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("clean") => Self::Mergeable,
+            Some("dirty") => Self::Conflicted,
+            Some("blocked" | "has_hooks") => Self::Blocked,
+            Some("behind") => Self::Behind,
+            Some("unstable") => Self::Unstable,
+            Some("draft") => Self::Draft,
+            Some("unknown") => Self::Checking,
+            _ => match mergeable {
+                Some(true) => Self::Mergeable,
+                Some(false) => Self::Blocked,
+                None => Self::Unknown,
+            },
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Mergeable => "mergeable",
+            Self::Conflicted => "conflicted",
+            Self::Blocked => "blocked",
+            Self::Behind => "behind",
+            Self::Unstable => "unstable",
+            Self::Draft => "draft",
+            Self::Checking => "checking",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PullRequestCheckStatus {
@@ -253,6 +304,8 @@ pub struct PullRequestCheckSummary {
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestInsights {
     pub pull_request_id: PullRequestId,
+    #[serde(default)]
+    pub mergeability: PullRequestMergeability,
     pub checks: Vec<PullRequestCheck>,
     pub reviews: Vec<PullRequestReview>,
     pub review_comments: Vec<PullRequestReviewComment>,
@@ -269,6 +322,7 @@ impl PullRequestInsights {
     ) -> Result<Self, PullRequestValidationError> {
         let insights = Self {
             pull_request_id,
+            mergeability: PullRequestMergeability::Unknown,
             checks,
             reviews,
             review_comments,
@@ -276,6 +330,11 @@ impl PullRequestInsights {
         };
         insights.validate()?;
         Ok(insights)
+    }
+
+    pub fn with_mergeability(mut self, mergeability: PullRequestMergeability) -> Self {
+        self.mergeability = mergeability;
+        self
     }
 
     pub fn validate(&self) -> Result<(), PullRequestValidationError> {
@@ -748,5 +807,60 @@ mod tests {
             error,
             PullRequestValidationError::InsightListTooLong { field: "checks" }
         ));
+    }
+
+    #[test]
+    fn mergeability_maps_github_signals_without_assuming_success() {
+        assert_eq!(
+            PullRequestMergeability::from_signals(Some(true), Some("clean")),
+            PullRequestMergeability::Mergeable
+        );
+        assert_eq!(
+            PullRequestMergeability::from_signals(Some(false), Some("dirty")),
+            PullRequestMergeability::Conflicted
+        );
+        assert_eq!(
+            PullRequestMergeability::from_signals(Some(true), Some("blocked")),
+            PullRequestMergeability::Blocked
+        );
+        assert_eq!(
+            PullRequestMergeability::from_signals(Some(true), Some("behind")),
+            PullRequestMergeability::Behind
+        );
+        assert_eq!(
+            PullRequestMergeability::from_signals(Some(true), Some("unstable")),
+            PullRequestMergeability::Unstable
+        );
+        assert_eq!(
+            PullRequestMergeability::from_signals(Some(true), Some("draft")),
+            PullRequestMergeability::Draft
+        );
+        assert_eq!(
+            PullRequestMergeability::from_signals(None, Some("unknown")),
+            PullRequestMergeability::Checking
+        );
+        assert_eq!(
+            PullRequestMergeability::from_signals(None, None),
+            PullRequestMergeability::Unknown
+        );
+        assert_eq!(
+            PullRequestMergeability::from_signals(Some(false), None),
+            PullRequestMergeability::Blocked
+        );
+    }
+
+    #[test]
+    fn existing_insight_snapshots_default_mergeability_to_unknown() {
+        let insights =
+            PullRequestInsights::new(PullRequestId::new(), vec![], vec![], vec![], Utc::now())
+                .expect("insights must validate");
+        let mut value = serde_json::to_value(insights).expect("insights must serialize");
+        value
+            .as_object_mut()
+            .expect("insights must be an object")
+            .remove("mergeability");
+        let restored: PullRequestInsights =
+            serde_json::from_value(value).expect("legacy snapshot must deserialize");
+        assert_eq!(restored.mergeability, PullRequestMergeability::Unknown);
     }
 }

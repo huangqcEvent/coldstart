@@ -429,7 +429,7 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
     try {
       await reviewApi.refreshPullRequest(path, pullRequest.id);
       await loadWorkspace(false);
-      setNotice(`PR #${pullRequest.number} 状态、Checks 与 Review 评论已刷新。`);
+      setNotice(`PR #${pullRequest.number} 状态、合并就绪、Checks 与 Review 评论已刷新。`);
     } catch (refreshError) {
       setError(normalizeCommandError(refreshError));
     } finally {
@@ -855,10 +855,13 @@ export function ReviewView({ path, onPlanChanged }: ReviewViewProps) {
                         </div>
                         <div className="review-pull-request__insights">
                           {item.pullRequestInsights ? (
-                            <PullRequestInsights insights={item.pullRequestInsights} />
+                            <PullRequestInsights
+                              insights={item.pullRequestInsights}
+                              pullRequest={item.pullRequest}
+                            />
                           ) : (
                             <p className="review-pull-request__insight-empty">
-                              尚未同步 Checks 与 Review 评论。点击“刷新状态”从 GitHub 只读获取。
+                              尚未同步合并就绪、Checks 与 Review 评论。点击“刷新状态”从 GitHub 只读获取。
                             </p>
                           )}
                         </div>

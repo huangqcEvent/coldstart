@@ -192,6 +192,10 @@ pub struct GitHubPullRequest {
     pub title: String,
     pub head: GitHubPullRequestBranch,
     pub base: GitHubPullRequestBranch,
+    #[serde(default)]
+    pub mergeable: Option<bool>,
+    #[serde(default)]
+    pub mergeable_state: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -794,6 +798,13 @@ fn parse_pull_request_response(body: &str) -> Result<GitHubPullRequest, GitHubEr
         ));
     }
     validate_commit_sha(&pull_request.head.sha)?;
+    if let Some(state) = pull_request.mergeable_state.as_deref()
+        && (state.chars().count() > 40 || state.chars().any(char::is_control))
+    {
+        return Err(GitHubError::InvalidResponse(
+            "pull request mergeable state is invalid".to_owned(),
+        ));
+    }
     Ok(pull_request)
 }
 
