@@ -818,6 +818,19 @@ export type PullRequestMergeability =
   | 'checking'
   | 'unknown';
 
+export type PullRequestConflictState =
+  | 'not_checked'
+  | 'not_applicable'
+  | 'detected'
+  | 'not_reproduced'
+  | 'unavailable';
+
+export interface PullRequestConflictDetails {
+  state: PullRequestConflictState;
+  paths: string[];
+  truncated: boolean;
+}
+
 export type PullRequestReviewState =
   | 'approved'
   | 'changes_requested'
@@ -852,6 +865,7 @@ export interface PullRequestReviewComment {
 export interface PullRequestInsights {
   pullRequestId: string;
   mergeability: PullRequestMergeability;
+  conflictDetails: PullRequestConflictDetails;
   checks: PullRequestCheck[];
   reviews: PullRequestReview[];
   reviewComments: PullRequestReviewComment[];

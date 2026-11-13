@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fmt, io,
     path::{Path, PathBuf},
     process::{Command, Output},
@@ -30,6 +31,13 @@ pub struct GitCommitVerification {
     pub commit_sha: String,
     pub branch: String,
     pub changed_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitMergeConflictReport {
+    pub has_conflicts: bool,
+    pub conflicted_paths: Vec<String>,
+    pub truncated: bool,
 }
 
 #[derive(Clone)]
@@ -260,6 +268,136 @@ impl GitAdapter {
             patch,
             character_count,
         })
+    }
+
+    pub fn find_merge_conflicts(
+        &self,
+        repository: &Path,
+        base_commit: &str,
+        head_commit: &str,
+        limit: usize,
+    ) -> Result<GitMergeConflictReport, GitError> {
+        validate_commit_sha(base_commit)?;
+        validate_commit_sha(head_commit)?;
+        self.ensure_commit_exists(repository, base_commit)?;
+        self.ensure_commit_exists(repository, head_commit)?;
+
+        let mut command = Command::new("git");
+        command.current_dir(repository).args([
+            "-c",
+            "merge.default=text",
+            "-c",
+            "merge.renormalize=false",
+        ]);
+        for key in self.local_merge_driver_keys(repository)? {
+            command.args(["-c", &format!("{key}=false")]);
+        }
+        command.args([
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            base_commit,
+            head_commit,
+        ]);
+        configure_merge_diagnostic_environment(&mut command);
+
+        let output = command.output().map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                GitError::GitUnavailable
+            } else {
+                GitError::Io(redact_error(&error.to_string(), &GitAuth::None))
+            }
+        })?;
+        let exit_code = output.status.code();
+        if !matches!(exit_code, Some(0 | 1)) {
+            return Err(self.command_failed(
+                "diagnose merge conflicts",
+                String::from_utf8_lossy(&output.stderr).as_ref(),
+                &GitAuth::None,
+            ));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut lines = stdout.lines();
+        let tree = lines.next().unwrap_or_default().trim();
+        if !is_hex_sha(tree) {
+            return Err(GitError::MergeDiagnosticsInvalid);
+        }
+        if exit_code == Some(0) {
+            return Ok(GitMergeConflictReport {
+                has_conflicts: false,
+                conflicted_paths: Vec::new(),
+                truncated: false,
+            });
+        }
+
+        let mut unique_paths = BTreeSet::new();
+        for line in lines {
+            let path = line.trim_end_matches('\r');
+            if !path.is_empty() {
+                unique_paths.insert(path.to_owned());
+            }
+        }
+        let limit = limit.max(1);
+        let truncated = unique_paths.len() > limit;
+        Ok(GitMergeConflictReport {
+            has_conflicts: true,
+            conflicted_paths: unique_paths.into_iter().take(limit).collect(),
+            truncated,
+        })
+    }
+
+    fn ensure_commit_exists(&self, repository: &Path, commit_sha: &str) -> Result<(), GitError> {
+        let commit = format!("{commit_sha}^{{commit}}");
+        let output = self.run_allow_failure(
+            repository,
+            &["rev-parse", "--verify", "--quiet", &commit],
+            "read merge commit",
+        )?;
+        match output {
+            Some(output) if output.status.success() => Ok(()),
+            Some(output) if output.status.code() == Some(1) => {
+                Err(GitError::CommitNotFound(commit_sha.to_owned()))
+            }
+            Some(output) => Err(self.command_failed(
+                "read merge commit",
+                String::from_utf8_lossy(&output.stderr).as_ref(),
+                &GitAuth::None,
+            )),
+            None => Err(GitError::CommitNotFound(commit_sha.to_owned())),
+        }
+    }
+
+    fn local_merge_driver_keys(&self, repository: &Path) -> Result<Vec<String>, GitError> {
+        let output = self.run_allow_failure(
+            repository,
+            &[
+                "config",
+                "--local",
+                "--get-regexp",
+                r"^[Mm][Ee][Rr][Gg][Ee]\..*\.[Dd][Rr][Ii][Vv][Ee][Rr]$",
+            ],
+            "read local merge drivers",
+        )?;
+        match output {
+            Some(output) if output.status.success() => Ok(String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| line.split_whitespace().next())
+                .filter(|key| {
+                    let key = key.to_ascii_lowercase();
+                    key.starts_with("merge.") && key.ends_with(".driver")
+                })
+                .map(str::to_owned)
+                .collect()),
+            Some(output) if output.status.code() == Some(1) => Ok(Vec::new()),
+            Some(output) => Err(self.command_failed(
+                "read local merge drivers",
+                String::from_utf8_lossy(&output.stderr).as_ref(),
+                &GitAuth::None,
+            )),
+            None => Ok(Vec::new()),
+        }
     }
 
     pub fn ensure_clean(&self, repository: &Path) -> Result<(), GitError> {
@@ -554,6 +692,39 @@ fn output_text(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_owned()
 }
 
+fn configure_merge_diagnostic_environment(command: &mut Command) {
+    for key in [
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_CEILING_DIRECTORIES",
+    ] {
+        command.env_remove(key);
+    }
+    for (key, _) in std::env::vars_os() {
+        let key = key.to_string_lossy();
+        if key.starts_with("GIT_CONFIG_KEY_") || key.starts_with("GIT_CONFIG_VALUE_") {
+            command.env_remove(key.as_ref());
+        }
+    }
+    command
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env(
+            "GIT_CONFIG_GLOBAL",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        )
+        .env("GIT_ATTR_NOSYSTEM", "1")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .env("LC_ALL", "C")
+        .env("LANG", "C");
+}
+
 fn parse_status_paths(status: &str) -> Vec<String> {
     status
         .lines()
@@ -750,6 +921,8 @@ pub enum GitError {
         actual: usize,
         limit: usize,
     },
+    #[error("git merge diagnostics returned invalid output")]
+    MergeDiagnosticsInvalid,
     #[error("git {operation} failed: {stderr}")]
     CommandFailed {
         operation: &'static str,
@@ -778,6 +951,7 @@ impl GitError {
             Self::VerificationTrackedChanges(_) => "git_verification_tracked_changes",
             Self::ReviewDiffInvalid(_) => "review_diff_invalid",
             Self::ReviewInputTooLarge { .. } => "review_input_too_large",
+            Self::MergeDiagnosticsInvalid => "git_merge_diagnostics_invalid",
         }
     }
 }

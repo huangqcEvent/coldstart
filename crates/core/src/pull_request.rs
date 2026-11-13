@@ -12,6 +12,7 @@ pub const MAX_PULL_REQUEST_INSIGHT_ITEMS: usize = 100;
 pub const MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS: usize = 8_000;
 pub const MAX_PULL_REQUEST_INSIGHT_AUTHOR_CHARS: usize = 100;
 pub const MAX_PULL_REQUEST_INSIGHT_PATH_CHARS: usize = 1_024;
+pub const MAX_PULL_REQUEST_CONFLICT_PATHS: usize = 100;
 pub const MAX_PULL_REQUEST_CHECK_NAME_CHARS: usize = 200;
 pub const MAX_PULL_REQUEST_CHECK_APP_CHARS: usize = 100;
 
@@ -90,6 +91,88 @@ impl PullRequestMergeability {
             Self::Checking => "checking",
             Self::Unknown => "unknown",
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullRequestConflictState {
+    #[default]
+    NotChecked,
+    NotApplicable,
+    Detected,
+    NotReproduced,
+    Unavailable,
+}
+
+impl PullRequestConflictState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NotChecked => "not_checked",
+            Self::NotApplicable => "not_applicable",
+            Self::Detected => "detected",
+            Self::NotReproduced => "not_reproduced",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestConflictDetails {
+    pub state: PullRequestConflictState,
+    pub paths: Vec<String>,
+    pub truncated: bool,
+}
+
+impl PullRequestConflictDetails {
+    pub fn not_applicable() -> Self {
+        Self {
+            state: PullRequestConflictState::NotApplicable,
+            ..Self::default()
+        }
+    }
+
+    pub fn detected(paths: Vec<String>, truncated: bool) -> Self {
+        Self {
+            state: PullRequestConflictState::Detected,
+            paths,
+            truncated,
+        }
+    }
+
+    pub fn not_reproduced() -> Self {
+        Self {
+            state: PullRequestConflictState::NotReproduced,
+            ..Self::default()
+        }
+    }
+
+    pub fn unavailable() -> Self {
+        Self {
+            state: PullRequestConflictState::Unavailable,
+            ..Self::default()
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), PullRequestValidationError> {
+        if self.state == PullRequestConflictState::Detected {
+            if self.paths.len() > MAX_PULL_REQUEST_CONFLICT_PATHS {
+                return Err(PullRequestValidationError::InsightListTooLong {
+                    field: "conflict paths",
+                });
+            }
+            for path in &self.paths {
+                validate_required_insight_text(
+                    "conflict path",
+                    path,
+                    MAX_PULL_REQUEST_INSIGHT_PATH_CHARS,
+                )?;
+            }
+        } else if !self.paths.is_empty() || self.truncated {
+            return Err(PullRequestValidationError::InvalidConflictDetails);
+        }
+        Ok(())
     }
 }
 
@@ -306,6 +389,8 @@ pub struct PullRequestInsights {
     pub pull_request_id: PullRequestId,
     #[serde(default)]
     pub mergeability: PullRequestMergeability,
+    #[serde(default)]
+    pub conflict_details: PullRequestConflictDetails,
     pub checks: Vec<PullRequestCheck>,
     pub reviews: Vec<PullRequestReview>,
     pub review_comments: Vec<PullRequestReviewComment>,
@@ -323,6 +408,7 @@ impl PullRequestInsights {
         let insights = Self {
             pull_request_id,
             mergeability: PullRequestMergeability::Unknown,
+            conflict_details: PullRequestConflictDetails::default(),
             checks,
             reviews,
             review_comments,
@@ -337,7 +423,17 @@ impl PullRequestInsights {
         self
     }
 
+    pub fn with_conflict_details(
+        mut self,
+        conflict_details: PullRequestConflictDetails,
+    ) -> Result<Self, PullRequestValidationError> {
+        self.conflict_details = conflict_details;
+        self.validate()?;
+        Ok(self)
+    }
+
     pub fn validate(&self) -> Result<(), PullRequestValidationError> {
+        self.conflict_details.validate()?;
         validate_insight_count("checks", self.checks.len())?;
         validate_insight_count("reviews", self.reviews.len())?;
         validate_insight_count("review comments", self.review_comments.len())?;
@@ -531,6 +627,8 @@ pub enum PullRequestValidationError {
     InsecureInsightUrl { field: &'static str },
     #[error("pull request insight line number must be greater than zero")]
     InvalidInsightLine,
+    #[error("pull request conflict details are inconsistent with their state")]
+    InvalidConflictDetails,
 }
 
 fn validate_insight_count(
@@ -855,12 +953,82 @@ mod tests {
             PullRequestInsights::new(PullRequestId::new(), vec![], vec![], vec![], Utc::now())
                 .expect("insights must validate");
         let mut value = serde_json::to_value(insights).expect("insights must serialize");
-        value
-            .as_object_mut()
-            .expect("insights must be an object")
-            .remove("mergeability");
+        let object = value.as_object_mut().expect("insights must be an object");
+        object.remove("mergeability");
+        object.remove("conflictDetails");
         let restored: PullRequestInsights =
             serde_json::from_value(value).expect("legacy snapshot must deserialize");
         assert_eq!(restored.mergeability, PullRequestMergeability::Unknown);
+        assert_eq!(
+            restored.conflict_details.state,
+            PullRequestConflictState::NotChecked
+        );
+        assert!(restored.conflict_details.paths.is_empty());
+        assert!(!restored.conflict_details.truncated);
+    }
+
+    #[test]
+    fn conflict_details_accept_detected_paths_and_reject_inconsistent_states() {
+        let detected = PullRequestConflictDetails::detected(
+            vec!["src/main.ts".to_owned(), "src/order.ts".to_owned()],
+            true,
+        );
+        let insights =
+            PullRequestInsights::new(PullRequestId::new(), vec![], vec![], vec![], Utc::now())
+                .expect("insights must validate")
+                .with_conflict_details(detected.clone())
+                .expect("detected paths must validate");
+
+        let restored: PullRequestInsights = serde_json::from_value(
+            serde_json::to_value(&insights).expect("insights must serialize"),
+        )
+        .expect("detected details must deserialize");
+        assert_eq!(restored.conflict_details, detected);
+
+        let error =
+            PullRequestInsights::new(PullRequestId::new(), vec![], vec![], vec![], Utc::now())
+                .expect("insights must validate")
+                .with_conflict_details(PullRequestConflictDetails {
+                    state: PullRequestConflictState::NotApplicable,
+                    paths: vec!["src/main.ts".to_owned()],
+                    truncated: false,
+                })
+                .expect_err("inconsistent details must fail");
+        assert_eq!(error, PullRequestValidationError::InvalidConflictDetails);
+    }
+
+    #[test]
+    fn conflict_details_enforce_path_bounds_and_control_characters() {
+        let too_many = PullRequestConflictDetails::detected(
+            (0..=MAX_PULL_REQUEST_CONFLICT_PATHS)
+                .map(|index| format!("src/conflict-{index}.ts"))
+                .collect(),
+            false,
+        );
+        let error =
+            PullRequestInsights::new(PullRequestId::new(), vec![], vec![], vec![], Utc::now())
+                .expect("insights must validate")
+                .with_conflict_details(too_many)
+                .expect_err("too many conflict paths must fail");
+        assert_eq!(
+            error,
+            PullRequestValidationError::InsightListTooLong {
+                field: "conflict paths"
+            }
+        );
+
+        let invalid =
+            PullRequestConflictDetails::detected(vec!["src/line\nbreak.ts".to_owned()], false);
+        let error =
+            PullRequestInsights::new(PullRequestId::new(), vec![], vec![], vec![], Utc::now())
+                .expect("insights must validate")
+                .with_conflict_details(invalid)
+                .expect_err("control characters must fail");
+        assert_eq!(
+            error,
+            PullRequestValidationError::InvalidInsightText {
+                field: "conflict path"
+            }
+        );
     }
 }

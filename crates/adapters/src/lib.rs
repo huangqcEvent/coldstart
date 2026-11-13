@@ -10,7 +10,10 @@ pub use document::{
     DocumentError, ExtractedDocument, MAX_DOCUMENT_BYTES, MAX_EXTRACTED_CHARACTERS,
     extract_document,
 };
-pub use git::{GitAdapter, GitAuth, GitCommitVerification, GitError, GitRepositoryStatus};
+pub use git::{
+    GitAdapter, GitAuth, GitCommitVerification, GitError, GitMergeConflictReport,
+    GitRepositoryStatus,
+};
 pub use github::{
     CreateDraftPullRequestRequest, CreatePrivateRepositoryRequest, DeviceFlowPoll, DeviceFlowStart,
     GitHubActor, GitHubCheckApp, GitHubCheckRun, GitHubClient, GitHubConnection, GitHubError,

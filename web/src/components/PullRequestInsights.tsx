@@ -174,6 +174,42 @@ function formatSyncedAt(value: string) {
   return date.toLocaleString('zh-CN', { hour12: false });
 }
 
+function conflictDiagnostic(insights: PullRequestInsightsData) {
+  const details = insights.conflictDetails;
+  switch (details.state) {
+    case 'detected':
+      return {
+        label:
+          details.paths.length > 0
+            ? `本地定位到 ${details.paths.length} 个冲突文件`
+            : 'Git 报告冲突，但未返回冲突路径',
+        tone: 'failure',
+        detail: '由本地 merge-tree 计算，未修改工作区；GitHub 状态仍是最终依据。',
+      };
+    case 'not_reproduced':
+      return {
+        label: '本地未复现冲突',
+        tone: 'pending',
+        detail:
+          'GitHub 仍标记存在合并冲突。可能本地缺少最新目标分支或提交对象，请先同步后再次刷新；这不表示冲突已解决。',
+      };
+    case 'unavailable':
+      return {
+        label: '无法在本地定位冲突文件',
+        tone: 'none',
+        detail:
+          '本地仓库缺少 PR 基准/头提交，或 Git 合并诊断失败。请先获取对应提交后再次刷新。',
+      };
+    case 'not_checked':
+    default:
+      return {
+        label: '尚未执行本地冲突定位',
+        tone: 'none',
+        detail: '这是阶段 15 之前的快照。再次刷新后会尝试从本地仓库定位冲突路径。',
+      };
+  }
+}
+
 export function PullRequestInsights({
   insights,
   pullRequest,
@@ -185,6 +221,11 @@ export function PullRequestInsights({
   const readiness = mergeReadiness(insights, pullRequest);
   const checks = checksBadge(insights);
   const reviews = reviewBadge(insights);
+  const conflicts = conflictDiagnostic(insights);
+  const showConflicts =
+    pullRequest.state === 'open' &&
+    insights.mergeability === 'conflicted' &&
+    insights.conflictDetails.state !== 'not_applicable';
 
   return (
     <section className="pr-insights" aria-label="GitHub PR 验收信息">
@@ -218,6 +259,32 @@ export function PullRequestInsights({
           <span>只读提示，不构成自动合并许可；最终仍受分支保护、审批与 CI 规则约束。</span>
         )}
       </div>
+
+      {showConflicts ? (
+        <section
+          className={`pr-insights__conflicts pr-insights__conflicts--${conflicts.tone}`}
+          aria-label="本地冲突定位"
+        >
+          <header>
+            <strong>{conflicts.label}</strong>
+            <span>本地只读诊断</span>
+          </header>
+          <p>{conflicts.detail}</p>
+          {insights.conflictDetails.state === 'detected' &&
+          insights.conflictDetails.paths.length > 0 ? (
+            <ul>
+              {insights.conflictDetails.paths.map((path) => (
+                <li key={path}>
+                  <code>{path}</code>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {insights.conflictDetails.truncated ? (
+            <small>仅展示前 100 个冲突路径，完整列表以本地 Git 状态为准。</small>
+          ) : null}
+        </section>
+      ) : null}
 
       <details className="pr-insights__details">
         <summary>查看 Checks、Review 与评论</summary>

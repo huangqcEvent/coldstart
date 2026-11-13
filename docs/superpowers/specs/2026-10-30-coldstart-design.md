@@ -828,3 +828,38 @@ MVP 验收场景：
 - 应用测试覆盖刷新后快照持久化合并状态。
 - 前端测试覆盖合并冲突、合并前阻塞项、已合并终态和只读说明。
 - 全量门禁、安装包和 D 盘覆盖安装通过。
+
+## 34. 阶段 15：GitHub PR 冲突文件本地定位
+
+实现状态：已完成（2026-11-13）。详细设计见 `docs/superpowers/specs/2026-11-13-coldstart-pr-conflict-locator-design.md`。
+
+阶段 15 在 GitHub 已标记合并冲突时，用本地 Git 对象定位冲突路径。它补充阶段 14 的合并前检查，不改变 GitHub 的冲突判断，也不提供冲突解决或分支更新能力。
+
+### 34.1 数据模型
+
+- `PullRequestInsights` 增加带默认值的 `conflictDetails`，写入既有 JSON 快照，不升级 SQLite 架构。
+- 状态为 `not_checked`、`not_applicable`、`detected`、`not_reproduced`、`unavailable`。
+- `detected` 最多保存 100 条仓库相对路径，每条最多 1,024 字符；不保存补丁、blob 内容或 Git 原始输出。
+- 旧快照缺少该字段时默认为 `not_checked`，刷新后才执行诊断。
+
+### 34.2 诊断边界
+
+- 只有开放且 `mergeability=conflicted` 的 PR 才使用 GitHub 返回的 base/head SHA 执行本地诊断。
+- `git merge-tree --write-tree --name-only --no-messages` 退出码 0 表示本地未复现，1 表示检测到冲突，其他退出码或缺失对象表示不可用。
+- 诊断不 fetch、不切换分支、不修改工作区/索引/远程；Git 可能在 `.git` 中写入临时树对象。
+- 禁用系统/全局 Git 配置，覆盖仓库本地全部 `merge.*.driver`，强制 `merge.default=text`，防止只读刷新执行仓库自定义 merge driver。
+- 本地诊断失败不阻断 GitHub 状态、Checks、Review 和评论快照落库。
+
+### 34.3 界面与安全
+
+- 开放冲突 PR 显示“本地冲突定位”，区分已定位、未复现、不可用和旧快照未检查。
+- 本地未复现不表示冲突已解决，GitHub 状态仍是最终依据。
+- 不新增 GitHub 端点，不增加 MCP 工具，不自动解决冲突、更新目标分支或合并。
+
+### 34.4 验收
+
+- 领域测试覆盖默认值、状态一致性、路径上限和控制字符。
+- Git 适配器测试覆盖冲突路径、干净合并、缺失提交和自定义 merge driver 不执行。
+- 应用测试覆盖真实冲突路径持久化，以及本地诊断失败不阻断 GitHub 快照。
+- 前端测试覆盖四种冲突诊断状态和只读说明。
+- 全量门禁、安装包、D 盘覆盖安装与 11 个 MCP 工具验收通过。

@@ -359,3 +359,65 @@ fn verification_checkout_requires_the_expected_branch_head_and_tracked_cleanline
         .expect_err("branch switch must fail");
     assert!(matches!(error, GitError::VerificationBranchMismatch { .. }));
 }
+
+#[test]
+fn locates_conflict_paths_without_running_repository_merge_drivers() {
+    let fixture = Fixture::new();
+    let adapter = GitAdapter::new();
+
+    fs::write(fixture.work.join(".gitattributes"), "*.txt merge=evil\n")
+        .expect("attributes must write");
+    git(&fixture.work, &["add", ".gitattributes"]);
+    git(&fixture.work, &["commit", "-m", "configure merge driver"]);
+    git(&fixture.work, &["switch", "-c", "feature"]);
+    let head = fixture.write_and_commit("conflict.txt", "feature\n", "feature change");
+    git(&fixture.work, &["switch", "main"]);
+    let base = fixture.write_and_commit("conflict.txt", "main\n", "main change");
+
+    let marker = fixture.work.join("driver-ran.txt");
+    let driver = format!(
+        "powershell -NoProfile -Command \"Set-Content -LiteralPath '{}' -Value ran\"",
+        marker.display()
+    );
+    git(&fixture.work, &["config", "Merge.Evil.Driver", &driver]);
+
+    let report = adapter
+        .find_merge_conflicts(&fixture.work, &base, &head, 100)
+        .expect("merge conflicts must diagnose");
+    assert!(report.has_conflicts);
+    assert_eq!(report.conflicted_paths, ["conflict.txt"]);
+    assert!(!report.truncated);
+    assert!(
+        !marker.exists(),
+        "repository merge driver must not execute during read-only diagnostics"
+    );
+    assert_eq!(
+        git_output(&fixture.work, &["branch", "--show-current"]),
+        "main"
+    );
+    assert_eq!(git_output(&fixture.work, &["status", "--porcelain"]), "");
+}
+
+#[test]
+fn reports_clean_merges_and_missing_local_commits() {
+    let fixture = Fixture::new();
+    let adapter = GitAdapter::new();
+
+    git(&fixture.work, &["switch", "-c", "feature"]);
+    let head = fixture.write_and_commit("feature.txt", "feature\n", "feature change");
+    git(&fixture.work, &["switch", "main"]);
+    let base = fixture.write_and_commit("main.txt", "main\n", "main change");
+
+    let report = adapter
+        .find_merge_conflicts(&fixture.work, &base, &head, 100)
+        .expect("clean merge must diagnose");
+    assert!(!report.has_conflicts);
+    assert!(report.conflicted_paths.is_empty());
+    assert!(!report.truncated);
+
+    let missing = "a".repeat(40);
+    let error = adapter
+        .find_merge_conflicts(&fixture.work, &missing, &head, 100)
+        .expect_err("missing commit must fail");
+    assert!(matches!(error, GitError::CommitNotFound(commit) if commit == missing));
+}

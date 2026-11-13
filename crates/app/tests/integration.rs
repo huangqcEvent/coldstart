@@ -15,9 +15,9 @@ use coldstart_core::{
     AcceptanceResult, ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration,
     CapabilityObligation, CapabilityStatus, ClaimResult, CredentialEnvironment, CredentialKind,
     DomainEventKind, GenerationSource, ModuleDefinition, PlatformDefinition, PlatformKind,
-    PullRequestMergeability, PullRequestState, ReleasePrerequisite, ReportOutcome,
-    RepositoryAuthMode, RepositorySyncPolicy, RepositoryVerificationCommand, SourceReference,
-    TraceableText, WorkItemStatus, WorkReportInput,
+    PullRequestConflictState, PullRequestMergeability, PullRequestRecord, PullRequestState,
+    ReleasePrerequisite, ReportOutcome, RepositoryAuthMode, RepositorySyncPolicy,
+    RepositoryVerificationCommand, SourceReference, TraceableText, WorkItemStatus, WorkReportInput,
 };
 use coldstart_storage::Database;
 use tempfile::TempDir;
@@ -1316,4 +1316,186 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
         PullRequestState::Merged,
         "a failed refresh must not overwrite the previous state"
     );
+}
+
+#[test]
+fn refresh_persists_local_conflict_paths_and_degrades_when_base_is_missing() {
+    let fixture = Fixture::new();
+    let secrets = Arc::new(MemorySecretStore::default());
+    let integrations =
+        IntegrationService::with_dependencies(secrets.clone(), GitAdapter::new(), None);
+    fixture.save_repository(&integrations, None);
+    let plan = PlanService::with_dependencies(secrets.clone(), GitAdapter::new());
+    let task_key = fixture.publish_plan(&plan, vec!["src".to_owned()]);
+    let ClaimResult::Claimed(claimed) = fixture.claim(&plan, "conflict-locator-claim") else {
+        panic!("work must claim");
+    };
+    let task = task_for(&plan, &fixture.home, &task_key);
+    let commit = fixture.commit("src/main.rs", "fn main() { task(); }\n");
+    let report = plan
+        .submit_report(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token,
+            report_for(
+                &task,
+                commit.clone(),
+                vec!["src/main.rs".to_owned()],
+                "conflict-locator-report",
+            ),
+        )
+        .expect("completed report must pass verification");
+    assert!(report.accepted);
+
+    let workspace = integrations
+        .save_credential(
+            fixture.home.clone(),
+            SaveCredentialInput {
+                name: "GitHub conflict PR".to_owned(),
+                provider: "github".to_owned(),
+                kind: CredentialKind::OAuthToken,
+                environment: CredentialEnvironment::Shared,
+                secret: format!("test-{}-value", "github"),
+            },
+        )
+        .expect("GitHub credential must save");
+    let credential_id = workspace.credentials[0].id;
+    let database_path = fixture.home.join(".coldstart").join("state.db");
+    let repository_id = {
+        let mut database = Database::open(&database_path).expect("database must open");
+        let mut repository = database
+            .repository_by_key(&fixture.project_id, "web")
+            .expect("repository query must work")
+            .expect("repository must exist");
+        repository.remote_url = "https://github.com/octocat/demo.git".to_owned();
+        repository.auth_mode = RepositoryAuthMode::Credential;
+        repository.credential_id = Some(credential_id);
+        database
+            .save_repository(&repository)
+            .expect("GitHub repository metadata must save");
+        repository.id
+    };
+
+    let branch = task
+        .work_branch
+        .clone()
+        .expect("agent task must have a work branch");
+    let pull_request_url = "https://github.com/octocat/demo/pull/23";
+    let record = PullRequestRecord::new(
+        fixture.project_id,
+        report.work_item_id,
+        report.id,
+        repository_id,
+        23,
+        pull_request_url.to_owned(),
+        format!("[{task_key}] {}", task.title),
+        branch.clone(),
+        "main".to_owned(),
+        PullRequestState::Open,
+        false,
+    )
+    .expect("PR record must validate");
+    {
+        let mut database = Database::open(&database_path).expect("database must open");
+        database
+            .save_pull_request(&record)
+            .expect("PR record must save");
+    }
+
+    git(&fixture.work, &["switch", "main"]);
+    let base_sha = fixture.commit("src/main.rs", "fn main() { base(); }\n");
+    git(&fixture.work, &["switch", &branch]);
+    assert_eq!(git_output(&fixture.work, &["status", "--porcelain"]), "");
+
+    let pull_request_body = serde_json::json!({
+        "number": 23,
+        "html_url": pull_request_url,
+        "state": "open",
+        "draft": false,
+        "merged": false,
+        "title": format!("[{task_key}] {}", task.title),
+        "head": { "ref": branch, "sha": commit.trim() },
+        "base": { "ref": "main", "sha": base_sha.trim() },
+        "mergeable": false,
+        "mergeable_state": "dirty"
+    })
+    .to_string();
+    let server = MockGitHub::start_sequence(vec![
+        (200, pull_request_body),
+        (200, r#"{"total_count":0,"check_runs":[]}"#.to_owned()),
+        (200, "[]".to_owned()),
+        (200, "[]".to_owned()),
+    ]);
+    let client = GitHubClient::with_endpoints(&server.base_url, &server.base_url)
+        .expect("GitHub client must create");
+    let service = PullRequestService::with_dependencies(secrets.clone(), Some(client));
+    let refreshed = service
+        .refresh(fixture.home.clone(), record.id)
+        .expect("conflicted PR must refresh");
+    assert_eq!(refreshed.state, PullRequestState::Open);
+    let requests = server.finish_requests();
+    assert_eq!(
+        requests.len(),
+        4,
+        "conflict diagnostics must not add GitHub requests"
+    );
+    assert!(requests.iter().all(|request| request.method == "GET"));
+
+    let database = Database::open(&database_path).expect("database must reopen");
+    let insights = database
+        .load_pull_request_insights(&fixture.project_id, &record.id)
+        .expect("insights must load")
+        .expect("insights must persist");
+    assert_eq!(insights.mergeability, PullRequestMergeability::Conflicted);
+    assert_eq!(
+        insights.conflict_details.state,
+        PullRequestConflictState::Detected
+    );
+    assert_eq!(insights.conflict_details.paths, ["src/main.rs"]);
+    assert!(!insights.conflict_details.truncated);
+    drop(database);
+    assert_eq!(
+        git_output(&fixture.work, &["branch", "--show-current"]),
+        branch
+    );
+    assert_eq!(git_output(&fixture.work, &["status", "--porcelain"]), "");
+
+    let missing_base = "2".repeat(40);
+    let missing_base_body = serde_json::json!({
+        "number": 23,
+        "html_url": pull_request_url,
+        "state": "open",
+        "draft": false,
+        "merged": false,
+        "title": format!("[{task_key}] {}", task.title),
+        "head": { "ref": branch, "sha": commit.trim() },
+        "base": { "ref": "main", "sha": missing_base },
+        "mergeable": false,
+        "mergeable_state": "dirty"
+    })
+    .to_string();
+    let missing_server = MockGitHub::start_sequence(vec![
+        (200, missing_base_body),
+        (200, r#"{"total_count":0,"check_runs":[]}"#.to_owned()),
+        (200, "[]".to_owned()),
+        (200, "[]".to_owned()),
+    ]);
+    let missing_client =
+        GitHubClient::with_endpoints(&missing_server.base_url, &missing_server.base_url)
+            .expect("GitHub client must create");
+    let service = PullRequestService::with_dependencies(secrets, Some(missing_client));
+    service
+        .refresh(fixture.home.clone(), record.id)
+        .expect("local diagnostic failure must not fail the GitHub snapshot");
+    let insights = Database::open(&database_path)
+        .expect("database must reopen")
+        .load_pull_request_insights(&fixture.project_id, &record.id)
+        .expect("insights must load")
+        .expect("insights must persist");
+    assert_eq!(insights.mergeability, PullRequestMergeability::Conflicted);
+    assert_eq!(
+        insights.conflict_details.state,
+        PullRequestConflictState::Unavailable
+    );
+    assert!(insights.conflict_details.paths.is_empty());
 }

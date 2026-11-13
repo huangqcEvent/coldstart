@@ -1,16 +1,18 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
 use chrono::Utc;
 use coldstart_adapters::{
-    CreateDraftPullRequestRequest, GitHubCheckRun, GitHubClient, GitHubError, GitHubPullRequest,
-    GitHubPullRequestReview, GitHubPullRequestReviewComment, GitHubRepositoryCoordinates,
-    GitHubToken, SecretStore, WindowsSecretStore, sanitize_verification_output,
+    CreateDraftPullRequestRequest, GitAdapter, GitHubCheckRun, GitHubClient, GitHubError,
+    GitHubPullRequest, GitHubPullRequestReview, GitHubPullRequestReviewComment,
+    GitHubRepositoryCoordinates, GitHubToken, SecretStore, WindowsSecretStore,
+    sanitize_verification_output,
 };
 use coldstart_core::{
     CredentialKind, GitSyncStatus, MAX_PULL_REQUEST_CHECK_APP_CHARS,
-    MAX_PULL_REQUEST_CHECK_NAME_CHARS, MAX_PULL_REQUEST_INSIGHT_AUTHOR_CHARS,
-    MAX_PULL_REQUEST_INSIGHT_PATH_CHARS, MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS, PullRequestCheck,
-    PullRequestCheckConclusion, PullRequestCheckStatus, PullRequestId, PullRequestInsights,
+    MAX_PULL_REQUEST_CHECK_NAME_CHARS, MAX_PULL_REQUEST_CONFLICT_PATHS,
+    MAX_PULL_REQUEST_INSIGHT_AUTHOR_CHARS, MAX_PULL_REQUEST_INSIGHT_PATH_CHARS,
+    MAX_PULL_REQUEST_INSIGHT_TEXT_CHARS, PullRequestCheck, PullRequestCheckConclusion,
+    PullRequestCheckStatus, PullRequestConflictDetails, PullRequestId, PullRequestInsights,
     PullRequestMergeability, PullRequestRecord, PullRequestReview, PullRequestReviewComment,
     PullRequestReviewState, PullRequestState, ReportOutcome, Repository, RepositoryAuthMode,
     ReviewStatus, TaskKind, TaskSpec, WorkItemStatus, WorkReportId,
@@ -27,6 +29,7 @@ const MAX_PR_LIST_ITEM_CHARS: usize = 300;
 pub struct PullRequestService {
     secrets: Arc<dyn SecretStore>,
     github: Option<GitHubClient>,
+    git: GitAdapter,
 }
 
 impl PullRequestService {
@@ -38,7 +41,11 @@ impl PullRequestService {
     }
 
     pub fn with_dependencies(secrets: Arc<dyn SecretStore>, github: Option<GitHubClient>) -> Self {
-        Self { secrets, github }
+        Self {
+            secrets,
+            github,
+            git: GitAdapter::new(),
+        }
     }
 
     pub fn create_draft(
@@ -215,14 +222,17 @@ impl PullRequestService {
             remote.mergeable,
             remote.mergeable_state.as_deref(),
         );
+        let state = pull_request_state(&remote)?;
+        let conflict_details =
+            diagnose_conflict_details(&self.git, &repository, &remote, state, mergeability);
         let insights = pull_request_insights(
             record.id,
             mergeability,
             check_runs,
             reviews,
             review_comments,
-        )?;
-        let state = pull_request_state(&remote)?;
+        )?
+        .with_conflict_details(conflict_details)?;
         if record.update_state(state, remote.draft)? {
             project.database.save_pull_request(&record)?;
         }
@@ -283,6 +293,51 @@ fn pull_request_state(remote: &GitHubPullRequest) -> Result<PullRequestState, Ap
         ))
         .into()
     })
+}
+
+fn diagnose_conflict_details(
+    git: &GitAdapter,
+    repository: &Repository,
+    remote: &GitHubPullRequest,
+    state: PullRequestState,
+    mergeability: PullRequestMergeability,
+) -> PullRequestConflictDetails {
+    if state != PullRequestState::Open || mergeability != PullRequestMergeability::Conflicted {
+        return PullRequestConflictDetails::not_applicable();
+    }
+    match git.find_merge_conflicts(
+        &repository.local_path,
+        &remote.base.sha,
+        &remote.head.sha,
+        MAX_PULL_REQUEST_CONFLICT_PATHS,
+    ) {
+        Ok(report) if !report.has_conflicts => PullRequestConflictDetails::not_reproduced(),
+        Ok(report) => {
+            let mut paths = BTreeSet::new();
+            for path in report.conflicted_paths {
+                if let Some(path) = conflict_path(&path) {
+                    paths.insert(path);
+                }
+            }
+            PullRequestConflictDetails::detected(
+                paths
+                    .into_iter()
+                    .take(MAX_PULL_REQUEST_CONFLICT_PATHS)
+                    .collect(),
+                report.truncated,
+            )
+        }
+        Err(_) => PullRequestConflictDetails::unavailable(),
+    }
+}
+
+fn conflict_path(value: &str) -> Option<String> {
+    let value = sanitize_verification_output(value).trim().to_owned();
+    if value.is_empty() {
+        None
+    } else {
+        Some(truncate_chars(&value, MAX_PULL_REQUEST_INSIGHT_PATH_CHARS))
+    }
 }
 
 fn pull_request_insights(

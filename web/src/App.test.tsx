@@ -613,6 +613,11 @@ function makePullRequestInsights(
   return {
     pullRequestId: '16161616-1616-4616-8616-161616161616',
     mergeability: 'conflicted',
+    conflictDetails: {
+      state: 'detected',
+      paths: ['src/order.ts', 'src/payment.ts'],
+      truncated: false,
+    },
     checks: [
       {
         name: 'unit tests',
@@ -1839,6 +1844,12 @@ describe('ColdStart project workspace', () => {
     expect(screen.getByText('合并冲突')).toBeInTheDocument();
     expect(screen.getByText('合并前检查 · 2 项待人工确认')).toBeInTheDocument();
     expect(screen.getByText('存在合并冲突')).toBeInTheDocument();
+    expect(screen.getByText('本地定位到 2 个冲突文件')).toBeInTheDocument();
+    expect(screen.getByText('src/order.ts')).toBeInTheDocument();
+    expect(screen.getByText('src/payment.ts')).toBeInTheDocument();
+    expect(
+      screen.getByText('由本地 merge-tree 计算，未修改工作区；GitHub 状态仍是最终依据。'),
+    ).toBeInTheDocument();
     expect(screen.getAllByText('1 项 Review 要求修改').length).toBeGreaterThan(0);
     expect(screen.getByText('请补充失败分支测试。')).toBeInTheDocument();
     expect(screen.getByText('这里需要在失败时回滚。')).toBeInTheDocument();
@@ -1850,6 +1861,53 @@ describe('ColdStart project workspace', () => {
     );
     expect(commentLink).toHaveAttribute('target', '_blank');
     expect(commentLink).toHaveAttribute('rel', 'noreferrer');
+  });
+
+  it('explains unavailable local conflict diagnostics without claiming resolution', async () => {
+    const unavailable = makeReviewHistory('passed', {
+      pullRequest: makePullRequest({ draft: false }),
+      pullRequestInsights: makePullRequestInsights({
+        conflictDetails: { state: 'unavailable', paths: [], truncated: false },
+      }),
+    });
+    await openReviewView(
+      makeReviewWorkspace({ recentReviews: [unavailable] }),
+    );
+    expect(screen.getByText('无法在本地定位冲突文件')).toBeInTheDocument();
+    expect(
+      screen.getByText('本地仓库缺少 PR 基准/头提交，或 Git 合并诊断失败。请先获取对应提交后再次刷新。'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('冲突已解决')).not.toBeInTheDocument();
+  });
+
+  it('explains legacy conflict snapshots without inventing a local result', async () => {
+    const legacy = makeReviewHistory('passed', {
+      pullRequest: makePullRequest({ draft: false }),
+      pullRequestInsights: makePullRequestInsights({
+        conflictDetails: { state: 'not_checked', paths: [], truncated: false },
+      }),
+    });
+    await openReviewView(makeReviewWorkspace({ recentReviews: [legacy] }));
+    expect(screen.getByText('尚未执行本地冲突定位')).toBeInTheDocument();
+    expect(
+      screen.getByText('这是阶段 15 之前的快照。再次刷新后会尝试从本地仓库定位冲突路径。'),
+    ).toBeInTheDocument();
+  });
+
+  it('does not treat a local clean merge as resolved when GitHub still reports conflict', async () => {
+    const notReproduced = makeReviewHistory('passed', {
+      pullRequest: makePullRequest({ draft: false }),
+      pullRequestInsights: makePullRequestInsights({
+        conflictDetails: { state: 'not_reproduced', paths: [], truncated: false },
+      }),
+    });
+    await openReviewView(
+      makeReviewWorkspace({ recentReviews: [notReproduced] }),
+    );
+    expect(screen.getByText('本地未复现冲突')).toBeInTheDocument();
+    expect(
+      screen.getByText('GitHub 仍标记存在合并冲突。可能本地缺少最新目标分支或提交对象，请先同步后再次刷新；这不表示冲突已解决。'),
+    ).toBeInTheDocument();
   });
 
   it('offers a two-step audit waiver only for blocked reviews', async () => {
