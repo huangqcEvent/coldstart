@@ -1,6 +1,9 @@
 use std::path::PathBuf;
 
-use coldstart_app::{AppError, ClaimRequest, IntegrationService, PlanService};
+use coldstart_app::{
+    AppError, ClaimRequest, ContextHandoffService, IntegrationService, PlanService,
+    ProjectMemoryService,
+};
 use coldstart_core::{BlueprintEntityId, WorkItemId};
 use rmcp::{
     ServerHandler,
@@ -13,8 +16,9 @@ use serde::Serialize;
 use crate::{
     error::{app_error_result, invalid_capability_id_result, invalid_id_result},
     types::{
-        CapabilityStatusArgs, ClaimNextWorkArgs, ReadTaskReferenceArgs, ReleaseWorkArgs,
-        ReportWorkBlockerArgs, SubmitWorkReportArgs, WorkLeaseArgs,
+        CapabilityStatusArgs, ClaimNextWorkArgs, ProjectBriefArgs, ProjectMemoryArgs,
+        ReadTaskReferenceArgs, ReleaseWorkArgs, ReportWorkBlockerArgs, SubmitWorkReportArgs,
+        WorkLeaseArgs,
     },
 };
 
@@ -66,6 +70,53 @@ impl ColdStartMcp {
 
 #[tool_router]
 impl ColdStartMcp {
+    #[tool(
+        description = "Read a bounded, safe project brief before claiming work. Never returns secrets, local paths, remote URLs, or lease tokens."
+    )]
+    pub async fn get_project_brief(
+        &self,
+        Parameters(_args): Parameters<ProjectBriefArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let project_home = self.project_home.clone();
+        Self::execute(move || ContextHandoffService::new().project_brief(project_home)).await
+    }
+
+    #[tool(
+        description = "Read a safe, cursor-paginated project memory timeline. Heartbeats are hidden by default."
+    )]
+    pub async fn get_project_memory(
+        &self,
+        Parameters(args): Parameters<ProjectMemoryArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let project_home = self.project_home.clone();
+        Self::execute(move || {
+            ProjectMemoryService::new().read(
+                project_home,
+                args.before_cursor,
+                args.limit,
+                args.include_heartbeats.unwrap_or(false),
+            )
+        })
+        .await
+    }
+
+    #[tool(
+        description = "Read safe cross-task handoff details for a work item authorized by the lease token."
+    )]
+    pub async fn get_work_handoff(
+        &self,
+        Parameters(args): Parameters<WorkLeaseArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let work_id = match Self::parse_work_id(&args.work_id) {
+            Ok(work_id) => work_id,
+            Err(result) => return Ok(result),
+        };
+        let project_home = self.project_home.clone();
+        Self::execute(move || {
+            ContextHandoffService::new().work_handoff(project_home, work_id, args.lease_token)
+        })
+        .await
+    }
     #[tool(
         description = "Read a capability's configured status for one environment. Returns only a credential reference, never a secret."
     )]
@@ -229,7 +280,7 @@ impl ServerHandler for ColdStartMcp {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("coldstart", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "ColdStart work protocol. Claim one task at a time, read its context, heartbeat while working, and submit a structured report. Never bypass lease checks.",
+                "ColdStart work protocol. Read the safe project brief or project memory when resuming. Claim one task at a time, read its context and optional handoff, heartbeat while working, and submit a structured report. Never bypass lease checks.",
             )
     }
 }

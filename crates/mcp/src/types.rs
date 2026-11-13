@@ -17,6 +17,21 @@ pub(crate) struct ClaimNextWorkArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct ProjectBriefArgs {}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProjectMemoryArgs {
+    #[schemars(description = "Return events older than this positive event cursor")]
+    pub before_cursor: Option<i64>,
+    #[schemars(description = "Page size from 1 to 500; defaults to 100")]
+    pub limit: Option<u32>,
+    #[schemars(description = "Include work heartbeat events; defaults to false")]
+    pub include_heartbeats: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CapabilityStatusArgs {
     #[schemars(description = "Blueprint capability ID")]
     pub capability_id: String,

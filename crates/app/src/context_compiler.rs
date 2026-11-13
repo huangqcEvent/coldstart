@@ -548,7 +548,7 @@ fn render_blueprint_entity(
     None
 }
 
-fn latest_fact_versions(facts: &[ProjectFact]) -> Vec<&ProjectFact> {
+pub(crate) fn latest_fact_versions(facts: &[ProjectFact]) -> Vec<&ProjectFact> {
     let mut latest = std::collections::BTreeMap::<&str, &ProjectFact>::new();
     for fact in facts {
         let entry = latest.entry(fact.fact_key.as_str()).or_insert(fact);
@@ -559,7 +559,7 @@ fn latest_fact_versions(facts: &[ProjectFact]) -> Vec<&ProjectFact> {
     latest.into_values().collect()
 }
 
-fn fact_is_sensitive(fact: &ProjectFact) -> bool {
+pub(crate) fn fact_is_sensitive(fact: &ProjectFact) -> bool {
     let lower = format!("{} {}", fact.question, fact.value).to_lowercase();
     matches!(
         fact.category,

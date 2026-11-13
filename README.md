@@ -201,7 +201,7 @@ Codex 提交报告后，ColdStart 先校验真实分支、HEAD、Commit 和变�
 
 ### 7. 让 Codex 通过 MCP 领取工作
 
-Codex 通过 MCP 主动领取下一个可执行任务，读取编译后的上下文，完成代码后提交结构化报告。ColdStart 不启动 Codex，也不要求 Codex 与桌面 UI 同时打开。
+Codex 可以先通过 MCP 读取项目简报和项目记忆恢复上下文，再主动领取下一个可执行任务。领取后读取编译后的任务上下文；如果当前任务与前序工作相关，还可以读取任务接力摘要。完成后提交结构化报告。ColdStart 不启动 Codex，也不要求 Codex 与桌面 UI 同时打开。
 
 ### 8. 完成与推送
 
@@ -222,6 +222,8 @@ Codex 通过 MCP 主动领取下一个可执行任务，读取编译后的上下
 - 使用游标向前加载更早的事件，不重复、不打乱从新到旧的顺序。
 - 显示全部事件数、有效变更数、心跳数与各阶段计数。
 - 只展示安全摘要，不返回原始 payload、仓库凭据 URL、租约 ID 或 Secret 引用。
+
+Codex 可以通过 `get_project_memory` 读取同一安全投影；新会话可以用 `get_project_brief` 获取项目、计划、当前工作和最近变更摘要，任务执行中可以用 `get_work_handoff` 读取相关前序工作、已知问题和阻塞。
 
 ## 接入历史项目的建议步骤
 
@@ -413,10 +415,13 @@ Codex 或兼容 MCP 客户端使用以下配置连接某个 ColdStart 项目：
 
 ### MCP 工具
 
-当前实际暴露 8 个工具：
+当前实际暴露 11 个工具：
 
+- `get_project_brief`：领取任务前读取有界的项目简报，包括当前蓝图、计划状态、当前工作、最近完成、阻塞、未决信息、项目事实和最近记忆；不返回本地路径、远程 URL、凭据引用或租约。
+- `get_project_memory`：按游标分页读取安全项目记忆，支持 `limit` 和 `include_heartbeats`，默认隐藏心跳。
 - `claim_next_work`：按 Agent 与逻辑仓库原子领取下一个可执行任务，使用 `requestId` 保证重试幂等。
 - `get_work_context`：用租约令牌读取预算内的任务上下文、验证快照和 Review 规范引用。
+- `get_work_handoff`：在有效租约下读取当前任务的相关前序工作、最新报告、已知问题、后续事项和阻塞；不返回租约令牌。
 - `read_task_reference`：读取任务白名单内的额外引用，包括当前 Review 快照中的规范修订。
 - `heartbeat_work`：续租并记录 Agent 活动。
 - `report_work_blocker`：上报阻塞与需要人工提供的最小输入。
@@ -429,8 +434,11 @@ Codex 或兼容 MCP 客户端使用以下配置连接某个 ColdStart 项目：
 ### Codex 的推荐执行循环
 
 ```text
+get_project_brief（可选，恢复项目上下文）
+  -> get_project_memory（可选，分页查看历史）
 claim_next_work
   -> get_work_context
+  -> get_work_handoff（可选，继续相关任务时）
   -> 按允许路径修改代码
   -> 运行必要检查
   -> heartbeat_work（长任务期间）
@@ -463,7 +471,8 @@ claim_next_work
 
 - 本地验证只接受绝对路径 `.exe` 与参数数组，不经过 Shell。
 - Review 模型输出不能执行命令或修改文件。
-- MCP 不提供仓库 CRUD、凭据回读、Review 配置管理或人工豁免。
+- MCP 不提供仓库 CRUD、凭据回读、Review 配置管理、项目记忆写入或人工豁免。
+- 项目简报、项目记忆和任务接力都是只读安全投影，不返回租约令牌、Secret、凭据引用、远程 URL 或本地绝对路径。
 - 项目数据库与规范文件都在本地。
 
 MVP 不是面向恶意本地进程的完整沙箱。运行 Agent 的账户权限仍应与生产密钥隔离；高风险生产凭据不应交给日常 Coding Agent 使用。
@@ -499,7 +508,7 @@ your-project/
 - 不自动部署、打包、提审、发布小程序、合并分支或创建 Release Tag。
 - Review 依赖外部 OpenAI 兼容模型；模型服务故障会失败关闭而不是跳过。
 - AI Review 不能证明代码没有漏洞，也不能替代人工安全审计。
-- 项目记忆目前只在桌面端提供只读查看，尚未作为 MCP 工具暴露给 Codex。
+- MCP 项目简报只基于当前已发布计划；更早计划的历史需要通过项目记忆分页查看。
 - 安装包未签名。
 
 ## 常见故障

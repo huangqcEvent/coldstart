@@ -101,82 +101,91 @@ impl ProjectMemoryService {
         limit: Option<u32>,
         include_heartbeats: bool,
     ) -> Result<ProjectMemoryPage, AppError> {
-        let limit = limit.unwrap_or(DEFAULT_MEMORY_PAGE_LIMIT);
-        if !(1..=MAX_MEMORY_PAGE_LIMIT).contains(&limit) {
-            return Err(AppError::InvalidMemoryLimit {
-                limit,
-                min: 1,
-                max: MAX_MEMORY_PAGE_LIMIT,
-            });
-        }
-        if before_cursor.is_some_and(|cursor| cursor <= 0) {
-            return Err(AppError::InvalidMemoryCursor(before_cursor.unwrap()));
-        }
-
         let project = OpenProject::open(project_home)?;
-        let total_count = project.database.event_count(&project.project.id)?;
-        let type_counts = project.database.event_type_counts(&project.project.id)?;
-        let heartbeat_count = type_counts
-            .iter()
-            .find(|entry| entry.event_type == "work_heartbeat")
-            .map(|entry| entry.count)
-            .unwrap_or_default();
-        let visible_count = total_count.saturating_sub(heartbeat_count);
-        let mut phase_totals = MemoryPhase::ALL
-            .into_iter()
-            .map(|phase| (phase, 0_u64))
-            .collect::<BTreeMap<_, _>>();
-        for entry in &type_counts {
-            if entry.event_type == "work_heartbeat" {
-                continue;
-            }
-            *phase_totals
-                .entry(phase_for_event_type(&entry.event_type))
-                .or_default() += entry.count;
-        }
-        let phase_counts = MemoryPhase::ALL
-            .into_iter()
-            .map(|phase| MemoryPhaseCount {
-                phase,
-                count: phase_totals.get(&phase).copied().unwrap_or_default(),
-            })
-            .collect();
-
-        let page = project.database.list_events(
-            &project.project.id,
-            before_cursor,
-            limit,
-            include_heartbeats,
-        )?;
-        let items = page
-            .events
-            .into_iter()
-            .map(|stored| {
-                let event_type = stored.event.kind.type_name().to_owned();
-                let description = describe_event(&stored.event.kind);
-                ProjectMemoryItem {
-                    event_id: stored.event.event_id,
-                    occurred_at: stored.event.occurred_at,
-                    phase: description.phase,
-                    event_type,
-                    title: description.title.to_owned(),
-                    summary: description.summary,
-                    reference: description.reference,
-                    is_heartbeat: description.is_heartbeat,
-                }
-            })
-            .collect();
-
-        Ok(ProjectMemoryPage {
-            project_id: project.project.id,
-            total_count,
-            visible_count,
-            heartbeat_count,
-            phase_counts,
-            items,
-            next_cursor: page.next_cursor,
-        })
+        read_memory_page(&project, before_cursor, limit, include_heartbeats)
     }
+}
+
+pub(crate) fn read_memory_page(
+    project: &OpenProject,
+    before_cursor: Option<i64>,
+    limit: Option<u32>,
+    include_heartbeats: bool,
+) -> Result<ProjectMemoryPage, AppError> {
+    let limit = limit.unwrap_or(DEFAULT_MEMORY_PAGE_LIMIT);
+    if !(1..=MAX_MEMORY_PAGE_LIMIT).contains(&limit) {
+        return Err(AppError::InvalidMemoryLimit {
+            limit,
+            min: 1,
+            max: MAX_MEMORY_PAGE_LIMIT,
+        });
+    }
+    if before_cursor.is_some_and(|cursor| cursor <= 0) {
+        return Err(AppError::InvalidMemoryCursor(before_cursor.unwrap()));
+    }
+
+    let total_count = project.database.event_count(&project.project.id)?;
+    let type_counts = project.database.event_type_counts(&project.project.id)?;
+    let heartbeat_count = type_counts
+        .iter()
+        .find(|entry| entry.event_type == "work_heartbeat")
+        .map(|entry| entry.count)
+        .unwrap_or_default();
+    let visible_count = total_count.saturating_sub(heartbeat_count);
+    let mut phase_totals = MemoryPhase::ALL
+        .into_iter()
+        .map(|phase| (phase, 0_u64))
+        .collect::<BTreeMap<_, _>>();
+    for entry in &type_counts {
+        if entry.event_type == "work_heartbeat" {
+            continue;
+        }
+        *phase_totals
+            .entry(phase_for_event_type(&entry.event_type))
+            .or_default() += entry.count;
+    }
+    let phase_counts = MemoryPhase::ALL
+        .into_iter()
+        .map(|phase| MemoryPhaseCount {
+            phase,
+            count: phase_totals.get(&phase).copied().unwrap_or_default(),
+        })
+        .collect();
+
+    let page = project.database.list_events(
+        &project.project.id,
+        before_cursor,
+        limit,
+        include_heartbeats,
+    )?;
+    let items = page
+        .events
+        .into_iter()
+        .map(|stored| {
+            let event_type = stored.event.kind.type_name().to_owned();
+            let description = describe_event(&stored.event.kind);
+            ProjectMemoryItem {
+                event_id: stored.event.event_id,
+                occurred_at: stored.event.occurred_at,
+                phase: description.phase,
+                event_type,
+                title: description.title.to_owned(),
+                summary: description.summary,
+                reference: description.reference,
+                is_heartbeat: description.is_heartbeat,
+            }
+        })
+        .collect();
+
+    Ok(ProjectMemoryPage {
+        project_id: project.project.id,
+        total_count,
+        visible_count,
+        heartbeat_count,
+        phase_counts,
+        items,
+        next_cursor: page.next_cursor,
+    })
 }
 
 struct EventDescription {

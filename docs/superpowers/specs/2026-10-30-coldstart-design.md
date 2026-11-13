@@ -3,7 +3,7 @@
 - 日期：2026-10-30
 - 产品名：ColdStart / 冷启动
 - 仓库：`huangqcEvent/coldstart`
-- 状态：已确认架构；阶段 1-9 已实现，后续边界见各阶段独立设计
+- 状态：已确认架构；阶段 1-11 已实现，后续边界见各阶段独立设计
 - 文档范围：产品边界、系统架构、领域模型、MCP 协议、安全规则和 MVP 验收标准
 
 ## 1. 背景与目标
@@ -273,8 +273,11 @@ MCP 只暴露工作协议，不暴露数据库 CRUD、完整计划或密钥。
 
 ### 14.1 工具
 
+- `get_project_brief()`：返回当前蓝图、计划状态、当前工作、最近完成、阻塞、未决信息、安全项目事实和最近项目记忆；不返回本地路径、远程 URL、凭据引用或租约。
+- `get_project_memory(before_cursor, limit, include_heartbeats)`：返回游标分页的项目记忆安全投影，默认隐藏心跳。
 - `claim_next_work(agent_profile, repository, request_id)`：原子领取一个符合条件的工作项。
 - `get_work_context(work_id, lease_token)`：返回任务上下文包。
+- `get_work_handoff(work_id, lease_token)`：在有效租约下返回相关前序工作、报告、已知问题、后续事项和阻塞。
 - `read_task_reference(work_id, lease_token, reference_id)`：读取授权范围内的额外引用。
 - `heartbeat_work(work_id, lease_token)`：续租并记录活动。
 - `report_work_blocker(work_id, lease_token, reason, needed_input, proposal)`：报告阻塞并生成信息、决策或变更请求。
@@ -282,7 +285,7 @@ MCP 只暴露工作协议，不暴露数据库 CRUD、完整计划或密钥。
 - `release_work(work_id, lease_token, reason)`：释放无法继续的任务。
 - `get_capability_status(capability_id, environment)`：查询能力可用状态，不返回凭据。
 
-工具调用必须校验项目、工作项、租约和幂等键。同一任务任意时刻只能有一个有效租约。
+工具调用必须校验项目、工作项、租约和幂等键。同一任务任意时刻只能有一个有效租约。项目简报和项目记忆只读；任务接力必须先通过租约授权；三者都不得返回租约令牌、Secret、凭据引用、远程 URL 或原始事件 payload。
 
 ### 14.2 领取规则
 

@@ -2,6 +2,7 @@ mod context;
 mod context_compiler;
 mod error;
 mod git_gateway;
+mod handoff;
 mod integration;
 mod memory;
 mod plan;
@@ -15,6 +16,11 @@ mod workspace;
 
 pub use error::AppError;
 pub use git_gateway::PlanGitGateway;
+pub use handoff::{
+    BriefBlocker, BriefBlueprint, BriefFact, BriefInfoRequest, BriefPlan, BriefProject,
+    BriefRepository, BriefStatusCount, BriefWork, BriefWorkReport, ContextHandoffService,
+    ProjectBrief, WorkHandoff,
+};
 pub use integration::{
     CapabilityStatusView, CreatePrivateRepositoryInput, DeviceFlowView, GitHubDevicePollView,
     GitHubSessionView, IntegrationService, IntegrationWorkspace, ReleaseCenterView,

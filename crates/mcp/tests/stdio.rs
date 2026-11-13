@@ -567,7 +567,10 @@ fn stdio_server_lists_all_work_tools_and_rejects_an_unknown_tool() {
         vec![
             "claim_next_work",
             "get_capability_status",
+            "get_project_brief",
+            "get_project_memory",
             "get_work_context",
+            "get_work_handoff",
             "heartbeat_work",
             "read_task_reference",
             "release_work",
@@ -581,6 +584,82 @@ fn stdio_server_lists_all_work_tools_and_rejects_an_unknown_tool() {
         error.contains("tool not found"),
         "unexpected error: {error}"
     );
+}
+
+#[test]
+fn stdio_server_exposes_a_safe_project_brief_and_memory_page() {
+    let fixture = Fixture::new();
+    let mut client = McpStdioClient::spawn(&fixture.home);
+    client.initialize();
+
+    let brief = client.call_tool("get_project_brief", json!({}));
+    let brief = structured(&brief);
+    assert_eq!(brief["project"]["name"].as_str(), Some("MCP 集成项目"));
+    assert_eq!(brief["plan"]["revisionNumber"].as_u64(), Some(1));
+    assert_eq!(brief["repositories"][0]["key"].as_str(), Some("web"));
+    assert!(!brief["currentWork"].as_array().unwrap().is_empty());
+    assert!(!brief["recentMemory"].as_array().unwrap().is_empty());
+    let serialized = serde_json::to_string(brief).expect("brief must serialize");
+    assert!(!serialized.contains(&fixture.home.to_string_lossy().into_owned()));
+    assert!(!serialized.contains(&fixture.work.to_string_lossy().into_owned()));
+    assert!(!serialized.contains("remote.git"));
+    assert!(!serialized.contains("credentialRef"));
+
+    let memory = client.call_tool(
+        "get_project_memory",
+        json!({ "limit": 1, "include_heartbeats": false }),
+    );
+    let memory = structured(&memory);
+    assert_eq!(memory["items"].as_array().unwrap().len(), 1);
+    assert_eq!(memory["items"][0]["isHeartbeat"].as_bool(), Some(false));
+    assert!(memory["totalCount"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn stdio_server_returns_handoff_only_with_a_valid_lease() {
+    let fixture = Fixture::new();
+    let mut client = McpStdioClient::spawn(&fixture.home);
+    client.initialize();
+    let claimed = claim_one(&mut client, "stdio-handoff-claim");
+    let work_id = claimed["workItem"]["id"].as_str().unwrap().to_owned();
+    let lease_token = claimed["leaseToken"].as_str().unwrap().to_owned();
+
+    client.call_tool(
+        "heartbeat_work",
+        json!({ "work_id": work_id, "lease_token": lease_token }),
+    );
+    let handoff = client.call_tool(
+        "get_work_handoff",
+        json!({ "work_id": work_id, "lease_token": lease_token }),
+    );
+    let handoff = structured(&handoff);
+    assert_eq!(
+        handoff["currentWork"]["taskKey"],
+        claimed["workItem"]["taskKey"]
+    );
+    assert!(handoff["relatedWork"].as_array().is_some());
+    let serialized = serde_json::to_string(handoff).expect("handoff must serialize");
+    assert!(!serialized.contains(&lease_token));
+    assert!(!serialized.contains(&fixture.work.to_string_lossy().into_owned()));
+
+    let heartbeats = client.call_tool(
+        "get_project_memory",
+        json!({ "limit": 100, "include_heartbeats": true }),
+    );
+    let heartbeats = structured(&heartbeats);
+    assert!(
+        heartbeats["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|item| item["isHeartbeat"].as_bool() == Some(true))
+    );
+
+    let invalid = client.call_tool(
+        "get_work_handoff",
+        json!({ "work_id": work_id, "lease_token": "invalid-lease" }),
+    );
+    assert_eq!(tool_error(&invalid)["code"].as_str(), Some("lease_invalid"));
 }
 
 #[test]
