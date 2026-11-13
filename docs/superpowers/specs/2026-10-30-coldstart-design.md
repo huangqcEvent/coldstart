@@ -3,7 +3,7 @@
 - 日期：2026-10-30
 - 产品名：ColdStart / 冷启动
 - 仓库：`huangqcEvent/coldstart`
-- 状态：已确认架构；阶段 1-14 已实现，后续边界见各阶段独立设计
+- 状态：已确认架构；阶段 1-17 已实现，后续边界见各阶段独立设计
 - 文档范围：产品边界、系统架构、领域模型、MCP 协议、安全规则和 MVP 验收标准
 
 ## 1. 背景与目标
@@ -373,6 +373,9 @@ GitHub 私有仓库创建只允许由桌面 UI 中的明确用户操作发起。
 - 使用 OpenAI 兼容接口，由用户配置模型与 API Key；可指向本地兼容服务。
 - 调用外部模型前明确告知项目内容将发送到该服务。
 - Prompt 模板随应用版本化，禁止由 Agent 动态修改系统级 Prompt。
+- 桌面端可从已映射的 GitHub.com 仓库只读读取开放 Issue，并人工选择单条导入为 Markdown 需求来源；列表最多 50 条，正文最多 30,000 字符，标签、链接和时间均有边界校验。
+- Issue 导入复用现有 artifact、来源哈希和锚点体系，固定 `github://owner/repository/issues/number` 来源标识；评论、附件、Projects 和 Milestones 不在导入范围。
+- GitHub Token 只进入 Rust 请求头，不进入前端、SQLite、事件、日志或项目文件；Issue 正文只作为不受信任的需求资料，不能触发命令或自动操作。
 
 ## 19. 桌面 UI
 
@@ -469,7 +472,7 @@ MVP 验收场景：
 
 ## 26. 后续版本范围
 
-- GitHub Issue 与 Projects 平台集成。
+- GitHub Projects 平台集成。
 - App 打包、商店提审、小程序发布、自动合并和 Release Tag 自动化。
 - 团队协作、云同步和多机迁移。
 - 可签名的模板与插件生态。
@@ -899,4 +902,40 @@ MVP 验收场景：
 - GitHub 适配器测试覆盖精确头提交查询、截断、最新状态解析和非法响应。
 - 应用测试覆盖成功落库、列表失败降级、单状态失败降级和旧快照兼容。
 - 前端测试覆盖成功、失败、进行中、未知、无部署、不可用和旧快照提示。
+- 全量门禁、安装包、D 盘覆盖安装、11 个 MCP 工具和 SQLite 架构 9 数据保留验收通过。
+
+## 36. 阶段 17：GitHub Issue 需求收集与导入
+
+实现状态：已完成（2026-11-13）。详细设计见 `docs/superpowers/specs/2026-11-13-coldstart-github-issue-intake-design.md`。
+
+阶段 17 为已有项目和迭代需求增加一个受控入口：从已映射的 GitHub.com 仓库读取开放 Issue，由人在桌面端选择并导入为本地需求来源，再沿用现有蓝图、计划和 MCP 领取流程。它不把 GitHub Issue 变成自动任务，也不扩大 Agent 权限。
+
+### 36.1 数据映射
+
+- 开放列表使用 `GET /repos/{owner}/{repository}/issues?state=open&sort=updated&direction=desc&per_page=100`，过滤 GitHub 返回的 Pull Request。
+- 列表最多向桌面端返回 50 条并标记截断；标题最多 256 字符，正文最多 30,000 字符，标签最多 20 个且每个最多 50 字符。
+- 导入单个 Issue 时重新读取 `GET /repos/{owner}/{repository}/issues/{issue_number}`，不使用可能过期的列表正文。
+- 只接受 GitHub.com HTTPS 链接和有效 RFC 3339 时间；拒绝非法状态、控制字符、超长文本、超大响应和 Pull Request 条目。
+
+### 36.2 本地来源与持久化
+
+- Issue 转换为固定格式 Markdown，包含标题、仓库、状态、评论数说明、更新时间、链接、来源标识、标签和正文。
+- 文件名固定为 `github-issue-<number>.md`，复用现有 artifact 目录、内容哈希和 Markdown 锚点抽取。
+- `importSource` 固定为 `github://owner/repository/issues/number`，用于展示已导入状态和阻止重复导入。
+- 重复导入返回稳定错误 `github_issue_already_imported`，不创建重复 artifact；不升级 SQLite 架构。
+- 评论不导入。正文只作为外部需求资料，不执行其中链接、命令或代码块。
+
+### 36.3 桌面与安全边界
+
+- 需求导入页增加仓库选择、读取开放 Issue、标签与时间展示、正文预览和人工导入操作。
+- 已导入 Issue 禁用重复导入；未配置仓库、非 GitHub 仓库、凭据缺失、网络失败或响应非法时显示稳定错误，不覆盖现有来源。
+- Token 从仓库已绑定的 GitHub OAuth Token 或 Personal Access Token 读取，只存在于 Rust 请求和内存中。
+- 不提供 Issue 创建、编辑、关闭、评论、分配、自动刷新或后台轮询。
+- 不增加 MCP 工具，MCP 总数仍为 11；Agent 不能拉取、选择或导入 Issue。
+
+### 36.4 验收
+
+- 适配器测试覆盖固定查询参数、Pull Request 过滤、50 条上限、正文与标签限长、非法 URL、非法时间和单条 Issue 解析。
+- 应用测试覆盖仓库与凭据校验、Issue 转 Markdown、artifact 与来源哈希落库、锚点、重复导入拒绝和 Token 不写入项目目录。
+- 前端测试覆盖仓库选择、列表加载、已导入状态、稳定错误和只读说明。
 - 全量门禁、安装包、D 盘覆盖安装、11 个 MCP 工具和 SQLite 架构 9 数据保留验收通过。

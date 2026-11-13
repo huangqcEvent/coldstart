@@ -3,6 +3,7 @@ import { useState } from 'react';
 import * as planApi from './api/planApi';
 import * as projectApi from './api/projectApi';
 import * as requirementsApi from './api/requirementsApi';
+import * as issueApi from './api/issueApi';
 import type {
   BlueprintContent,
   CommandError,
@@ -206,6 +207,19 @@ export default function App() {
     );
   }
 
+  async function handleImportGitHubIssue(
+    repositoryKey: string,
+    issueNumber: number,
+  ) {
+    if (!workspace) {
+      return false;
+    }
+    const path = workspace.status.rootPath;
+    return runWorkspaceAction('正在导入 GitHub Issue', () =>
+      issueApi.importGitHubIssue(path, repositoryKey, issueNumber),
+    );
+  }
+
   async function handleSaveBlueprint(content: BlueprintContent) {
     if (!workspace) {
       return false;
@@ -367,11 +381,13 @@ export default function App() {
 
           {workspace && view === 'requirements' ? (
             <RequirementsView
+              path={workspace.status.rootPath}
               sources={workspace.sources}
               busy={busy}
               busyLabel={busyLabel}
               onImport={() => void handleImport()}
               onGenerate={(config) => void handleGenerate(config)}
+              onImportIssue={handleImportGitHubIssue}
             />
           ) : null}
 

@@ -1,13 +1,23 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 
-import type { ArtifactMetadata, ModelConfig } from '../api/types';
+import * as integrationApi from '../api/integrationApi';
+import * as issueApi from '../api/issueApi';
+import type {
+  ArtifactMetadata,
+  CommandError,
+  GitHubIssueListView,
+  ModelConfig,
+  Repository,
+} from '../api/types';
 
 interface RequirementsViewProps {
+  path: string;
   sources: ArtifactMetadata[];
   busy: boolean;
   busyLabel: string | null;
   onImport: () => void;
   onGenerate: (config: ModelConfig) => void;
+  onImportIssue: (repositoryKey: string, issueNumber: number) => Promise<boolean>;
 }
 
 const formatLabels: Record<ArtifactMetadata['format'], string> = {
@@ -17,25 +27,114 @@ const formatLabels: Record<ArtifactMetadata['format'], string> = {
   pdf: 'PDF',
 };
 
+function normalizeCommandError(error: unknown): CommandError {
+  if (typeof error === 'object' && error !== null) {
+    const candidate = error as Record<string, unknown>;
+    if (typeof candidate.code === 'string' && typeof candidate.message === 'string') {
+      return { code: candidate.code, message: candidate.message };
+    }
+  }
+  return { code: 'unknown', message: String(error) };
+}
+
+function formatIssueTime(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat('zh-CN', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(parsed);
+}
+
 export function RequirementsView({
+  path,
   sources,
   busy,
   busyLabel,
   onImport,
   onGenerate,
+  onImportIssue,
 }: RequirementsViewProps) {
   const baseUrlId = useId();
   const modelId = useId();
   const apiKeyId = useId();
   const consentId = useId();
+  const issueRepositoryId = useId();
   const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [consent, setConsent] = useState(false);
+  const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [repositoryKey, setRepositoryKey] = useState('');
+  const [issueList, setIssueList] = useState<GitHubIssueListView | null>(null);
+  const [issueBusy, setIssueBusy] = useState(false);
+  const [issueError, setIssueError] = useState<CommandError | null>(null);
+  const [importingIssue, setImportingIssue] = useState<number | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    integrationApi
+      .readIntegrationWorkspace(path)
+      .then((workspace) => {
+        if (cancelled) {
+          return;
+        }
+        setRepositories(workspace.repositories);
+        setRepositoryKey((current) =>
+          workspace.repositories.some((repository) => repository.key === current)
+            ? current
+            : workspace.repositories[0]?.key ?? '',
+        );
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          setIssueError(normalizeCommandError(error));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path]);
 
   const configReady =
     baseUrl.trim().length > 0 && model.trim().length > 0 && sources.length > 0;
   const canGenerate = configReady && consent && !busy;
+  const issueActionBusy = busy || issueBusy || importingIssue !== null;
+
+  async function handleLoadIssues() {
+    if (!repositoryKey || issueActionBusy) {
+      return;
+    }
+    setIssueBusy(true);
+    setIssueError(null);
+    try {
+      setIssueList(await issueApi.listGitHubIssues(path, repositoryKey));
+    } catch (error) {
+      setIssueList(null);
+      setIssueError(normalizeCommandError(error));
+    } finally {
+      setIssueBusy(false);
+    }
+  }
+
+  async function handleImportIssue(issueNumber: number) {
+    if (!repositoryKey || issueActionBusy) {
+      return;
+    }
+    setImportingIssue(issueNumber);
+    setIssueError(null);
+    try {
+      await onImportIssue(repositoryKey, issueNumber);
+    } finally {
+      setImportingIssue(null);
+    }
+  }
+
+  function isImported(sourceReference: string) {
+    return sources.some((source) => source.importSource === sourceReference);
+  }
 
   return (
     <section className="content-view" aria-labelledby="requirements-title">
@@ -70,7 +169,7 @@ export function RequirementsView({
           {sources.length === 0 ? (
             <div className="empty-state">
               <strong>还没有来源文档</strong>
-              <p>支持 Markdown、TXT、DOCX、PDF，单个文件不超过 20 MiB。</p>
+              <p>支持 Markdown、TXT、DOCX、PDF，也可以从 GitHub Issue 导入。</p>
             </div>
           ) : (
             <ul className="source-list" aria-label="来源文档列表">
@@ -189,6 +288,135 @@ export function RequirementsView({
           ) : null}
         </section>
       </div>
+
+      <section className="panel issue-intake" aria-labelledby="issue-intake-title">
+        <div className="panel__head">
+          <div>
+            <p className="panel__eyebrow">外部需求入口</p>
+            <h2 id="issue-intake-title">从 GitHub Issue 导入</h2>
+            <p className="issue-intake__lead">
+              只读开放 Issue，人工选择后固化为本地需求来源。评论不会导入，也不会自动生成蓝图。
+            </p>
+          </div>
+          <span className="status-dot">只读</span>
+        </div>
+
+        <div className="issue-intake__controls">
+          <label className="field" htmlFor={issueRepositoryId}>
+            <span>目标仓库</span>
+            <select
+              id={issueRepositoryId}
+              value={repositoryKey}
+              onChange={(event) => {
+                setRepositoryKey(event.target.value);
+                setIssueList(null);
+                setIssueError(null);
+              }}
+              disabled={issueActionBusy || repositories.length === 0}
+            >
+              {repositories.length === 0 ? (
+                <option value="">尚未映射仓库</option>
+              ) : null}
+              {repositories.map((repository) => (
+                <option key={repository.id} value={repository.key}>
+                  {repository.name} · {repository.key}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="button button--secondary"
+            type="button"
+            onClick={() => void handleLoadIssues()}
+            disabled={!repositoryKey || issueActionBusy}
+          >
+            {issueBusy ? '正在读取…' : '读取开放 Issue'}
+          </button>
+        </div>
+
+        <p className="field__hint">
+          最多读取 50 条，按最近更新排序；需要完整讨论、附件或评论时请回到 GitHub 查看。
+        </p>
+
+        {issueError ? (
+          <div className="issue-intake__error" role="alert">
+            <strong>Issue 读取失败</strong>
+            <span>{issueError.message}</span>
+            <code>{issueError.code}</code>
+          </div>
+        ) : null}
+
+        {repositories.length === 0 ? (
+          <div className="empty-state">
+            <strong>先映射一个 GitHub 仓库</strong>
+            <p>到“仓库与能力”配置本地仓库、GitHub 远程地址和凭据后再读取 Issue。</p>
+          </div>
+        ) : issueList ? (
+          issueList.issues.length > 0 ? (
+            <>
+              <div className="issue-intake__summary">
+                <span>
+                  {issueList.repositoryLabel} · {issueList.issues.length} 条开放 Issue
+                </span>
+                {issueList.truncated ? <strong>列表已截断</strong> : null}
+              </div>
+              <ul className="issue-list" aria-label="GitHub 开放 Issue 列表">
+                {issueList.issues.map((issue) => {
+                  const imported = isImported(issue.sourceReference);
+                  return (
+                    <li className="issue-card" key={issue.id}>
+                      <header className="issue-card__header">
+                        <div className="issue-card__identity">
+                          <span className="issue-card__number">#{issue.number}</span>
+                          <h3>{issue.title}</h3>
+                        </div>
+                        <span className={`issue-state issue-state--${issue.state}`}>
+                          {issue.state === 'open' ? '开放' : '已关闭'}
+                        </span>
+                      </header>
+                      <p className="issue-card__meta">
+                        {formatIssueTime(issue.updatedAt)} · {issue.comments} 条评论 · 评论未导入
+                      </p>
+                      {issue.labels.length > 0 ? (
+                        <div className="issue-card__labels" aria-label="Issue 标签">
+                          {issue.labels.map((label) => (
+                            <span key={label}>{label}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                      <p className="issue-card__body">
+                        {issue.bodyPreview || '该 Issue 没有正文，请回到 GitHub 查看讨论。'}
+                      </p>
+                      <footer className="issue-card__footer">
+                        <a href={issue.htmlUrl} target="_blank" rel="noreferrer">
+                          在 GitHub 查看
+                        </a>
+                        <button
+                          className="button button--compact button--primary"
+                          type="button"
+                          onClick={() => void handleImportIssue(issue.number)}
+                          disabled={issueActionBusy || imported}
+                        >
+                          {imported
+                            ? '已导入为来源'
+                            : importingIssue === issue.number
+                              ? '正在导入…'
+                              : '导入为需求来源'}
+                        </button>
+                      </footer>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          ) : (
+            <div className="empty-state">
+              <strong>当前没有开放 Issue</strong>
+              <p>Issue 创建或重新打开后，再点击“读取开放 Issue”。</p>
+            </div>
+          )
+        ) : null}
+      </section>
     </section>
   );
 }

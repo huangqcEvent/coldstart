@@ -140,9 +140,11 @@ D:\work\your-project
 
 ## 完整工作流
 
-### 1. 导入需求
+### 1. 导入需求与 GitHub Issue
 
 在“需求导入”中导入一个或多个 Markdown、TXT、DOCX、PDF 文档。单个文档不超过 20 MiB，单次抽取锚点文本总量不超过 80,000 字符。扫描型 PDF 暂不执行 OCR。
+
+同一页面还可以从已映射的 GitHub.com 仓库只读读取最多 50 条最近更新的开放 Issue。列表会过滤 Pull Request，并展示标题、正文预览、标签、更新时间、评论数和链接。人工选择单条 Issue 后，ColdStart 使用最新快照生成 `github-issue-<number>.md`，复用本地锚点与来源哈希；同一 Issue 不能重复导入。Issue 只作为外部需求资料，评论、附件和 Projects 不会导入，正文不会触发命令，也不会自动生成蓝图。
 
 生成蓝图前需要配置 OpenAI 兼容服务的 Base URL、模型名称和 API Key，并明确同意将需求文本发送到该服务。需求模型 Key 只存在于当前界面内存和本次 IPC 调用中，不写入 SQLite、事件、日志或项目文件；切换页面或重启后需要重新输入。
 
@@ -499,6 +501,7 @@ claim_next_work
 - 删除凭据元数据时会同步删除对应系统凭据条目。
 - Review 模型凭据通过引用选择；实际值只在执行评审时读取到内存。
 - 需求生成蓝图的 API Key 只存在于当前界面内存与本次 IPC 调用中，重启后清空。
+- 读取 GitHub Issue 使用仓库已绑定的 OAuth/PAT 凭据；Token 只进入 Rust 请求头，不进入前端、SQLite、事件、日志或项目文件。
 
 ### 仓库安全
 
@@ -508,6 +511,7 @@ claim_next_work
 - 创建 GitHub 私有仓库需要桌面端二次确认。
 - 草稿 PR 只能由桌面端人工创建；请求正文由 ColdStart 生成，Token 不进入正文或本地记录。
 - PR 刷新只通过只读请求同步状态、合并就绪、Checks、Review、行内评论和当前 head 提交的部署状态，不执行合并、关闭、评论、重跑、Checks 写入或部署操作。
+- GitHub Issue 导入只能由桌面端人工触发，只读开放 Issue；不创建、编辑、关闭、评论或分配 Issue，也不增加 MCP 工具。
 
 ### 执行安全
 
@@ -549,7 +553,8 @@ your-project/
 - 没有团队权限、多人并发审批或云端同步。
 - 不自动部署、打包、提审、发布小程序、合并分支或创建 Release Tag。
 - GitHub 草稿 PR 与验收信息同步只支持 GitHub.com 和桌面端人工触发；每次最多读取 100 个 Checks、100 条 Review、100 条行内评论和 10 条 Deployment，不自动翻页。
-- 在 GitHub 标记 PR 冲突时，使用本地 `merge-tree` 只读定位冲突路径；本地缺少提交时降级为不可用。部署状态只读取当前 PR 头提交，不读取 Actions 日志、部署 payload、Issue 或 Projects，也不会根据失败的 Checks 或部署自动修复、重跑、部署或合并。
+- 在 GitHub 标记 PR 冲突时，使用本地 `merge-tree` 只读定位冲突路径；本地缺少提交时降级为不可用。部署状态只读取当前 PR 头提交，不读取 Actions 日志或部署 payload，也不会根据失败的 Checks 或部署自动修复、重跑、部署或合并。
+- GitHub Issue 导入只支持 GitHub.com 上与已映射仓库关联的开放 Issue，每次最多 50 条；不导入评论、附件、Projects、Milestones，也不会自动刷新或生成蓝图。
 - Review 依赖外部 OpenAI 兼容模型；模型服务故障会失败关闭而不是跳过。
 - AI Review 不能证明代码没有漏洞，也不能替代人工安全审计。
 - MCP 项目简报只基于当前已发布计划；更早计划的历史需要通过项目记忆分页查看。
@@ -665,6 +670,7 @@ pnpm --dir apps/desktop build:installer
 - [GitHub PR 合并就绪只读展示设计](docs/superpowers/specs/2026-11-13-coldstart-pr-merge-readiness-design.md)
 - [GitHub PR 冲突文件本地定位设计](docs/superpowers/specs/2026-11-13-coldstart-pr-conflict-locator-design.md)
 - [GitHub PR 部署状态只读展示设计](docs/superpowers/specs/2026-11-13-coldstart-pr-deployment-status-design.md)
+- [GitHub Issue 需求收集与导入设计](docs/superpowers/specs/2026-11-13-coldstart-github-issue-intake-design.md)
 - [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
 - [AI Review 实施计划](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
 - [项目记忆实施计划](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
@@ -690,7 +696,9 @@ pnpm --dir apps/desktop build:installer
 - [第十五阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-pr-conflict-locator/progress.md)
 - [第十六阶段：GitHub PR 部署状态只读展示](docs/superpowers/plans/2026-11-13-coldstart-pr-deployment-status.md)
 - [第十六阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-pr-deployment-status/progress.md)
+- [第十七阶段：GitHub Issue 需求收集与导入](docs/superpowers/plans/2026-11-13-coldstart-github-issue-intake.md)
+- [第十七阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-github-issue-intake/progress.md)
 
 ## 技术形态
 
-Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub 草稿 PR、验收同步、合并就绪、冲突定位与部署状态、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。
+Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub Issue 导入、草稿 PR、验收同步、合并就绪、冲突定位与部署状态、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。

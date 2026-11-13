@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import App from './App';
 import * as integrationApi from './api/integrationApi';
+import * as issueApi from './api/issueApi';
 import * as memoryApi from './api/memoryApi';
 import * as planApi from './api/planApi';
 import * as projectApi from './api/projectApi';
@@ -15,6 +16,7 @@ import type {
   CapabilityStatusView,
   CredentialMetadata,
   DocumentAnchor,
+  GitHubIssueListView,
   GitSyncRecord,
   InfoRequest,
   IntegrationWorkspace,
@@ -77,6 +79,11 @@ vi.mock('./api/integrationApi', () => ({
   startGitHubDeviceFlow: vi.fn(),
   pollGitHubDeviceFlow: vi.fn(),
   createGitHubPrivateRepository: vi.fn(),
+}));
+
+vi.mock('./api/issueApi', () => ({
+  listGitHubIssues: vi.fn(),
+  importGitHubIssue: vi.fn(),
 }));
 
 vi.mock('./api/reviewApi', () => ({
@@ -821,6 +828,11 @@ beforeEach(() => {
   vi.mocked(integrationApi.startGitHubDeviceFlow).mockReset();
   vi.mocked(integrationApi.pollGitHubDeviceFlow).mockReset();
   vi.mocked(integrationApi.createGitHubPrivateRepository).mockReset();
+  vi.mocked(issueApi.listGitHubIssues).mockReset();
+  vi.mocked(issueApi.importGitHubIssue).mockReset();
+  vi.mocked(integrationApi.readIntegrationWorkspace).mockResolvedValue(
+    makeIntegrationWorkspace(),
+  );
 });
 
 describe('ColdStart project workspace', () => {
@@ -1023,6 +1035,84 @@ describe('ColdStart project workspace', () => {
 
     await user.click(screen.getByRole('button', { name: '项目总览' }));
     expect(await screen.findByText(/2 个事件/)).toBeInTheDocument();
+  });
+
+  it('loads open GitHub issues and imports a selected issue as a requirement source', async () => {
+    const user = await openProject(makeWorkspace());
+    const issueList: GitHubIssueListView = {
+      repositoryKey: 'web',
+      repositoryName: 'Web 前台',
+      repositoryLabel: 'octocat/demo',
+      truncated: false,
+      issues: [
+        {
+          id: 7,
+          number: 7,
+          title: '历史项目新增导出需求',
+          state: 'open',
+          bodyPreview: '希望支持 CSV 导出。\n\n需要包含筛选条件。',
+          labels: ['backend', 'enhancement'],
+          htmlUrl: 'https://github.com/octocat/demo/issues/7',
+          comments: 3,
+          updatedAt: '2026-11-13T10:00:00Z',
+          sourceReference: 'github://octocat/demo/issues/7',
+        },
+      ],
+    };
+    const issueSource = {
+      ...source,
+      id: '18181818-1818-4818-8818-181818181818',
+      fileName: 'github-issue-7.md',
+      importSource: 'github://octocat/demo/issues/7',
+    };
+    vi.mocked(issueApi.listGitHubIssues).mockResolvedValue(issueList);
+    vi.mocked(issueApi.importGitHubIssue).mockResolvedValue(
+      makeWorkspace({
+        sources: [issueSource],
+        sourceAnchors: { [issueSource.id]: [anchor] },
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: '需求导入' }));
+    await waitFor(() => {
+      expect(integrationApi.readIntegrationWorkspace).toHaveBeenCalledWith(projectPath);
+      expect(screen.getByLabelText('目标仓库')).toHaveValue('web');
+    });
+    await user.click(screen.getByRole('button', { name: '读取开放 Issue' }));
+
+    expect(await screen.findByText('历史项目新增导出需求')).toBeInTheDocument();
+    expect(screen.getByText('backend')).toBeInTheDocument();
+    expect(screen.getByText(/3 条评论 · 评论未导入/)).toBeInTheDocument();
+    expect(issueApi.listGitHubIssues).toHaveBeenCalledWith(projectPath, 'web');
+
+    await user.click(screen.getByRole('button', { name: '导入为需求来源' }));
+
+    expect(issueApi.importGitHubIssue).toHaveBeenCalledWith(projectPath, 'web', 7);
+    expect(
+      await screen.findByRole('button', { name: '已导入为来源' }),
+    ).toBeDisabled();
+    expect(screen.getByText('github-issue-7.md')).toBeInTheDocument();
+  });
+
+  it('shows a stable error when GitHub issues cannot be read', async () => {
+    const user = await openProject(makeWorkspace());
+    vi.mocked(issueApi.listGitHubIssues).mockRejectedValue({
+      code: 'github_issue_ineligible',
+      message: '仓库必须使用 GitHub OAuth Token 或 Personal Access Token',
+    });
+
+    await user.click(screen.getByRole('button', { name: '需求导入' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('目标仓库')).toHaveValue('web');
+    });
+    await user.click(screen.getByRole('button', { name: '读取开放 Issue' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText('Issue 读取失败')).toBeInTheDocument();
+    expect(
+      within(alert).getByText('仓库必须使用 GitHub OAuth Token 或 Personal Access Token'),
+    ).toBeInTheDocument();
+    expect(within(alert).getByText('github_issue_ineligible')).toBeInTheDocument();
   });
 
   it('requires explicit model consent before generating and then shows the draft', async () => {

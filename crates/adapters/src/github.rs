@@ -14,6 +14,12 @@ const DEFAULT_OAUTH_BASE: &str = "https://github.com";
 const GITHUB_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_ERROR_BODY_CHARS: usize = 600;
 const MAX_PULL_REQUEST_BODY_CHARS: usize = 60_000;
+pub const MAX_GITHUB_ISSUE_ITEMS: usize = 50;
+pub const MAX_GITHUB_ISSUE_TITLE_CHARS: usize = 256;
+pub const MAX_GITHUB_ISSUE_BODY_CHARS: usize = 30_000;
+pub const MAX_GITHUB_ISSUE_LABELS: usize = 20;
+pub const MAX_GITHUB_ISSUE_LABEL_CHARS: usize = 50;
+const MAX_GITHUB_ISSUE_RAW_ITEMS: usize = 100;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct GitHubToken(String);
@@ -275,6 +281,31 @@ pub struct GitHubDeploymentStatus {
     pub description: Option<String>,
     #[serde(default)]
     pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitHubIssueState {
+    Open,
+    Closed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitHubIssue {
+    pub id: u64,
+    pub number: u64,
+    pub title: String,
+    pub state: GitHubIssueState,
+    pub body: Option<String>,
+    pub labels: Vec<String>,
+    pub html_url: String,
+    pub comments: u64,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitHubIssueList {
+    pub issues: Vec<GitHubIssue>,
+    pub truncated: bool,
 }
 
 pub struct GitHubClient {
@@ -632,6 +663,54 @@ impl GitHubClient {
             });
         }
         parse_deployment_status_response(&response.body)
+    }
+
+    pub fn list_repository_issues(
+        &self,
+        token: &GitHubToken,
+        owner: &str,
+        repository: &str,
+    ) -> Result<GitHubIssueList, GitHubError> {
+        validate_owner(owner)?;
+        validate_repository_name(repository)?;
+        let path = format!(
+            "/repos/{owner}/{repository}/issues?state=open&sort=updated&direction=desc&per_page={MAX_GITHUB_ISSUE_RAW_ITEMS}",
+            owner = owner.trim(),
+            repository = repository.trim(),
+        );
+        let response = self.get_json(&path, Some(token))?;
+        if !(200..300).contains(&response.status) {
+            return Err(GitHubError::HttpStatus {
+                status: response.status,
+                body: truncate_error(&redact_secret(&response.body, Some(token))),
+            });
+        }
+        parse_issue_list_response(&response.body)
+    }
+
+    pub fn repository_issue(
+        &self,
+        token: &GitHubToken,
+        owner: &str,
+        repository: &str,
+        issue_number: u64,
+    ) -> Result<GitHubIssue, GitHubError> {
+        validate_owner(owner)?;
+        validate_repository_name(repository)?;
+        validate_issue_number(issue_number)?;
+        let path = format!(
+            "/repos/{owner}/{repository}/issues/{issue_number}",
+            owner = owner.trim(),
+            repository = repository.trim(),
+        );
+        let response = self.get_json(&path, Some(token))?;
+        if !(200..300).contains(&response.status) {
+            return Err(GitHubError::HttpStatus {
+                status: response.status,
+                body: truncate_error(&redact_secret(&response.body, Some(token))),
+            });
+        }
+        parse_issue_response(&response.body)
     }
 
     fn post_json(
@@ -1038,6 +1117,146 @@ fn parse_deployment_status_response(
         ));
     }
     Ok(Some(status))
+}
+
+#[derive(Deserialize)]
+struct RawGitHubIssueLabel {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct RawGitHubIssue {
+    id: u64,
+    number: u64,
+    title: String,
+    state: String,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    labels: Vec<RawGitHubIssueLabel>,
+    html_url: String,
+    #[serde(default)]
+    comments: u64,
+    updated_at: String,
+    #[serde(default)]
+    pull_request: Option<Value>,
+}
+
+fn validate_issue_number(number: u64) -> Result<(), GitHubError> {
+    if number == 0 {
+        Err(GitHubError::InvalidResponse(
+            "issue number must be greater than zero".to_owned(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn parse_issue_state(value: &str) -> Result<GitHubIssueState, GitHubError> {
+    match value {
+        "open" => Ok(GitHubIssueState::Open),
+        "closed" => Ok(GitHubIssueState::Closed),
+        _ => Err(GitHubError::InvalidResponse(
+            "issue state must be open or closed".to_owned(),
+        )),
+    }
+}
+
+fn validate_issue_timestamp(value: &str) -> Result<(), GitHubError> {
+    let value = value.trim();
+    if value.is_empty() || value.chars().count() > 64 || value.chars().any(char::is_control) {
+        return Err(GitHubError::InvalidResponse(
+            "issue timestamp is invalid".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_issue_text(value: &str, field: &str, limit: usize) -> Result<(), GitHubError> {
+    if value.trim().is_empty()
+        || value.chars().count() > limit
+        || value.chars().any(char::is_control)
+    {
+        return Err(GitHubError::InvalidResponse(format!(
+            "issue {field} is invalid"
+        )));
+    }
+    Ok(())
+}
+
+fn parse_issue(raw: RawGitHubIssue) -> Result<GitHubIssue, GitHubError> {
+    if raw.pull_request.is_some() {
+        return Err(GitHubError::InvalidResponse(
+            "pull request entries cannot be imported as issues".to_owned(),
+        ));
+    }
+    if raw.id == 0 {
+        return Err(GitHubError::InvalidResponse(
+            "issue response omitted its ID".to_owned(),
+        ));
+    }
+    validate_issue_number(raw.number)?;
+    validate_issue_text(&raw.title, "title", MAX_GITHUB_ISSUE_TITLE_CHARS)?;
+    let state = parse_issue_state(&raw.state)?;
+    if let Some(body) = raw.body.as_deref()
+        && (body.chars().count() > MAX_GITHUB_ISSUE_BODY_CHARS
+            || body.chars().any(|character| {
+                character.is_control() && !matches!(character, '\n' | '\r' | '\t')
+            }))
+    {
+        return Err(GitHubError::InvalidResponse(
+            "issue body is invalid or exceeds its limit".to_owned(),
+        ));
+    }
+    validate_optional_https_url("issue URL", Some(&raw.html_url))?;
+    validate_issue_timestamp(&raw.updated_at)?;
+    let mut labels = Vec::with_capacity(raw.labels.len().min(MAX_GITHUB_ISSUE_LABELS));
+    for label in raw.labels.into_iter().take(MAX_GITHUB_ISSUE_LABELS) {
+        validate_issue_text(&label.name, "label", MAX_GITHUB_ISSUE_LABEL_CHARS)?;
+        labels.push(label.name.trim().to_owned());
+    }
+    Ok(GitHubIssue {
+        id: raw.id,
+        number: raw.number,
+        title: raw.title.trim().to_owned(),
+        state,
+        body: raw
+            .body
+            .map(|body| body.trim().to_owned())
+            .filter(|body| !body.is_empty()),
+        labels,
+        html_url: raw.html_url.trim().to_owned(),
+        comments: raw.comments,
+        updated_at: raw.updated_at.trim().to_owned(),
+    })
+}
+
+fn parse_issue_response(body: &str) -> Result<GitHubIssue, GitHubError> {
+    let issue: RawGitHubIssue = serde_json::from_str(body)
+        .map_err(|error| GitHubError::InvalidResponse(error.to_string()))?;
+    parse_issue(issue)
+}
+
+fn parse_issue_list_response(body: &str) -> Result<GitHubIssueList, GitHubError> {
+    let raw: Vec<RawGitHubIssue> = serde_json::from_str(body)
+        .map_err(|error| GitHubError::InvalidResponse(error.to_string()))?;
+    if raw.len() > MAX_GITHUB_ISSUE_RAW_ITEMS {
+        return Err(GitHubError::InvalidResponse(format!(
+            "issue list exceeds {MAX_GITHUB_ISSUE_RAW_ITEMS} raw items"
+        )));
+    }
+    let raw_count = raw.len();
+    let mut issues = Vec::new();
+    for item in raw {
+        if item.pull_request.is_some() {
+            continue;
+        }
+        issues.push(parse_issue(item)?);
+    }
+    let truncated =
+        raw_count >= MAX_GITHUB_ISSUE_RAW_ITEMS || issues.len() > MAX_GITHUB_ISSUE_ITEMS;
+    issues.truncate(MAX_GITHUB_ISSUE_ITEMS);
+    Ok(GitHubIssueList { issues, truncated })
 }
 
 fn split_scopes(value: Option<&str>) -> Vec<String> {

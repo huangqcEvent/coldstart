@@ -172,6 +172,10 @@ pub enum AppError {
     PullRequestIneligible(String),
     #[error("invalid pull request: {0}")]
     InvalidPullRequest(#[from] PullRequestValidationError),
+    #[error("GitHub issues cannot be imported from repository {0}: {1}")]
+    GitHubIssueIneligible(String, String),
+    #[error("GitHub issue {repository}#{number} has already been imported")]
+    GitHubIssueAlreadyImported { repository: String, number: u64 },
 }
 
 impl AppError {
@@ -288,6 +292,8 @@ impl AppError {
             Self::PullRequestNotFound(_) => "pull_request_not_found",
             Self::PullRequestIneligible(_) => "pull_request_ineligible",
             Self::InvalidPullRequest(_) => "pull_request_invalid",
+            Self::GitHubIssueIneligible(_, _) => "github_issue_ineligible",
+            Self::GitHubIssueAlreadyImported { .. } => "github_issue_already_imported",
         }
     }
 

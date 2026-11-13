@@ -40,49 +40,17 @@ impl<M: BlueprintModel> RequirementsService<M> {
         project_home: PathBuf,
         file_path: PathBuf,
     ) -> Result<ProjectWorkspace, AppError> {
-        let mut project = OpenProject::open(project_home)?;
-        let extracted = extract_document(&file_path)?;
         let file_name = file_path
             .file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(|| AppError::NonUtf8Path(file_path.clone()))?
             .to_owned();
-        let artifact_id = ArtifactId::new();
-        let artifact_directory = project
-            .home
-            .artifacts_directory()
-            .join(artifact_id.to_string());
-        let source_name = format!("source.{}", extracted.format.extension());
-        let artifact = ArtifactMetadata {
-            id: artifact_id,
-            project_id: project.project.id,
+        import_requirement_file_as(
+            project_home,
+            &file_path,
             file_name,
-            format: extracted.format,
-            content_hash: extracted.content_hash.clone(),
-            text_hash: extracted.text_hash.clone(),
-            byte_size: extracted.byte_size,
-            import_source: file_path.to_string_lossy().into_owned(),
-            imported_at: Utc::now(),
-        };
-
-        let result: Result<(), AppError> = (|| {
-            fs::create_dir_all(&artifact_directory)?;
-            fs::copy(&file_path, artifact_directory.join(source_name))?;
-            fs::write(
-                artifact_directory.join("extracted.txt"),
-                extracted.text.as_bytes(),
-            )?;
-            write_pretty_json(&artifact_directory.join("anchors.json"), &extracted.anchors)?;
-            project
-                .database
-                .insert_artifact(&artifact, &extracted.anchors)?;
-            Ok(())
-        })();
-
-        match result {
-            Ok(()) => build_workspace(project),
-            Err(source) => Err(rollback_artifact(source, &artifact_directory)),
-        }
+            file_path.to_string_lossy().into_owned(),
+        )
     }
 
     pub fn generate_blueprint(
@@ -212,7 +180,53 @@ impl<M: BlueprintModel> RequirementsService<M> {
     }
 }
 
-fn build_workspace(project: OpenProject) -> Result<ProjectWorkspace, AppError> {
+pub(crate) fn import_requirement_file_as(
+    project_home: PathBuf,
+    file_path: &Path,
+    file_name: String,
+    import_source: String,
+) -> Result<ProjectWorkspace, AppError> {
+    let mut project = OpenProject::open(project_home)?;
+    let extracted = extract_document(file_path)?;
+    let artifact_id = ArtifactId::new();
+    let artifact_directory = project
+        .home
+        .artifacts_directory()
+        .join(artifact_id.to_string());
+    let source_name = format!("source.{}", extracted.format.extension());
+    let artifact = ArtifactMetadata {
+        id: artifact_id,
+        project_id: project.project.id,
+        file_name,
+        format: extracted.format,
+        content_hash: extracted.content_hash.clone(),
+        text_hash: extracted.text_hash.clone(),
+        byte_size: extracted.byte_size,
+        import_source,
+        imported_at: Utc::now(),
+    };
+
+    let result: Result<(), AppError> = (|| {
+        fs::create_dir_all(&artifact_directory)?;
+        fs::copy(file_path, artifact_directory.join(source_name))?;
+        fs::write(
+            artifact_directory.join("extracted.txt"),
+            extracted.text.as_bytes(),
+        )?;
+        write_pretty_json(&artifact_directory.join("anchors.json"), &extracted.anchors)?;
+        project
+            .database
+            .insert_artifact(&artifact, &extracted.anchors)?;
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => build_workspace(project),
+        Err(source) => Err(rollback_artifact(source, &artifact_directory)),
+    }
+}
+
+pub(crate) fn build_workspace(project: OpenProject) -> Result<ProjectWorkspace, AppError> {
     let plan = build_plan_workspace(&project)?;
     let status = project.status()?;
     let sources = project.database.list_artifacts(&project.project.id)?;

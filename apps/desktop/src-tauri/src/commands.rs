@@ -2,12 +2,12 @@ use std::{path::PathBuf, sync::Arc};
 
 use coldstart_adapters::{ModelConfig, OpenAiCompatibleModel};
 use coldstart_app::{
-    CreatePrivateRepositoryInput, DeviceFlowView, GitHubDevicePollView, GitHubSessionView,
-    IntegrationService, IntegrationWorkspace, PlanService, ProjectMemoryPage, ProjectMemoryService,
-    ProjectService, ProjectStatus, ProjectWorkspace, PullRequestService, RepositoryDraft,
-    RepositoryValidationView, RequirementsService, ReviewService, ReviewStandardContent,
-    ReviewStandardImport, ReviewStandardManualInput, ReviewStandardRevisionInput,
-    ReviewStandardView, ReviewWorkspace, SaveCredentialInput,
+    CreatePrivateRepositoryInput, DeviceFlowView, GitHubDevicePollView, GitHubIssueListView,
+    GitHubIssueService, GitHubSessionView, IntegrationService, IntegrationWorkspace, PlanService,
+    ProjectMemoryPage, ProjectMemoryService, ProjectService, ProjectStatus, ProjectWorkspace,
+    PullRequestService, RepositoryDraft, RepositoryValidationView, RequirementsService,
+    ReviewService, ReviewStandardContent, ReviewStandardImport, ReviewStandardManualInput,
+    ReviewStandardRevisionInput, ReviewStandardView, ReviewWorkspace, SaveCredentialInput,
 };
 use coldstart_core::{
     BlueprintContent, BlueprintEntityId, BlueprintRevisionId, CapabilityStatus, CredentialId,
@@ -619,6 +619,48 @@ pub async fn create_github_private_repository(
     let service = Arc::clone(&service);
     tauri::async_runtime::spawn_blocking(move || {
         create_github_private_repository_sync(service.as_ref(), path, input)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn list_github_issues_sync(
+    path: String,
+    repository_key: String,
+) -> Result<GitHubIssueListView, CommandError> {
+    GitHubIssueService::new()
+        .list_issues(PathBuf::from(path), &repository_key)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn list_github_issues(
+    path: String,
+    repository_key: String,
+) -> Result<GitHubIssueListView, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || list_github_issues_sync(path, repository_key))
+        .await
+        .map_err(join_error)?
+}
+
+pub fn import_github_issue_sync(
+    path: String,
+    repository_key: String,
+    issue_number: u64,
+) -> Result<ProjectWorkspace, CommandError> {
+    GitHubIssueService::new()
+        .import_issue(PathBuf::from(path), &repository_key, issue_number)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn import_github_issue(
+    path: String,
+    repository_key: String,
+    issue_number: u64,
+) -> Result<ProjectWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        import_github_issue_sync(path, repository_key, issue_number)
     })
     .await
     .map_err(join_error)?

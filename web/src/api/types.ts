@@ -661,6 +661,29 @@ export interface IntegrationWorkspace {
   release: ReleaseCenter;
 }
 
+export type GitHubIssueState = 'open' | 'closed';
+
+export interface GitHubIssueView {
+  id: number;
+  number: number;
+  title: string;
+  state: GitHubIssueState;
+  bodyPreview: string;
+  labels: string[];
+  htmlUrl: string;
+  comments: number;
+  updatedAt: string;
+  sourceReference: string;
+}
+
+export interface GitHubIssueListView {
+  repositoryKey: string;
+  repositoryName: string;
+  repositoryLabel: string;
+  issues: GitHubIssueView[];
+  truncated: boolean;
+}
+
 export type ReviewSeverity = 'critical' | 'high' | 'medium' | 'low';
 
 export type ReviewCategory =

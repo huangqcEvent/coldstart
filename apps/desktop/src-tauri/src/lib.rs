@@ -33,6 +33,8 @@ pub fn run() {
             commands::start_github_device_flow,
             commands::poll_github_device_flow,
             commands::create_github_private_repository,
+            commands::list_github_issues,
+            commands::import_github_issue,
             commands::load_review_workspace,
             commands::save_review_configuration,
             commands::import_review_standard,

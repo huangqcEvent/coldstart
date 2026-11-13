@@ -634,3 +634,128 @@ fn reads_the_latest_deployment_status_and_accepts_an_empty_history() {
     assert_eq!(status, None);
     server.finish();
 }
+
+#[test]
+fn lists_open_issues_without_pull_requests_and_bounds_the_result() {
+    let mut issues = (0..51)
+        .map(|index| {
+            serde_json::json!({
+                "id": index + 1,
+                "number": index + 1,
+                "title": format!("需求 {}", index + 1),
+                "state": "open",
+                "body": format!("订单需求正文 {}", index + 1),
+                "labels": [
+                    { "name": "enhancement" },
+                    { "name": "订单" }
+                ],
+                "html_url": format!("https://github.com/octocat/demo/issues/{}", index + 1),
+                "comments": index,
+                "updated_at": "2026-11-13T10:00:00Z"
+            })
+        })
+        .collect::<Vec<_>>();
+    issues.insert(
+        0,
+        serde_json::json!({
+            "id": 999,
+            "number": 999,
+            "title": "这是一个 Pull Request",
+            "state": "open",
+            "body": null,
+            "labels": [],
+            "html_url": "https://github.com/octocat/demo/pull/999",
+            "comments": 0,
+            "updated_at": "2026-11-13T10:00:00Z",
+            "pull_request": { "url": "https://api.github.com/repos/octocat/demo/pulls/999" }
+        }),
+    );
+    let server = MockServer::start(200, vec![], &serde_json::json!(issues).to_string());
+    let token = GitHubToken::new(TOKEN).expect("token must be valid");
+    let list = client(&server.base_url)
+        .list_repository_issues(&token, "octocat", "demo")
+        .expect("issue list must load");
+
+    assert_eq!(list.issues.len(), 50);
+    assert!(list.truncated);
+    assert_eq!(list.issues[0].number, 1);
+    assert_eq!(list.issues[0].title, "需求 1");
+    assert_eq!(list.issues[0].labels, vec!["enhancement", "订单"]);
+    assert_eq!(list.issues[0].comments, 0);
+    let captured = server.finish();
+    assert_eq!(captured.method, "GET");
+    assert_eq!(
+        captured.url,
+        "/repos/octocat/demo/issues?state=open&sort=updated&direction=desc&per_page=100"
+    );
+    assert_eq!(
+        captured.authorization.as_deref(),
+        Some("Bearer gho_sensitive_test_token")
+    );
+}
+
+#[test]
+fn reads_one_issue_and_rejects_invalid_or_pull_request_entries() {
+    let body = serde_json::json!({
+        "id": 42,
+        "number": 7,
+        "title": "历史项目新增导出需求",
+        "state": "closed",
+        "body": "希望支持 CSV 导出。\n\n需要包含筛选条件。",
+        "labels": [{ "name": "backend" }],
+        "html_url": "https://github.com/octocat/demo/issues/7",
+        "comments": 3,
+        "updated_at": "2026-11-13T11:00:00Z"
+    })
+    .to_string();
+    let server = MockServer::start(200, vec![], &body);
+    let token = GitHubToken::new(TOKEN).expect("token must be valid");
+    let issue = client(&server.base_url)
+        .repository_issue(&token, "octocat", "demo", 7)
+        .expect("issue must load");
+    assert_eq!(issue.number, 7);
+    assert_eq!(issue.comments, 3);
+    assert_eq!(issue.labels, vec!["backend"]);
+    let captured = server.finish();
+    assert_eq!(captured.method, "GET");
+    assert_eq!(captured.url, "/repos/octocat/demo/issues/7");
+
+    let invalid = serde_json::json!({
+        "id": 43,
+        "number": 8,
+        "title": "非法链接",
+        "state": "open",
+        "body": null,
+        "labels": [],
+        "html_url": "http://github.com/octocat/demo/issues/8",
+        "comments": 0,
+        "updated_at": "2026-11-13T11:00:00Z"
+    })
+    .to_string();
+    let server = MockServer::start(200, vec![], &invalid);
+    let error = client(&server.base_url)
+        .repository_issue(&token, "octocat", "demo", 8)
+        .expect_err("insecure URL must fail");
+    assert!(matches!(error, GitHubError::InvalidResponse(_)));
+    server.finish();
+
+    let pull_request = serde_json::json!({
+        "id": 44,
+        "number": 9,
+        "title": "Pull Request 不能被当作 Issue",
+        "state": "open",
+        "body": null,
+        "labels": [],
+        "html_url": "https://github.com/octocat/demo/pull/9",
+        "comments": 0,
+        "updated_at": "2026-11-13T11:00:00Z",
+        "pull_request": { "url": "https://api.github.com/repos/octocat/demo/pulls/9" }
+    })
+    .to_string();
+    let server = MockServer::start(200, vec![], &pull_request);
+    let error = client(&server.base_url)
+        .repository_issue(&token, "octocat", "demo", 9)
+        .expect_err("pull request must fail");
+    assert!(matches!(error, GitHubError::InvalidResponse(_)));
+    server.finish();
+}

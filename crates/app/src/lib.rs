@@ -4,6 +4,7 @@ mod error;
 mod git_gateway;
 mod handoff;
 mod integration;
+mod issue;
 mod memory;
 mod plan;
 mod plan_workspace;
@@ -27,6 +28,7 @@ pub use integration::{
     GitHubSessionView, IntegrationService, IntegrationWorkspace, ReleaseCenterView,
     RepositoryDraft, RepositoryValidationView, RepositoryVerificationView, SaveCredentialInput,
 };
+pub use issue::{GitHubIssueListView, GitHubIssueService, GitHubIssueView};
 pub use memory::{
     DEFAULT_MEMORY_PAGE_LIMIT, MAX_MEMORY_PAGE_LIMIT, MemoryPhase, MemoryPhaseCount,
     MemoryReferenceType, ProjectMemoryItem, ProjectMemoryPage, ProjectMemoryReference,
