@@ -1,11 +1,20 @@
 import { invoke } from '@tauri-apps/api/core';
 
-import type { GitHubIssueListView, ProjectWorkspace } from './types';
+import type {
+  GitHubIssueListView,
+  GitHubIssueListState,
+  ProjectWorkspace,
+} from './types';
 
-export async function listGitHubIssues(path: string, repositoryKey: string) {
+export async function listGitHubIssues(
+  path: string,
+  repositoryKey: string,
+  state: GitHubIssueListState,
+) {
   return invoke<GitHubIssueListView>('list_github_issues', {
     path,
     repositoryKey,
+    state,
   });
 }
 

@@ -144,7 +144,7 @@ D:\work\your-project
 
 在“需求导入”中导入一个或多个 Markdown、TXT、DOCX、PDF 文档。单个文档不超过 20 MiB，单次抽取锚点文本总量不超过 80,000 字符。扫描型 PDF 暂不执行 OCR。
 
-同一页面还可以从已映射的 GitHub.com 仓库只读读取最多 50 条最近更新的开放 Issue。列表会过滤 Pull Request，并展示标题、正文预览、标签、更新时间、评论数和链接。人工选择单条 Issue 后，ColdStart 使用最新快照生成 `github-issue-<number>.md`，复用本地锚点与来源哈希；同一 Issue 不能重复导入。Issue 只作为外部需求资料，评论、附件和 Projects 不会导入，正文不会触发命令，也不会自动生成蓝图。
+同一页面还可以从已映射的 GitHub.com 仓库只读读取开放、已关闭或全部 Issue，每个状态最多 50 条最近更新记录。列表会过滤 Pull Request，并展示标题、正文预览、标签、更新时间、评论数和链接。读取后可再按编号、标题、标签或正文预览搜索，按标签过滤，或只查看尚未导入的记录；这些筛选只作用于当前快照。人工选择单条 Issue 后，ColdStart 使用最新快照生成 `github-issue-<number>.md`，复用本地锚点与来源哈希；同一 Issue 不能重复导入。Issue 只作为外部需求资料，评论、附件和 Projects 不会导入，正文不会触发命令，也不会自动生成蓝图。
 
 生成蓝图前需要配置 OpenAI 兼容服务的 Base URL、模型名称和 API Key，并明确同意将需求文本发送到该服务。需求模型 Key 只存在于当前界面内存和本次 IPC 调用中，不写入 SQLite、事件、日志或项目文件；切换页面或重启后需要重新输入。
 
@@ -554,7 +554,7 @@ your-project/
 - 不自动部署、打包、提审、发布小程序、合并分支或创建 Release Tag。
 - GitHub 草稿 PR 与验收信息同步只支持 GitHub.com 和桌面端人工触发；每次最多读取 100 个 Checks、100 条 Review、100 条行内评论和 10 条 Deployment，不自动翻页。
 - 在 GitHub 标记 PR 冲突时，使用本地 `merge-tree` 只读定位冲突路径；本地缺少提交时降级为不可用。部署状态只读取当前 PR 头提交，不读取 Actions 日志或部署 payload，也不会根据失败的 Checks 或部署自动修复、重跑、部署或合并。
-- GitHub Issue 导入只支持 GitHub.com 上与已映射仓库关联的开放 Issue，每次最多 50 条；不导入评论、附件、Projects、Milestones，也不会自动刷新或生成蓝图。
+- GitHub Issue 导入只支持 GitHub.com 上与已映射仓库关联的开放或已关闭 Issue，每种状态最多读取 50 条；关键词、标签和导入状态筛选只作用于当前快照，不调用 Search API、不自动翻页、不导入评论、附件、Projects 或 Milestones，也不会自动刷新或生成蓝图。
 - Review 依赖外部 OpenAI 兼容模型；模型服务故障会失败关闭而不是跳过。
 - AI Review 不能证明代码没有漏洞，也不能替代人工安全审计。
 - MCP 项目简报只基于当前已发布计划；更早计划的历史需要通过项目记忆分页查看。
@@ -671,6 +671,7 @@ pnpm --dir apps/desktop build:installer
 - [GitHub PR 冲突文件本地定位设计](docs/superpowers/specs/2026-11-13-coldstart-pr-conflict-locator-design.md)
 - [GitHub PR 部署状态只读展示设计](docs/superpowers/specs/2026-11-13-coldstart-pr-deployment-status-design.md)
 - [GitHub Issue 需求收集与导入设计](docs/superpowers/specs/2026-11-13-coldstart-github-issue-intake-design.md)
+- [GitHub Issue 收件箱筛选增强设计](docs/superpowers/specs/2026-11-13-coldstart-issue-inbox-filters-design.md)
 - [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
 - [AI Review 实施计划](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
 - [项目记忆实施计划](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
@@ -698,6 +699,8 @@ pnpm --dir apps/desktop build:installer
 - [第十六阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-pr-deployment-status/progress.md)
 - [第十七阶段：GitHub Issue 需求收集与导入](docs/superpowers/plans/2026-11-13-coldstart-github-issue-intake.md)
 - [第十七阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-github-issue-intake/progress.md)
+- [第十八阶段：GitHub Issue 收件箱筛选增强](docs/superpowers/plans/2026-11-13-coldstart-issue-inbox-filters.md)
+- [第十八阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-issue-inbox-filters/progress.md)
 
 ## 技术形态
 

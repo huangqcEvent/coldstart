@@ -662,6 +662,7 @@ export interface IntegrationWorkspace {
 }
 
 export type GitHubIssueState = 'open' | 'closed';
+export type GitHubIssueListState = 'open' | 'closed' | 'all';
 
 export interface GitHubIssueView {
   id: number;
@@ -680,6 +681,7 @@ export interface GitHubIssueListView {
   repositoryKey: string;
   repositoryName: string;
   repositoryLabel: string;
+  state: GitHubIssueListState;
   issues: GitHubIssueView[];
   truncated: boolean;
 }

@@ -2,8 +2,8 @@ use std::{io::Write, path::PathBuf, sync::Arc};
 
 use chrono::{DateTime, Utc};
 use coldstart_adapters::{
-    GitHubClient, GitHubError, GitHubIssue, GitHubIssueState, GitHubRepositoryCoordinates,
-    GitHubToken, SecretStore, WindowsSecretStore,
+    GitHubClient, GitHubError, GitHubIssue, GitHubIssueListState, GitHubIssueState,
+    GitHubRepositoryCoordinates, GitHubToken, SecretStore, WindowsSecretStore,
 };
 use coldstart_core::{CredentialKind, Repository, RepositoryAuthMode};
 use serde::{Deserialize, Serialize};
@@ -41,6 +41,7 @@ pub struct GitHubIssueListView {
     pub repository_key: String,
     pub repository_name: String,
     pub repository_label: String,
+    pub state: GitHubIssueListState,
     pub issues: Vec<GitHubIssueView>,
     pub truncated: bool,
 }
@@ -61,12 +62,17 @@ impl GitHubIssueService {
         &self,
         project_home: PathBuf,
         repository_key: &str,
+        state: GitHubIssueListState,
     ) -> Result<GitHubIssueListView, AppError> {
         let project = OpenProject::open(project_home)?;
         let (repository, coordinates, token) = self.github_context(&project, repository_key)?;
         let client = self.github.as_ref().ok_or(AppError::GitHubNotConfigured)?;
-        let list =
-            client.list_repository_issues(&token, &coordinates.owner, &coordinates.repository)?;
+        let list = client.list_repository_issues(
+            &token,
+            &coordinates.owner,
+            &coordinates.repository,
+            state,
+        )?;
         let issues = list
             .issues
             .into_iter()
@@ -76,6 +82,7 @@ impl GitHubIssueService {
             repository_key: repository.key,
             repository_name: repository.name,
             repository_label: format!("{}/{}", coordinates.owner, coordinates.repository),
+            state,
             issues,
             truncated: list.truncated,
         })

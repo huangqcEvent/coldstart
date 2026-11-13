@@ -1043,6 +1043,7 @@ describe('ColdStart project workspace', () => {
       repositoryKey: 'web',
       repositoryName: 'Web 前台',
       repositoryLabel: 'octocat/demo',
+      state: 'open',
       truncated: false,
       issues: [
         {
@@ -1078,12 +1079,12 @@ describe('ColdStart project workspace', () => {
       expect(integrationApi.readIntegrationWorkspace).toHaveBeenCalledWith(projectPath);
       expect(screen.getByLabelText('目标仓库')).toHaveValue('web');
     });
-    await user.click(screen.getByRole('button', { name: '读取开放 Issue' }));
+    await user.click(screen.getByRole('button', { name: '读取 Issue' }));
 
     expect(await screen.findByText('历史项目新增导出需求')).toBeInTheDocument();
-    expect(screen.getByText('backend')).toBeInTheDocument();
+    expect(screen.getAllByText('backend').length).toBeGreaterThan(0);
     expect(screen.getByText(/3 条评论 · 评论未导入/)).toBeInTheDocument();
-    expect(issueApi.listGitHubIssues).toHaveBeenCalledWith(projectPath, 'web');
+    expect(issueApi.listGitHubIssues).toHaveBeenCalledWith(projectPath, 'web', 'open');
 
     await user.click(screen.getByRole('button', { name: '导入为需求来源' }));
 
@@ -1105,7 +1106,7 @@ describe('ColdStart project workspace', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('目标仓库')).toHaveValue('web');
     });
-    await user.click(screen.getByRole('button', { name: '读取开放 Issue' }));
+    await user.click(screen.getByRole('button', { name: '读取 Issue' }));
 
     const alert = await screen.findByRole('alert');
     expect(within(alert).getByText('Issue 读取失败')).toBeInTheDocument();
@@ -1113,6 +1114,95 @@ describe('ColdStart project workspace', () => {
       within(alert).getByText('仓库必须使用 GitHub OAuth Token 或 Personal Access Token'),
     ).toBeInTheDocument();
     expect(within(alert).getByText('github_issue_ineligible')).toBeInTheDocument();
+  });
+
+  it('filters a loaded issue snapshot by state, keyword, label and import status', async () => {
+    const importedIssue = {
+      ...source,
+      id: '19191919-1919-4919-8919-191919191919',
+      fileName: 'github-issue-7.md',
+      importSource: 'github://octocat/demo/issues/7',
+    };
+    const user = await openProject(
+      makeWorkspace({
+        sources: [importedIssue],
+        sourceAnchors: { [importedIssue.id]: [anchor] },
+      }),
+    );
+    const issueList: GitHubIssueListView = {
+      repositoryKey: 'web',
+      repositoryName: 'Web 前台',
+      repositoryLabel: 'octocat/demo',
+      state: 'all',
+      truncated: false,
+      issues: [
+        {
+          id: 7,
+          number: 7,
+          title: '导出 CSV 需求',
+          state: 'open',
+          bodyPreview: '支持筛选后导出。',
+          labels: ['backend', '导出'],
+          htmlUrl: 'https://github.com/octocat/demo/issues/7',
+          comments: 2,
+          updatedAt: '2026-11-13T10:00:00Z',
+          sourceReference: 'github://octocat/demo/issues/7',
+        },
+        {
+          id: 8,
+          number: 8,
+          title: '历史数据导入',
+          state: 'closed',
+          bodyPreview: '旧版系统迁移数据。',
+          labels: ['legacy'],
+          htmlUrl: 'https://github.com/octocat/demo/issues/8',
+          comments: 4,
+          updatedAt: '2026-11-12T10:00:00Z',
+          sourceReference: 'github://octocat/demo/issues/8',
+        },
+        {
+          id: 9,
+          number: 9,
+          title: '报表优化',
+          state: 'closed',
+          bodyPreview: '汇总页加载过慢。',
+          labels: ['backend', '报表'],
+          htmlUrl: 'https://github.com/octocat/demo/issues/9',
+          comments: 1,
+          updatedAt: '2026-11-11T10:00:00Z',
+          sourceReference: 'github://octocat/demo/issues/9',
+        },
+      ],
+    };
+    vi.mocked(issueApi.listGitHubIssues).mockResolvedValue(issueList);
+
+    await user.click(screen.getByRole('button', { name: '需求导入' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('目标仓库')).toHaveValue('web');
+    });
+    await user.selectOptions(screen.getByLabelText('Issue 状态'), 'all');
+    await user.click(screen.getByRole('button', { name: '读取 Issue' }));
+
+    expect(await screen.findByText('导出 CSV 需求')).toBeInTheDocument();
+    expect(issueApi.listGitHubIssues).toHaveBeenCalledWith(projectPath, 'web', 'all');
+    expect(screen.getByText(/3 条$/)).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('关键词'), '报表');
+    expect(screen.getByText('报表优化')).toBeInTheDocument();
+    expect(screen.queryByText('导出 CSV 需求')).not.toBeInTheDocument();
+    expect(screen.queryByText('历史数据导入')).not.toBeInTheDocument();
+    expect(screen.getByText(/1\/3 条匹配$/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '清除筛选' }));
+    await user.selectOptions(screen.getByLabelText('标签'), 'legacy');
+    expect(screen.getByText('历史数据导入')).toBeInTheDocument();
+    expect(screen.queryByText('导出 CSV 需求')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '清除筛选' }));
+    await user.click(screen.getByRole('checkbox', { name: '仅显示未导入' }));
+    expect(screen.queryByText('导出 CSV 需求')).not.toBeInTheDocument();
+    expect(screen.getByText('历史数据导入')).toBeInTheDocument();
+    expect(screen.getByText('报表优化')).toBeInTheDocument();
   });
 
   it('requires explicit model consent before generating and then shows the draft', async () => {

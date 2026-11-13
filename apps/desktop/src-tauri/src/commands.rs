@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use coldstart_adapters::{ModelConfig, OpenAiCompatibleModel};
+use coldstart_adapters::{GitHubIssueListState, ModelConfig, OpenAiCompatibleModel};
 use coldstart_app::{
     CreatePrivateRepositoryInput, DeviceFlowView, GitHubDevicePollView, GitHubIssueListView,
     GitHubIssueService, GitHubSessionView, IntegrationService, IntegrationWorkspace, PlanService,
@@ -627,9 +627,10 @@ pub async fn create_github_private_repository(
 pub fn list_github_issues_sync(
     path: String,
     repository_key: String,
+    state: GitHubIssueListState,
 ) -> Result<GitHubIssueListView, CommandError> {
     GitHubIssueService::new()
-        .list_issues(PathBuf::from(path), &repository_key)
+        .list_issues(PathBuf::from(path), &repository_key, state)
         .map_err(Into::into)
 }
 
@@ -637,10 +638,13 @@ pub fn list_github_issues_sync(
 pub async fn list_github_issues(
     path: String,
     repository_key: String,
+    state: GitHubIssueListState,
 ) -> Result<GitHubIssueListView, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || list_github_issues_sync(path, repository_key))
-        .await
-        .map_err(join_error)?
+    tauri::async_runtime::spawn_blocking(move || {
+        list_github_issues_sync(path, repository_key, state)
+    })
+    .await
+    .map_err(join_error)?
 }
 
 pub fn import_github_issue_sync(

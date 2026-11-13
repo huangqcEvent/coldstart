@@ -289,6 +289,25 @@ pub enum GitHubIssueState {
     Closed,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GitHubIssueListState {
+    #[default]
+    Open,
+    Closed,
+    All,
+}
+
+impl GitHubIssueListState {
+    fn query_value(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Closed => "closed",
+            Self::All => "all",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitHubIssue {
     pub id: u64,
@@ -670,13 +689,15 @@ impl GitHubClient {
         token: &GitHubToken,
         owner: &str,
         repository: &str,
+        state: GitHubIssueListState,
     ) -> Result<GitHubIssueList, GitHubError> {
         validate_owner(owner)?;
         validate_repository_name(repository)?;
         let path = format!(
-            "/repos/{owner}/{repository}/issues?state=open&sort=updated&direction=desc&per_page={MAX_GITHUB_ISSUE_RAW_ITEMS}",
+            "/repos/{owner}/{repository}/issues?state={state}&sort=updated&direction=desc&per_page={MAX_GITHUB_ISSUE_RAW_ITEMS}",
             owner = owner.trim(),
             repository = repository.trim(),
+            state = state.query_value(),
         );
         let response = self.get_json(&path, Some(token))?;
         if !(200..300).contains(&response.status) {

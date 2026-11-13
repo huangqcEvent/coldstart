@@ -5,7 +5,7 @@ use std::{
 
 use coldstart_adapters::{
     CreateDraftPullRequestRequest, CreatePrivateRepositoryRequest, DeviceFlowPoll, GitHubClient,
-    GitHubError, GitHubRepositoryCoordinates, GitHubToken,
+    GitHubError, GitHubIssueListState, GitHubRepositoryCoordinates, GitHubToken,
 };
 use tiny_http::{Header, Response, Server, StatusCode};
 
@@ -673,7 +673,7 @@ fn lists_open_issues_without_pull_requests_and_bounds_the_result() {
     let server = MockServer::start(200, vec![], &serde_json::json!(issues).to_string());
     let token = GitHubToken::new(TOKEN).expect("token must be valid");
     let list = client(&server.base_url)
-        .list_repository_issues(&token, "octocat", "demo")
+        .list_repository_issues(&token, "octocat", "demo", GitHubIssueListState::Open)
         .expect("issue list must load");
 
     assert_eq!(list.issues.len(), 50);
@@ -692,6 +692,31 @@ fn lists_open_issues_without_pull_requests_and_bounds_the_result() {
         captured.authorization.as_deref(),
         Some("Bearer gho_sensitive_test_token")
     );
+}
+
+#[test]
+fn selects_closed_and_all_issue_states() {
+    let token = GitHubToken::new(TOKEN).expect("token must be valid");
+
+    for (state, query_value) in [
+        (GitHubIssueListState::Closed, "closed"),
+        (GitHubIssueListState::All, "all"),
+    ] {
+        let server = MockServer::start(200, vec![], "[]");
+        let list = client(&server.base_url)
+            .list_repository_issues(&token, "octocat", "demo", state)
+            .expect("empty issue list must load");
+        assert!(list.issues.is_empty());
+        assert!(!list.truncated);
+        let captured = server.finish();
+        assert_eq!(captured.method, "GET");
+        assert_eq!(
+            captured.url,
+            format!(
+                "/repos/octocat/demo/issues?state={query_value}&sort=updated&direction=desc&per_page=100"
+            )
+        );
+    }
 }
 
 #[test]

@@ -6,7 +6,9 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use coldstart_adapters::{GitAdapter, GitHubClient, MemorySecretStore, SecretStore};
+use coldstart_adapters::{
+    GitAdapter, GitHubClient, GitHubIssueListState, MemorySecretStore, SecretStore,
+};
 use coldstart_app::{
     AppError, GitHubIssueService, IntegrationService, ProjectService, RepositoryDraft,
     SaveCredentialInput,
@@ -183,11 +185,12 @@ fn lists_open_issues_for_a_mapped_repository() {
     let server = MockServer::start(&body);
     let service = fixture.issue_service(&server.base_url);
     let list = service
-        .list_issues(fixture.home.clone(), "web")
+        .list_issues(fixture.home.clone(), "web", GitHubIssueListState::Open)
         .expect("issues must load");
 
     assert_eq!(list.repository_key, "web");
     assert_eq!(list.repository_label, "octocat/demo");
+    assert_eq!(list.state, GitHubIssueListState::Open);
     assert_eq!(list.issues.len(), 1);
     assert_eq!(list.issues[0].number, 7);
     assert_eq!(list.issues[0].labels, vec!["backend", "enhancement"]);
@@ -205,6 +208,39 @@ fn lists_open_issues_for_a_mapped_repository() {
     assert_eq!(
         captured.authorization.as_deref(),
         Some("Bearer gho_issue_intake_sensitive_token")
+    );
+}
+
+#[test]
+fn lists_closed_issues_with_the_requested_state_filter() {
+    let fixture = Fixture::new();
+    let body = serde_json::json!([
+        {
+            "id": 2,
+            "number": 8,
+            "title": "已关闭的历史导入需求",
+            "state": "closed",
+            "body": "该需求已在上个版本完成。",
+            "labels": [{ "name": "legacy" }],
+            "html_url": "https://github.com/octocat/demo/issues/8",
+            "comments": 1,
+            "updated_at": "2026-11-12T10:00:00Z"
+        }
+    ])
+    .to_string();
+    let server = MockServer::start(&body);
+    let service = fixture.issue_service(&server.base_url);
+    let list = service
+        .list_issues(fixture.home.clone(), "web", GitHubIssueListState::Closed)
+        .expect("closed issues must load");
+
+    assert_eq!(list.state, GitHubIssueListState::Closed);
+    assert_eq!(list.issues.len(), 1);
+    assert_eq!(list.issues[0].state, "closed");
+    let captured = server.finish();
+    assert_eq!(
+        captured.url,
+        "/repos/octocat/demo/issues?state=closed&sort=updated&direction=desc&per_page=100"
     );
 }
 

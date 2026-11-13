@@ -2656,7 +2656,7 @@ html[data-theme="light"] .plan-metrics strong {
 
 .issue-intake__controls {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(180px, 1fr) minmax(130px, 0.35fr) auto;
   gap: 12px;
   align-items: end;
 }
@@ -2667,6 +2667,44 @@ html[data-theme="light"] .plan-metrics strong {
 
 .issue-intake__controls select {
   width: 100%;
+}
+
+.issue-intake__filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 0.45fr) auto auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 14px;
+}
+
+.issue-intake__filters .field {
+  margin: 0;
+}
+
+.issue-intake__filters input,
+.issue-intake__filters select {
+  width: 100%;
+}
+
+.issue-filter-toggle {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 38px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.issue-filter-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.issue-intake__reset {
+  min-height: 38px;
 }
 
 .issue-intake__summary {
@@ -2832,8 +2870,14 @@ html[data-theme="light"] .plan-metrics strong {
 
 @media (max-width: 760px) {
   .issue-intake__controls,
+  .issue-intake__filters,
   .issue-intake__error {
     grid-template-columns: 1fr;
+  }
+
+  .issue-filter-toggle,
+  .issue-intake__reset {
+    justify-self: start;
   }
 
   .issue-card__header,
