@@ -12,6 +12,21 @@ export interface ProjectStatus {
   eventCount: number;
 }
 
+/** 应用级最近项目；`available` 表示项目清单与数据库当前仍可打开。 */
+export interface RecentProjectView {
+  rootPath: string;
+  name: string;
+  lastOpenedAt: string;
+  available: boolean;
+}
+
+/** 应用数据目录中的最近项目历史，不包含项目业务数据或凭据。 */
+export interface ProjectHistoryView {
+  schemaVersion: number;
+  lastProjectPath: string | null;
+  projects: RecentProjectView[];
+}
+
 export interface CommandError {
   code: string;
   message: string;

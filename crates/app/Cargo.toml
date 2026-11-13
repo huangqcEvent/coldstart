@@ -9,6 +9,7 @@ chrono.workspace = true
 coldstart-adapters = { path = "../adapters" }
 coldstart-core = { path = "../core" }
 coldstart-storage = { path = "../storage" }
+dunce.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
@@ -17,5 +18,4 @@ uuid.workspace = true
 
 [dev-dependencies]
 rusqlite.workspace = true
-tempfile.workspace = true
 tiny_http.workspace = true

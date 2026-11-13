@@ -16,6 +16,7 @@ mod issue;
 mod memory;
 mod plan;
 mod plan_workspace;
+mod project_history;
 mod project_home;
 mod project_overview;
 mod pull_request;
@@ -53,6 +54,7 @@ pub use memory::{
 };
 pub use plan::{ClaimRequest, PlanService};
 pub use plan_workspace::{McpConnectionInfo, PlanWorkspace, WorkItemView};
+pub use project_history::{ProjectHistoryStore, ProjectHistoryView, RecentProjectView};
 pub use project_home::ProjectHome;
 pub use project_overview::{
     GitHubProjectFieldView, GitHubProjectItemView, GitHubProjectOverviewView, GitHubProjectService,

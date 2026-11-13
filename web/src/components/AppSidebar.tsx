@@ -3,6 +3,9 @@
  *
  * 只展示工作区入口与主题切换，不承载业务读写；导航状态由 App 统一管理。
  */
+import type { ProjectStatus, RecentProjectView } from '../api/types';
+import { ProjectSwitcher } from './ProjectSwitcher';
+
 export type WorkspaceView =
   | 'overview'
   | 'requirements'
@@ -17,7 +20,15 @@ export type WorkspaceView =
 interface AppSidebarProps {
   view: WorkspaceView;
   hasProject: boolean;
+  project: ProjectStatus | null;
+  projectHistory: RecentProjectView[];
+  busy: boolean;
   onNavigate: (view: WorkspaceView) => void;
+  onSelectProject: (path: string) => void;
+  onOpenProject: () => void;
+  onCreateProject: () => void;
+  onForgetProject: (path: string) => void;
+  onClearProjectHistory: () => void;
 }
 
 interface NavigationItem {
@@ -134,7 +145,19 @@ function NavigationIcon({ view }: { view: WorkspaceView }) {
   }
 }
 
-export function AppSidebar({ view, hasProject, onNavigate }: AppSidebarProps) {
+export function AppSidebar({
+  view,
+  hasProject,
+  project,
+  projectHistory,
+  busy,
+  onNavigate,
+  onSelectProject,
+  onOpenProject,
+  onCreateProject,
+  onForgetProject,
+  onClearProjectHistory,
+}: AppSidebarProps) {
   return (
     <aside className="sidebar" aria-label="应用导航">
       <div className="sidebar__brand">
@@ -157,6 +180,17 @@ export function AppSidebar({ view, hasProject, onNavigate }: AppSidebarProps) {
           <span>冷启动工作台</span>
         </div>
       </div>
+
+      <ProjectSwitcher
+        currentProject={project}
+        projects={projectHistory}
+        busy={busy}
+        onSelect={onSelectProject}
+        onOpen={onOpenProject}
+        onCreate={onCreateProject}
+        onForget={onForgetProject}
+        onClear={onClearProjectHistory}
+      />
 
       <nav className="sidebar__nav" aria-label="主导航">
         {navigationGroups.map((group) => (

@@ -1,10 +1,10 @@
 /**
  * 桌面主界面与工作区状态协调器。
  *
- * 负责项目打开/创建、工作区刷新、导航和全局错误展示；业务状态由 Tauri 命令返回，
- * 前端不自行推断任务或外部服务状态。
+ * 负责启动恢复、项目切换、工作区刷新、导航和全局错误展示；应用级最近项目只
+ * 保存路径与打开时间，业务状态由 Tauri 命令返回，前端不自行推断任务状态。
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import * as planApi from './api/planApi';
 import * as projectApi from './api/projectApi';
@@ -16,6 +16,7 @@ import type {
   ModelConfig,
   PlanContent,
   PlanPublishPreview,
+  ProjectHistoryView,
   ProjectWorkspace,
 } from './api/types';
 import { AppSidebar, type WorkspaceView } from './components/AppSidebar';
@@ -43,6 +44,12 @@ const viewLabels: Record<WorkspaceView, string> = {
   review: 'AI 评审',
   release: '发布中心',
   memory: '项目记忆',
+};
+
+const emptyProjectHistory: ProjectHistoryView = {
+  schemaVersion: 1,
+  lastProjectPath: null,
+  projects: [],
 };
 
 function normalizeCommandError(error: unknown): CommandError {
@@ -76,8 +83,86 @@ export default function App() {
   const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [error, setError] = useState<CommandError | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [projectHistory, setProjectHistory] =
+    useState<ProjectHistoryView>(emptyProjectHistory);
+  const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
 
-  async function loadProject(path: string, label: string) {
+  useEffect(() => {
+    let cancelled = false;
+
+    async function restoreLastProject() {
+      try {
+        const history = await projectApi.readProjectHistory();
+        if (cancelled) {
+          return;
+        }
+        setProjectHistory(history);
+        if (!history.lastProjectPath) {
+          return;
+        }
+
+        const lastProject = history.projects.find(
+          (project) => project.rootPath === history.lastProjectPath,
+        );
+        if (!lastProject?.available) {
+          setRestoreNotice('上次项目当前不可用');
+          return;
+        }
+
+        setBusyLabel('正在恢复上次项目');
+        setError(null);
+        try {
+          const [status, loadedWorkspace] = await Promise.all([
+            projectApi.readProjectStatus(lastProject.rootPath),
+            projectApi.readProjectWorkspace(lastProject.rootPath),
+          ]);
+          if (cancelled) {
+            return;
+          }
+          setWorkspace({ ...loadedWorkspace, status });
+          setView('overview');
+          setRestoreNotice(null);
+        } catch {
+          if (!cancelled) {
+            setRestoreNotice('上次项目当前不可用');
+            setProjectHistory((current) => ({
+              ...current,
+              projects: current.projects.map((project) =>
+                project.rootPath === lastProject.rootPath
+                  ? { ...project, available: false }
+                  : project,
+              ),
+            }));
+          }
+        } finally {
+          if (!cancelled) {
+            setBusyLabel(null);
+          }
+        }
+      } catch (historyError) {
+        if (!cancelled) {
+          setError(normalizeCommandError(historyError));
+        }
+      }
+    }
+
+    void restoreLastProject();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function rememberProject(path: string) {
+    try {
+      const history = await projectApi.rememberRecentProject(path);
+      setProjectHistory(history);
+      setRestoreNotice(null);
+    } catch (historyError) {
+      setError(normalizeCommandError(historyError));
+    }
+  }
+
+  async function loadProject(path: string, label: string, remember = true) {
     setBusyLabel(label);
     setError(null);
     try {
@@ -87,6 +172,10 @@ export default function App() {
       ]);
       setWorkspace({ ...loadedWorkspace, status });
       setView('overview');
+      setRestoreNotice(null);
+      if (remember) {
+        await rememberProject(path);
+      }
       return true;
     } catch (loadError) {
       setError(normalizeCommandError(loadError));
@@ -125,6 +214,8 @@ export default function App() {
       const loadedWorkspace = await projectApi.readProjectWorkspace(path);
       setWorkspace({ ...loadedWorkspace, status });
       setView('overview');
+      setRestoreNotice(null);
+      await rememberProject(path);
       setIsCreateOpen(false);
     } catch (createError) {
       setIsCreateOpen(false);
@@ -140,6 +231,54 @@ export default function App() {
     } catch (pickError) {
       setError(normalizeCommandError(pickError));
       return null;
+    }
+  }
+
+  async function handleSelectRecentProject(path: string) {
+    if (busyLabel || workspace?.status.rootPath === path) {
+      return;
+    }
+    await loadProject(path, '正在切换项目');
+  }
+
+  async function handleForgetRecentProject(path: string) {
+    if (busyLabel) {
+      return;
+    }
+    const removingCurrent = workspace?.status.rootPath === path;
+    setBusyLabel('正在更新项目历史');
+    setError(null);
+    try {
+      const history = await projectApi.forgetRecentProject(path);
+      setProjectHistory(history);
+      setRestoreNotice(null);
+      if (removingCurrent) {
+        setWorkspace(null);
+        setView('overview');
+      }
+    } catch (historyError) {
+      setError(normalizeCommandError(historyError));
+    } finally {
+      setBusyLabel(null);
+    }
+  }
+
+  async function handleClearProjectHistory() {
+    if (busyLabel) {
+      return;
+    }
+    setBusyLabel('正在清除访问历史');
+    setError(null);
+    try {
+      const history = await projectApi.clearProjectHistory();
+      setProjectHistory(history);
+      setRestoreNotice(null);
+      setWorkspace(null);
+      setView('overview');
+    } catch (historyError) {
+      setError(normalizeCommandError(historyError));
+    } finally {
+      setBusyLabel(null);
     }
   }
 
@@ -346,7 +485,19 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <AppSidebar view={view} hasProject={workspace !== null} onNavigate={handleNavigate} />
+      <AppSidebar
+        view={view}
+        hasProject={workspace !== null}
+        project={workspace?.status ?? null}
+        projectHistory={projectHistory.projects}
+        busy={busy}
+        onNavigate={handleNavigate}
+        onSelectProject={(path) => void handleSelectRecentProject(path)}
+        onOpenProject={() => void handleOpenProject()}
+        onCreateProject={() => setIsCreateOpen(true)}
+        onForgetProject={(path) => void handleForgetRecentProject(path)}
+        onClearProjectHistory={() => void handleClearProjectHistory()}
+      />
 
       <main className="workspace">
         <div className="workspace__topline">
@@ -371,8 +522,14 @@ export default function App() {
 
           {!workspace && !busyLabel ? (
             <WelcomeView
+              recentProjects={projectHistory.projects}
+              lastProjectPath={projectHistory.lastProjectPath}
+              restoreNotice={restoreNotice}
               onCreate={() => setIsCreateOpen(true)}
               onOpen={() => void handleOpenProject()}
+              onOpenRecent={(path) => void handleSelectRecentProject(path)}
+              onForgetRecent={(path) => void handleForgetRecentProject(path)}
+              onClearHistory={() => void handleClearProjectHistory()}
             />
           ) : null}
 

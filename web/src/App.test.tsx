@@ -53,6 +53,10 @@ vi.mock('./api/projectApi', () => ({
   readProjectStatus: vi.fn(),
   readProjectWorkspace: vi.fn(),
   pickProjectHome: vi.fn(),
+  readProjectHistory: vi.fn(),
+  rememberRecentProject: vi.fn(),
+  forgetRecentProject: vi.fn(),
+  clearProjectHistory: vi.fn(),
 }));
 
 vi.mock('./api/deliveryApi', () => ({
@@ -865,6 +869,37 @@ beforeEach(() => {
   vi.mocked(projectApi.readProjectStatus).mockReset();
   vi.mocked(projectApi.readProjectWorkspace).mockReset();
   vi.mocked(projectApi.pickProjectHome).mockReset();
+  vi.mocked(projectApi.readProjectHistory).mockReset();
+  vi.mocked(projectApi.rememberRecentProject).mockReset();
+  vi.mocked(projectApi.forgetRecentProject).mockReset();
+  vi.mocked(projectApi.clearProjectHistory).mockReset();
+  vi.mocked(projectApi.readProjectHistory).mockResolvedValue({
+    schemaVersion: 1,
+    lastProjectPath: null,
+    projects: [],
+  } as never);
+  vi.mocked(projectApi.rememberRecentProject).mockResolvedValue({
+    schemaVersion: 1,
+    lastProjectPath: projectPath,
+    projects: [
+      {
+        rootPath: projectPath,
+        name: status.name,
+        lastOpenedAt: '2026-11-13T09:00:00Z',
+        available: true,
+      },
+    ],
+  } as never);
+  vi.mocked(projectApi.forgetRecentProject).mockResolvedValue({
+    schemaVersion: 1,
+    lastProjectPath: null,
+    projects: [],
+  } as never);
+  vi.mocked(projectApi.clearProjectHistory).mockResolvedValue({
+    schemaVersion: 1,
+    lastProjectPath: null,
+    projects: [],
+  } as never);
   vi.mocked(deliveryApi.readDeliveryOverview).mockReset();
   vi.mocked(requirementsApi.importRequirementDocument).mockReset();
   vi.mocked(requirementsApi.generateBlueprint).mockReset();
@@ -2607,5 +2642,130 @@ describe('ColdStart project workspace', () => {
     expect(
       await screen.findByText('人工豁免已记录；任务完成并进入推送流程。'),
     ).toBeInTheDocument();
+  });
+});
+
+describe('ColdStart project history', () => {
+  const secondProjectPath = String.raw`D:\coldstart-projects\aurora`;
+  const secondStatus: ProjectStatus = {
+    ...status,
+    projectId: 'prj_01JCMQ4W7T3K8Y9F2N6R5D0XAC',
+    name: '极光后台',
+    rootPath: secondProjectPath,
+  };
+
+  function historyWith(
+    projects: Array<{
+      rootPath: string;
+      name: string;
+      available: boolean;
+    }>,
+    lastProjectPath: string | null,
+  ) {
+    return {
+      schemaVersion: 1,
+      lastProjectPath,
+      projects: projects.map((project, index) => ({
+        ...project,
+        lastOpenedAt: `2026-11-13T0${index + 1}:00:00Z`,
+      })),
+    } as never;
+  }
+
+  it('restores the last available project without asking again', async () => {
+    vi.mocked(projectApi.readProjectHistory).mockResolvedValue(
+      historyWith(
+        [{ rootPath: projectPath, name: status.name, available: true }],
+        projectPath,
+      ),
+    );
+    vi.mocked(projectApi.readProjectStatus).mockResolvedValue(status);
+    vi.mocked(projectApi.readProjectWorkspace).mockResolvedValue(makeWorkspace());
+
+    render(<App />);
+
+    expect(
+      await screen.findByRole('heading', { name: status.name }),
+    ).toBeInTheDocument();
+    expect(projectApi.readProjectStatus).toHaveBeenCalledWith(projectPath);
+    expect(projectApi.pickProjectHome).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the welcome view when the last project is unavailable', async () => {
+    vi.mocked(projectApi.readProjectHistory).mockResolvedValue(
+      historyWith(
+        [{ rootPath: projectPath, name: status.name, available: false }],
+        projectPath,
+      ),
+    );
+
+    render(<App />);
+
+    expect(await screen.findByText('上次项目当前不可用')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '冷启动' })).toBeInTheDocument();
+    expect(projectApi.readProjectStatus).not.toHaveBeenCalled();
+  });
+
+  it('switches between remembered projects from the sidebar', async () => {
+    const user = userEvent.setup();
+    vi.mocked(projectApi.readProjectHistory).mockResolvedValue(
+      historyWith(
+        [
+          { rootPath: projectPath, name: status.name, available: true },
+          { rootPath: secondProjectPath, name: secondStatus.name, available: true },
+        ],
+        projectPath,
+      ),
+    );
+    vi.mocked(projectApi.readProjectStatus).mockImplementation(async (path) =>
+      path === secondProjectPath ? secondStatus : status,
+    );
+    vi.mocked(projectApi.readProjectWorkspace).mockImplementation(async (path) =>
+      path === secondProjectPath
+        ? makeWorkspace({ status: secondStatus })
+        : makeWorkspace(),
+    );
+    vi.mocked(projectApi.rememberRecentProject).mockResolvedValue(
+      historyWith(
+        [
+          { rootPath: secondProjectPath, name: secondStatus.name, available: true },
+          { rootPath: projectPath, name: status.name, available: true },
+        ],
+        secondProjectPath,
+      ),
+    );
+
+    render(<App />);
+    await screen.findByRole('heading', { name: status.name });
+    await user.click(screen.getByRole('button', { name: /切换项目/ }));
+    await user.click(
+      screen.getByRole('button', { name: `切换到 ${secondStatus.name}` }),
+    );
+
+    expect(
+      await screen.findByRole('heading', { name: secondStatus.name }),
+    ).toBeInTheDocument();
+    expect(projectApi.rememberRecentProject).toHaveBeenCalledWith(secondProjectPath);
+  });
+
+  it('clears only the application history from the welcome view', async () => {
+    const user = userEvent.setup();
+    vi.mocked(projectApi.readProjectHistory).mockResolvedValue(
+      historyWith(
+        [{ rootPath: projectPath, name: status.name, available: false }],
+        projectPath,
+      ),
+    );
+
+    render(<App />);
+
+    await user.click(
+      await screen.findByRole('button', { name: '清除访问历史' }),
+    );
+
+    expect(projectApi.clearProjectHistory).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(screen.queryByText(status.name)).not.toBeInTheDocument(),
+    );
   });
 });

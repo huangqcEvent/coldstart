@@ -5,12 +5,25 @@
 
 mod commands;
 mod error;
+mod project_history_commands;
+
+use coldstart_app::ProjectHistoryStore;
+use tauri::Manager;
 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(std::sync::Arc::new(coldstart_app::IntegrationService::new()))
+        .setup(|app| {
+            let config_dir = app.path().app_data_dir()?;
+            app.manage(ProjectHistoryStore::new(config_dir));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
+            project_history_commands::read_project_history,
+            project_history_commands::remember_recent_project,
+            project_history_commands::forget_recent_project,
+            project_history_commands::clear_project_history,
             commands::create_project,
             commands::read_project_status,
             commands::read_requirements_workspace,

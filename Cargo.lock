@@ -560,6 +560,7 @@ dependencies = [
  "coldstart-adapters",
  "coldstart-core",
  "coldstart-storage",
+ "dunce",
  "rusqlite",
  "serde",
  "serde_json",
