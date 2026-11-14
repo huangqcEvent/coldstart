@@ -2,6 +2,8 @@
 
 > Vibe Coding 之前，先把项目冷启动。
 
+[GitHub 仓库](https://github.com/huangqcEvent/coldstart) · [MIT License](LICENSE) · [参与贡献](CONTRIBUTING.md) · [安全说明](SECURITY.md)
+
 ColdStart 是一款单机 Windows 桌面工具。它把需求、项目蓝图、技术决策、三方能力、仓库配置、本地验证、AI Review、GitHub 草稿 PR、只读验收同步、冲突定位与部署状态、GitHub Project 协作概览、多仓库交付总览、开发计划和项目记忆组织成一套可追踪的工程控制面，再通过 MCP 让 Codex 主动领取任务、读取上下文、调用受限能力 API 和提交完成报告。
 
 ColdStart 本身不生成业务代码，也不替你启动 Agent。它解决的是编码之前与编码之后最容易失真的问题：现在到底要做什么、依赖是否满足、密钥和提审材料是否就绪、Agent 是否真的完成了任务，以及本次改动是否值得进入主分支。
@@ -87,10 +89,10 @@ ColdStart 不会自动通读整个仓库并替你还原完整架构。历史项�
 target\release\bundle\nsis\ColdStart_0.1.0_x64-setup.exe
 ```
 
-安装到 D 盘独立目录：
+例如安装到 D 盘独立目录：
 
 ```powershell
-& 'D:\coldstart\target\release\bundle\nsis\ColdStart_0.1.0_x64-setup.exe' /S /D=D:\DevTools\ColdStart
+& '.\target\release\bundle\nsis\ColdStart_0.1.0_x64-setup.exe' /S /D=D:\Apps\ColdStart
 ```
 
 安装目录包含桌面程序、`coldstart-mcp.exe`、Web 资源和卸载器。卸载不会删除 ColdStart 项目目录、SQLite 数据库、报告或 Git 仓库。
@@ -106,10 +108,9 @@ target\release\bundle\nsis\ColdStart_0.1.0_x64-setup.exe
 - Node.js 与 pnpm 11
 - WebView2（Windows 11 通常已安装）
 
-先加载本机 D 盘工具链环境，再安装工作区依赖：
+安装工作区依赖并启动桌面开发模式：
 
 ```powershell
-. D:\DevTools\coldstart-env.ps1
 pnpm install
 pnpm --dir apps/desktop dev
 ```
@@ -319,16 +320,16 @@ Codex 可以通过 `get_project_memory` 读取同一安全投影；新会话可�
 
 ## 真实项目实战验收
 
-2026-11-13 使用一份真实历史项目的隔离副本完成了端到端验收，原始仓库未被修改。验收覆盖：
+2026-11-13 使用一份真实历史项目的隔离副本完成了端到端验收，原始仓库未被修改，客户名称、业务源码与内部路径未进入开源仓库。验收覆盖：
 
 - 导入 6 份真实需求、测试用例和架构约束，人工收敛并发布蓝图。
 - 配置隔离 Git 远程、服务端仓库、Maven 定向验证、OSS 测试凭据和仓库级代码规范。
 - 将模板计划收敛为单一真实任务，由安装版 Codex MCP 主动领取。
-- 先补失败测试确认 RED，再修复组织负责人兼容接口并确认 GREEN。
+- 先补失败测试确认 RED，再修复一个真实业务兼容接口并确认 GREEN。
 - 提交报告后由 ColdStart 独立执行 JUnit 验证、调用 AI Review 并推送任务分支。
 - 重启客户端后核对 `done` 状态、无活动租约、报告状态和完整项目记忆。
 
-本轮 Review 使用本机 OpenAI 兼容测试端点，证明的是 Review 流程、快照、状态机和门禁集成，不代表模型评审质量。完整证据与限制见[阶段 10 执行记录](.superpowers/sdd/2026-11-13-coldstart-real-project-acceptance/progress.md)。
+本轮 Review 使用本机 OpenAI 兼容测试端点，证明的是 Review 流程、快照、状态机和门禁集成，不代表模型评审质量。具体客户信息和内部验收证据不随开源仓库发布。
 
 ## 项目记忆与变更审计
 
@@ -451,7 +452,6 @@ Review 成功后推送失败不会重新打开任务。风险会保留在“Git 
 构建 release MCP 二进制：
 
 ```powershell
-. D:\DevTools\coldstart-env.ps1
 cargo build -p coldstart-mcp --release
 ```
 
@@ -461,7 +461,7 @@ Codex 或兼容 MCP 客户端使用以下配置连接某个 ColdStart 项目：
 {
   "mcpServers": {
     "coldstart": {
-      "command": "D:\\coldstart\\target\\release\\coldstart-mcp.exe",
+      "command": "D:\\path\\to\\coldstart\\target\\release\\coldstart-mcp.exe",
       "args": ["--project-home", "D:\\work\\your-project"]
     }
   }
@@ -474,7 +474,7 @@ Codex 或兼容 MCP 客户端使用以下配置连接某个 ColdStart 项目：
 {
   "mcpServers": {
     "coldstart": {
-      "command": "D:\\DevTools\\ColdStart\\coldstart-mcp.exe",
+      "command": "D:\\Apps\\ColdStart\\coldstart-mcp.exe",
       "args": ["--project-home", "D:\\work\\your-project"]
     }
   }
@@ -709,7 +709,6 @@ your-project/
 ### Rust
 
 ```powershell
-. D:\DevTools\coldstart-env.ps1
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --locked
@@ -770,30 +769,30 @@ pnpm --dir apps/desktop build:installer
 - [第七阶段：本地命令验证与完成门禁](docs/superpowers/plans/2026-10-30-coldstart-07-command-verification.md)
 - [第八阶段：AI Review 与代码规范](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
 - [第九阶段：项目记忆与变更审计](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
-- [第十阶段：真实项目实战验收](docs/superpowers/plans/2026-11-13-coldstart-real-project-acceptance.md)
-- [第十阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-real-project-acceptance/progress.md)
+- 第十阶段：真实项目验收（客户信息与内部记录不随开源发布）
 - [第十一阶段：MCP 项目记忆与接力](docs/superpowers/plans/2026-11-13-coldstart-mcp-memory-handoff.md)
 - [第十二阶段：GitHub 草稿 PR 交付](docs/superpowers/plans/2026-11-13-coldstart-draft-pull-request.md)
-- [第十二阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-draft-pull-request/progress.md)
 - [第十三阶段：GitHub PR 验收信息只读同步](docs/superpowers/plans/2026-11-13-coldstart-pr-insights.md)
-- [第十三阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-pr-insights/progress.md)
 - [第十四阶段：GitHub PR 合并就绪只读展示](docs/superpowers/plans/2026-11-13-coldstart-pr-merge-readiness.md)
-- [第十四阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-pr-merge-readiness/progress.md)
 - [第十五阶段：GitHub PR 冲突文件本地定位](docs/superpowers/plans/2026-11-13-coldstart-pr-conflict-locator.md)
-- [第十五阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-pr-conflict-locator/progress.md)
 - [第十六阶段：GitHub PR 部署状态只读展示](docs/superpowers/plans/2026-11-13-coldstart-pr-deployment-status.md)
-- [第十六阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-pr-deployment-status/progress.md)
 - [第十七阶段：GitHub Issue 需求收集与导入](docs/superpowers/plans/2026-11-13-coldstart-github-issue-intake.md)
-- [第十七阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-github-issue-intake/progress.md)
 - [第十八阶段：GitHub Issue 收件箱筛选增强](docs/superpowers/plans/2026-11-13-coldstart-issue-inbox-filters.md)
-- [第十八阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-issue-inbox-filters/progress.md)
 - [第十九阶段：GitHub Project 只读概览](docs/superpowers/plans/2026-11-13-coldstart-github-projects.md)
-- [第十九阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-github-projects/progress.md)
 - [第二十阶段：多仓库交付总览](docs/superpowers/plans/2026-11-13-coldstart-delivery-overview.md)
-- [第二十阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-delivery-overview/progress.md)
 - [第二十一阶段：MCP 受限凭据代理](docs/superpowers/plans/2026-11-13-coldstart-mcp-credential-proxy.md)
-- [第二十一阶段执行记录](.superpowers/sdd/2026-11-13-coldstart-mcp-credential-proxy/progress.md)
 
 ## 技术形态
 
 Tauri 2 + Rust + React 19 + TypeScript + SQLite。Rust 负责领域模型、状态机、计划引擎、SQLite、Git、GitHub Issue 导入、Project 只读 GraphQL、草稿 PR、验收同步、合并就绪、冲突定位与部署状态、多仓库交付聚合、能力 API 受限代理、凭据、验证、AI Review、MCP stdio 与 CLI；React/TypeScript 只负责桌面界面。桌面 UI、MCP 入口和 CLI 共享同一套 Rust 核心 crate，不使用后台守护进程。
+
+## 开源与反馈
+
+ColdStart 以 [MIT License](LICENSE) 开源。欢迎各位开发者提交 Issue、发起 Pull Request、补充文档，或直接指出设计缺陷与安全风险。
+
+- **发现问题**：请附上版本、复现步骤和脱敏日志，通过 [GitHub Issues](https://github.com/huangqcEvent/coldstart/issues) 反馈。
+- **改进代码**：请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)，保持改动聚焦并附上验证结果。
+- **安全漏洞**：不要公开披露，请按 [SECURITY.md](SECURITY.md) 私下报告。
+- **功能讨论**：欢迎说明真实使用场景、涉及平台和现有替代方案，再讨论是否进入路线图。
+
+如果 ColdStart 对你有帮助，欢迎 Star、分享给正在做 Web、管理后台、App 或小程序项目的开发者，也欢迎直接批评：这个工具最应该被指正的地方，往往比赞美更有价值。

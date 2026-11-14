@@ -33,6 +33,9 @@ tmp/
 temp/
 .tmp/
 
+# Internal implementation notes and acceptance evidence
+.superpowers/
+
 # OS and editor files
 .DS_Store
 Thumbs.db

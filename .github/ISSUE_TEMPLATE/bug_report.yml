@@ -1,0 +1,57 @@
+name: 问题反馈
+description: 反馈可复现的缺陷、异常行为或兼容性问题。
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。提交前请先搜索现有 Issue，并删除日志中的 Token、密码、客户信息和本机私有路径。
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述
+      description: 简洁说明发生了什么，以及它为什么影响你的使用。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. 打开...
+        2. 点击...
+        3. 看到...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为与实际行为
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ColdStart 版本
+      placeholder: 例如 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 环境
+      placeholder: Windows 版本、WebView2、Rust、Node.js 或 pnpm 版本
+  - type: textarea
+    id: logs
+    attributes:
+      label: 脱敏日志或截图
+      description: 请勿上传真实凭据、数据库、业务源码或客户数据。
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交确认
+      options:
+        - label: 我已搜索现有 Issue，且内容已经脱敏。
+          required: true

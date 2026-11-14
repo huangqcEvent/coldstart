@@ -1,0 +1,38 @@
+name: 功能建议
+description: 提议新能力、交互改进或工作流优化。
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ColdStart 只围绕 Web、管理后台、App、小程序与服务端的开发控制面展开。请先说明真实场景，再讨论具体实现。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你遇到的实际问题
+      description: 不要只描述解决方案，也说明当前流程为什么不够用。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建议方案
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 已考虑的替代方案
+  - type: textarea
+    id: scope
+    attributes:
+      label: 影响范围
+      description: 涉及哪些平台、模块、MCP 工具、数据迁移或安全边界。
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 提交确认
+      options:
+        - label: 我已搜索现有 Issue，并确认建议符合项目现有边界。
+          required: true
