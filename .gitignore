@@ -35,6 +35,7 @@ temp/
 
 # Internal implementation notes and acceptance evidence
 .superpowers/
+docs/superpowers/plans/
 
 # OS and editor files
 .DS_Store

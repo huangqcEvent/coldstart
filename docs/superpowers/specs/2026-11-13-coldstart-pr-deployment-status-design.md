@@ -2,7 +2,7 @@
 
 - 日期：2026-11-13
 - 状态：已完成（阶段 16，2026-11-13）
-- 关联：`docs/superpowers/plans/2026-11-13-coldstart-pr-deployment-status.md`
+- 关联：阶段实施计划仅保留在本地，不随开源仓库发布。
 
 ## 1. 目标
 

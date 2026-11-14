@@ -2,7 +2,7 @@
 
 - 日期：2026-11-13
 - 状态：已实现（阶段 12）
-- 关联：`docs/superpowers/plans/2026-11-13-coldstart-draft-pull-request.md`
+- 关联：阶段实施计划仅保留在本地，不随开源仓库发布。
 
 ## 1. 目标
 

@@ -757,30 +757,8 @@ pnpm --dir apps/desktop build:installer
 - [GitHub Project 只读概览设计](docs/superpowers/specs/2026-11-13-coldstart-github-projects-design.md)
 - [多仓库交付总览设计](docs/superpowers/specs/2026-11-13-coldstart-delivery-overview-design.md)
 - [MCP 受限凭据代理设计](docs/superpowers/specs/2026-11-13-coldstart-mcp-credential-proxy-design.md)
-- [交付路线图](docs/superpowers/plans/2026-10-30-coldstart-delivery-roadmap.md)
-- [AI Review 实施计划](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
-- [项目记忆实施计划](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
-- [第一阶段：Rust 核心与 CLI](docs/superpowers/plans/2026-10-30-coldstart-01-core-foundation.md)
-- [第二阶段：Tauri Desktop Shell](docs/superpowers/plans/2026-10-30-coldstart-02-desktop-shell.md)
-- [第三阶段：需求与蓝图](docs/superpowers/plans/2026-10-30-coldstart-03-requirements-blueprint.md)
-- [第四阶段：计划引擎与 MCP](docs/superpowers/plans/2026-10-30-coldstart-04-plan-engine-mcp.md)
-- [第五阶段：仓库、能力与发布门禁](docs/superpowers/plans/2026-10-30-coldstart-05-git-capabilities-release.md)
-- [第六阶段：集成、重规划与安全加固](docs/superpowers/plans/2026-10-30-coldstart-06-integration-hardening.md)
-- [第七阶段：本地命令验证与完成门禁](docs/superpowers/plans/2026-10-30-coldstart-07-command-verification.md)
-- [第八阶段：AI Review 与代码规范](docs/superpowers/plans/2026-11-02-coldstart-ai-review.md)
-- [第九阶段：项目记忆与变更审计](docs/superpowers/plans/2026-11-12-coldstart-project-memory.md)
-- 第十阶段：真实项目验收（客户信息与内部记录不随开源发布）
-- [第十一阶段：MCP 项目记忆与接力](docs/superpowers/plans/2026-11-13-coldstart-mcp-memory-handoff.md)
-- [第十二阶段：GitHub 草稿 PR 交付](docs/superpowers/plans/2026-11-13-coldstart-draft-pull-request.md)
-- [第十三阶段：GitHub PR 验收信息只读同步](docs/superpowers/plans/2026-11-13-coldstart-pr-insights.md)
-- [第十四阶段：GitHub PR 合并就绪只读展示](docs/superpowers/plans/2026-11-13-coldstart-pr-merge-readiness.md)
-- [第十五阶段：GitHub PR 冲突文件本地定位](docs/superpowers/plans/2026-11-13-coldstart-pr-conflict-locator.md)
-- [第十六阶段：GitHub PR 部署状态只读展示](docs/superpowers/plans/2026-11-13-coldstart-pr-deployment-status.md)
-- [第十七阶段：GitHub Issue 需求收集与导入](docs/superpowers/plans/2026-11-13-coldstart-github-issue-intake.md)
-- [第十八阶段：GitHub Issue 收件箱筛选增强](docs/superpowers/plans/2026-11-13-coldstart-issue-inbox-filters.md)
-- [第十九阶段：GitHub Project 只读概览](docs/superpowers/plans/2026-11-13-coldstart-github-projects.md)
-- [第二十阶段：多仓库交付总览](docs/superpowers/plans/2026-11-13-coldstart-delivery-overview.md)
-- [第二十一阶段：MCP 受限凭据代理](docs/superpowers/plans/2026-11-13-coldstart-mcp-credential-proxy.md)
+
+阶段实施计划与内部验收记录仅保留在本地，不随开源仓库发布。
 
 ## 技术形态
 
