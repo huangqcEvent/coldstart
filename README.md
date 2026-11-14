@@ -83,16 +83,18 @@ ColdStart 不会自动通读整个仓库并替你还原完整架构。历史项�
 
 ### 使用 Windows 安装包
 
+从 [GitHub Releases](https://github.com/huangqcEvent/coldstart/releases/latest) 下载最新安装包。
+
 构建好的 NSIS 安装包位于：
 
 ```text
-target\release\bundle\nsis\ColdStart_0.1.0_x64-setup.exe
+target\release\bundle\nsis\ColdStart_0.1.1_x64-setup.exe
 ```
 
 例如安装到 D 盘独立目录：
 
 ```powershell
-& '.\target\release\bundle\nsis\ColdStart_0.1.0_x64-setup.exe' /S /D=D:\Apps\ColdStart
+& '.\target\release\bundle\nsis\ColdStart_0.1.1_x64-setup.exe' /S /D=D:\Apps\ColdStart
 ```
 
 安装目录包含桌面程序、`coldstart-mcp.exe`、Web 资源和卸载器。卸载不会删除 ColdStart 项目目录、SQLite 数据库、报告或 Git 仓库。
