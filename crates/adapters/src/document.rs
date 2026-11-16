@@ -22,7 +22,7 @@ use zip::ZipArchive;
 pub const MAX_DOCUMENT_BYTES: u64 = 20 * 1024 * 1024;
 pub const MAX_EXTRACTED_CHARACTERS: usize = 500_000;
 pub const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
-pub const MAX_IMAGES_PER_DOCUMENT: usize = 50;
+pub const MAX_IMAGES_PER_DOCUMENT: usize = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractedDocument {
@@ -47,21 +47,21 @@ pub struct ExtractedImage {
 
 #[derive(Debug, Error)]
 pub enum DocumentError {
-    #[error("filesystem error: {0}")]
+    #[error("读取需求文档失败：{0}")]
     Io(#[from] std::io::Error),
-    #[error("unsupported document format: {0}")]
+    #[error("不支持的需求文档格式：{0}")]
     UnsupportedFormat(String),
-    #[error("document exceeds the {limit} byte limit")]
-    TooLarge { limit: u64 },
-    #[error("document text exceeds the {limit} character limit")]
+    #[error("需求文档为 {actual} 字节，超过 {limit} 字节上限；请压缩图片或拆分文档后重试")]
+    TooLarge { actual: u64, limit: u64 },
+    #[error("需求文档提取文本超过 {limit} 字符上限；请拆分文档后重试")]
     TextTooLarge { limit: usize },
-    #[error("document is not valid text: {0}")]
+    #[error("需求文档文本编码无效：{0}")]
     InvalidEncoding(String),
-    #[error("invalid DOCX document: {0}")]
+    #[error("DOCX 文件无效：{0}")]
     InvalidDocx(String),
-    #[error("PDF extraction failed: {0}")]
+    #[error("PDF 文本提取失败：{0}")]
     Pdf(String),
-    #[error("document contains no extractable text")]
+    #[error("需求文档中没有可提取的文本；扫描版 PDF 暂不支持 OCR")]
     NoExtractableText,
 }
 
@@ -97,6 +97,7 @@ pub fn extract_document(path: &Path) -> Result<ExtractedDocument, DocumentError>
     let byte_size = fs::metadata(path)?.len();
     if byte_size > MAX_DOCUMENT_BYTES {
         return Err(DocumentError::TooLarge {
+            actual: byte_size,
             limit: MAX_DOCUMENT_BYTES,
         });
     }
@@ -388,23 +389,75 @@ fn extract_docx(
     let mut archive = ZipArchive::new(Cursor::new(bytes))
         .map_err(|error| DocumentError::InvalidDocx(error.to_string()))?;
     let xml = read_docx_entry(&mut archive, "word/document.xml")?;
-    let paragraphs = parse_docx_paragraphs(&xml)?;
-    let text = paragraphs
+    let styles = read_docx_styles(&mut archive)?;
+    let blocks = parse_docx_blocks(&xml, &styles)?;
+    let text = docx_blocks_text(&blocks);
+    let has_headings = blocks
         .iter()
-        .map(|paragraph| paragraph.text.trim())
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let (anchors, placements) = if paragraphs.iter().any(|paragraph| paragraph.is_heading) {
-        group_docx_content(&paragraphs)
+        .any(|block| matches!(block, DocxBlock::Paragraph(paragraph) if paragraph.is_heading));
+    let (anchors, placements) = if has_headings {
+        group_docx_content(&blocks)
     } else {
-        let anchors = extract_text_anchors(&text);
-        let placements = paragraph_image_placements(&paragraphs);
-        (anchors, placements)
+        group_docx_blocks_without_headings(&blocks)
     };
     let relationships = read_docx_image_relationships(&mut archive)?;
     let images = read_docx_images(&mut archive, &relationships, placements)?;
     Ok((text, anchors, images))
+}
+
+fn read_docx_styles(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+) -> Result<HashMap<String, DocxStyleInfo>, DocumentError> {
+    let Ok(xml) = read_docx_entry(archive, "word/styles.xml") else {
+        return Ok(HashMap::new());
+    };
+    let mut reader = Reader::from_str(&xml);
+    let mut buffer = Vec::new();
+    let mut styles = HashMap::new();
+    let mut current_style: Option<(String, DocxStyleInfo)> = None;
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| DocumentError::InvalidDocx(error.to_string()))?;
+        match event {
+            Event::Start(start) => {
+                let local_name = start.name().local_name();
+                if local_name.as_ref() == "style" {
+                    current_style =
+                        docx_attribute(&start, "styleId").map(|id| (id, DocxStyleInfo::default()));
+                } else if let Some((_, style)) = current_style.as_mut() {
+                    read_docx_style_property(&start, style);
+                }
+            }
+            Event::Empty(empty) => {
+                if let Some((_, style)) = current_style.as_mut() {
+                    read_docx_style_property(&empty, style);
+                }
+            }
+            Event::End(end) if end.name().local_name().as_ref() == "style" => {
+                if let Some((id, style)) = current_style.take() {
+                    styles.insert(id, style);
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
+    }
+    Ok(styles)
+}
+
+fn read_docx_style_property(start: &quick_xml::events::BytesStart<'_>, style: &mut DocxStyleInfo) {
+    match start.name().local_name().as_ref() {
+        "name" => {
+            if let Some(name) = docx_attribute(start, "val") {
+                style.name = name;
+            }
+        }
+        "basedOn" => style.based_on = docx_attribute(start, "val"),
+        "outlineLvl" => style.outline_level = docx_u32_attribute(start, "val"),
+        _ => {}
+    }
 }
 
 fn read_docx_entry(
@@ -523,18 +576,54 @@ struct DocxImagePlacement {
     anchor_id: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct DocxStyleInfo {
+    name: String,
+    outline_level: Option<u32>,
+    based_on: Option<String>,
+}
+
+enum DocxBlock {
+    Paragraph(DocxParagraph),
+    Table(DocxTable),
+}
+
+#[derive(Default)]
+struct DocxTable {
+    rows: Vec<DocxTableRow>,
+}
+
+#[derive(Default)]
+struct DocxTableRow {
+    cells: Vec<DocxTableCell>,
+}
+
+#[derive(Default)]
+struct DocxTableCell {
+    paragraphs: Vec<String>,
+    image_relationships: Vec<String>,
+}
+
 struct DocxParagraph {
     text: String,
     is_heading: bool,
     image_relationships: Vec<String>,
 }
 
-fn parse_docx_paragraphs(xml: &str) -> Result<Vec<DocxParagraph>, DocumentError> {
+fn parse_docx_blocks(
+    xml: &str,
+    styles: &HashMap<String, DocxStyleInfo>,
+) -> Result<Vec<DocxBlock>, DocumentError> {
     let mut reader = Reader::from_str(xml);
     let mut buffer = Vec::new();
-    let mut paragraphs = Vec::new();
+    let mut blocks = Vec::new();
+    let mut table_depth = 0usize;
+    let mut current_table: Option<DocxTable> = None;
+    let mut current_row: Option<DocxTableRow> = None;
+    let mut current_cell: Option<DocxTableCell> = None;
     let mut current_text = String::new();
     let mut current_style: Option<String> = None;
+    let mut current_outline_level: Option<u32> = None;
     let mut current_images = Vec::<String>::new();
     let mut in_paragraph = false;
     let mut in_text = false;
@@ -545,14 +634,34 @@ fn parse_docx_paragraphs(xml: &str) -> Result<Vec<DocxParagraph>, DocumentError>
             .map_err(|error| DocumentError::InvalidDocx(error.to_string()))?;
         match event {
             Event::Start(start) => match start.name().local_name().as_ref() {
-                "p" => {
+                "tbl" => {
+                    table_depth += 1;
+                    if table_depth == 1 {
+                        current_table = Some(DocxTable::default());
+                        current_row = None;
+                        current_cell = None;
+                    }
+                }
+                "tr" if table_depth == 1 => {
+                    finish_docx_table_row(&mut current_table, &mut current_row, &mut current_cell);
+                    current_row = Some(DocxTableRow::default());
+                }
+                "tc" if table_depth == 1 => {
+                    finish_docx_table_cell(&mut current_row, &mut current_cell);
+                    current_cell = Some(DocxTableCell::default());
+                }
+                "p" if !in_paragraph => {
                     in_paragraph = true;
                     current_text.clear();
                     current_style = None;
+                    current_outline_level = None;
                     current_images.clear();
                 }
                 "pStyle" if in_paragraph => {
                     current_style = docx_attribute(&start, "val");
+                }
+                "outlineLvl" if in_paragraph => {
+                    current_outline_level = docx_u32_attribute(&start, "val");
                 }
                 "t" if in_paragraph => in_text = true,
                 "blip" | "imagedata" if in_paragraph => {
@@ -566,6 +675,9 @@ fn parse_docx_paragraphs(xml: &str) -> Result<Vec<DocxParagraph>, DocumentError>
                 if in_paragraph {
                     match empty.name().local_name().as_ref() {
                         "pStyle" => current_style = docx_attribute(&empty, "val"),
+                        "outlineLvl" => {
+                            current_outline_level = docx_u32_attribute(&empty, "val");
+                        }
                         "blip" | "imagedata" => {
                             if let Some(id) = docx_image_relationship(&empty) {
                                 current_images.push(id);
@@ -580,20 +692,54 @@ fn parse_docx_paragraphs(xml: &str) -> Result<Vec<DocxParagraph>, DocumentError>
             }
             Event::End(end) => match end.name().local_name().as_ref() {
                 "t" => in_text = false,
-                "p" => {
+                "p" if in_paragraph => {
                     in_paragraph = false;
                     in_text = false;
                     let text = normalize_inline_text(&current_text);
-                    if !text.is_empty() || !current_images.is_empty() {
-                        paragraphs.push(DocxParagraph {
+                    let images = std::mem::take(&mut current_images);
+                    if table_depth > 0 {
+                        if let Some(cell) = current_cell.as_mut() {
+                            if !text.is_empty() {
+                                cell.paragraphs.push(text);
+                            }
+                            cell.image_relationships.extend(images);
+                        }
+                    } else if !text.is_empty() || !images.is_empty() {
+                        blocks.push(DocxBlock::Paragraph(DocxParagraph {
+                            is_heading: docx_paragraph_is_heading(
+                                current_style.as_deref(),
+                                current_outline_level,
+                                styles,
+                            ),
                             text,
-                            is_heading: current_style.as_deref().is_some_and(is_docx_heading_style),
-                            image_relationships: std::mem::take(&mut current_images),
-                        });
+                            image_relationships: images,
+                        }));
                     }
                     current_text.clear();
                     current_style = None;
+                    current_outline_level = None;
                     current_images.clear();
+                }
+                "tc" if table_depth == 1 => {
+                    finish_docx_table_cell(&mut current_row, &mut current_cell);
+                }
+                "tr" if table_depth == 1 => {
+                    finish_docx_table_row(&mut current_table, &mut current_row, &mut current_cell);
+                }
+                "tbl" if table_depth > 0 => {
+                    if table_depth == 1 {
+                        finish_docx_table_row(
+                            &mut current_table,
+                            &mut current_row,
+                            &mut current_cell,
+                        );
+                        if let Some(table) = current_table.take()
+                            && !table.rows.is_empty()
+                        {
+                            blocks.push(DocxBlock::Table(table));
+                        }
+                    }
+                    table_depth -= 1;
                 }
                 _ => {}
             },
@@ -602,7 +748,30 @@ fn parse_docx_paragraphs(xml: &str) -> Result<Vec<DocxParagraph>, DocumentError>
         }
         buffer.clear();
     }
-    Ok(paragraphs)
+    Ok(blocks)
+}
+
+fn finish_docx_table_cell(row: &mut Option<DocxTableRow>, cell: &mut Option<DocxTableCell>) {
+    let Some(cell) = cell.take() else {
+        return;
+    };
+    if let Some(row) = row.as_mut() {
+        row.cells.push(cell);
+    }
+}
+
+fn finish_docx_table_row(
+    table: &mut Option<DocxTable>,
+    row: &mut Option<DocxTableRow>,
+    cell: &mut Option<DocxTableCell>,
+) {
+    finish_docx_table_cell(row, cell);
+    let Some(row) = row.take() else {
+        return;
+    };
+    if let Some(table) = table.as_mut() {
+        table.rows.push(row);
+    }
 }
 
 fn docx_image_relationship(start: &quick_xml::events::BytesStart<'_>) -> Option<String> {
@@ -623,18 +792,122 @@ fn docx_attribute(start: &quick_xml::events::BytesStart<'_>, local_name: &str) -
     None
 }
 
+fn docx_u32_attribute(start: &quick_xml::events::BytesStart<'_>, local_name: &str) -> Option<u32> {
+    docx_attribute(start, local_name)?.parse().ok()
+}
+
 fn is_docx_heading_style(style: &str) -> bool {
     let normalized = style.to_ascii_lowercase();
-    normalized.starts_with("heading") || normalized.contains("标题")
+    normalized.starts_with("heading")
+        || normalized.starts_with("title")
+        || normalized.contains("标题")
+}
+
+fn docx_paragraph_is_heading(
+    style_id: Option<&str>,
+    direct_outline_level: Option<u32>,
+    styles: &HashMap<String, DocxStyleInfo>,
+) -> bool {
+    if direct_outline_level.is_some() {
+        return true;
+    }
+    let Some(style_id) = style_id else {
+        return false;
+    };
+    if is_docx_heading_style(style_id) {
+        return true;
+    }
+    let mut current_style = Some(style_id);
+    for _ in 0..8 {
+        let Some(style) = current_style.and_then(|id| styles.get(id)) else {
+            break;
+        };
+        if is_docx_heading_style(&style.name) || style.outline_level.is_some() {
+            return true;
+        }
+        current_style = style.based_on.as_deref();
+    }
+    false
 }
 
 fn normalize_inline_text(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn group_docx_content(
-    paragraphs: &[DocxParagraph],
-) -> (Vec<DocumentAnchor>, Vec<DocxImagePlacement>) {
+fn docx_blocks_text(blocks: &[DocxBlock]) -> String {
+    blocks
+        .iter()
+        .map(docx_block_text)
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn docx_block_text(block: &DocxBlock) -> String {
+    match block {
+        DocxBlock::Paragraph(paragraph) => paragraph.text.clone(),
+        DocxBlock::Table(table) => docx_table_text(table),
+    }
+}
+
+fn docx_table_text(table: &DocxTable) -> String {
+    let column_count = table
+        .rows
+        .iter()
+        .map(|row| row.cells.len())
+        .max()
+        .unwrap_or(0);
+    if column_count == 0 {
+        return String::new();
+    }
+    let mut lines = vec![format!(
+        "【表格：{} 行 × {} 列】",
+        table.rows.len(),
+        column_count
+    )];
+    for (row_index, row) in table.rows.iter().enumerate() {
+        let cells = (0..column_count)
+            .map(|column_index| {
+                row.cells
+                    .get(column_index)
+                    .map(docx_table_cell_text)
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        lines.push(format!("| {} |", cells.join(" | ")));
+        if row_index == 0 {
+            lines.push(format!("|{}|", vec![" --- "; column_count].join("|")));
+        }
+    }
+    lines.join("\n")
+}
+
+fn docx_table_cell_text(cell: &DocxTableCell) -> String {
+    let mut parts = cell
+        .paragraphs
+        .iter()
+        .map(|paragraph| paragraph.replace('|', "\\|"))
+        .filter(|paragraph| !paragraph.trim().is_empty())
+        .collect::<Vec<_>>();
+    if !cell.image_relationships.is_empty() {
+        parts.push("[图片]".to_owned());
+    }
+    parts.join("<br>")
+}
+
+fn docx_block_images(block: &DocxBlock) -> Vec<String> {
+    match block {
+        DocxBlock::Paragraph(paragraph) => paragraph.image_relationships.clone(),
+        DocxBlock::Table(table) => table
+            .rows
+            .iter()
+            .flat_map(|row| row.cells.iter())
+            .flat_map(|cell| cell.image_relationships.iter().cloned())
+            .collect(),
+    }
+}
+
+fn group_docx_content(blocks: &[DocxBlock]) -> (Vec<DocumentAnchor>, Vec<DocxImagePlacement>) {
     let mut anchors = Vec::new();
     let mut placements = Vec::new();
     let mut label: Option<String> = None;
@@ -642,22 +915,33 @@ fn group_docx_content(
     let mut images = Vec::<String>::new();
     let mut section_number = 0usize;
 
-    for paragraph in paragraphs {
-        if paragraph.is_heading {
-            flush_docx_content(
-                &mut anchors,
-                &mut placements,
-                &mut label,
-                &mut lines,
-                &mut images,
-                &mut section_number,
-            );
-            label = Some(paragraph.text.clone());
-            lines.push(paragraph.text.clone());
-        } else {
-            lines.push(paragraph.text.clone());
+    for block in blocks {
+        match block {
+            DocxBlock::Paragraph(paragraph) if paragraph.is_heading => {
+                flush_docx_content(
+                    &mut anchors,
+                    &mut placements,
+                    &mut label,
+                    &mut lines,
+                    &mut images,
+                    &mut section_number,
+                );
+                label = Some(paragraph.text.clone());
+                lines.push(paragraph.text.clone());
+            }
+            DocxBlock::Paragraph(paragraph) => {
+                if !paragraph.text.is_empty() {
+                    lines.push(paragraph.text.clone());
+                }
+            }
+            DocxBlock::Table(table) => {
+                let text = docx_table_text(table);
+                if !text.is_empty() {
+                    lines.push(text);
+                }
+            }
         }
-        images.extend(paragraph.image_relationships.iter().cloned());
+        images.extend(docx_block_images(block));
     }
     flush_docx_content(
         &mut anchors,
@@ -667,6 +951,50 @@ fn group_docx_content(
         &mut images,
         &mut section_number,
     );
+    (anchors, placements)
+}
+
+fn group_docx_blocks_without_headings(
+    blocks: &[DocxBlock],
+) -> (Vec<DocumentAnchor>, Vec<DocxImagePlacement>) {
+    let mut anchors = Vec::new();
+    let mut placements = Vec::new();
+    let mut anchor_number = 0usize;
+    let mut previous_anchor_id: Option<String> = None;
+    for block in blocks {
+        let text = docx_block_text(block);
+        let images = docx_block_images(block);
+        if text.trim().is_empty() {
+            if let Some(anchor_id) = &previous_anchor_id {
+                placements.extend(
+                    images
+                        .into_iter()
+                        .map(|relationship_id| DocxImagePlacement {
+                            relationship_id,
+                            anchor_id: anchor_id.clone(),
+                        }),
+                );
+            }
+            continue;
+        }
+        anchor_number += 1;
+        let anchor_id = format!("paragraph_{anchor_number}");
+        let label = truncate_label(text.lines().next().unwrap_or_default(), 36);
+        anchors.push(DocumentAnchor {
+            id: anchor_id.clone(),
+            label,
+            text,
+        });
+        placements.extend(
+            images
+                .into_iter()
+                .map(|relationship_id| DocxImagePlacement {
+                    relationship_id,
+                    anchor_id: anchor_id.clone(),
+                }),
+        );
+        previous_anchor_id = Some(anchor_id);
+    }
     (anchors, placements)
 }
 
@@ -700,29 +1028,6 @@ fn flush_docx_content(
         label: anchor_label,
         text,
     });
-}
-
-fn paragraph_image_placements(paragraphs: &[DocxParagraph]) -> Vec<DocxImagePlacement> {
-    let mut placements = Vec::new();
-    let mut paragraph_number = 0usize;
-    let mut anchor_id = "paragraph_1".to_owned();
-    for paragraph in paragraphs {
-        if !paragraph.text.trim().is_empty() {
-            paragraph_number += 1;
-            anchor_id = format!("paragraph_{paragraph_number}");
-        }
-        placements.extend(
-            paragraph
-                .image_relationships
-                .iter()
-                .cloned()
-                .map(|relationship_id| DocxImagePlacement {
-                    relationship_id,
-                    anchor_id: anchor_id.clone(),
-                }),
-        );
-    }
-    placements
 }
 
 fn extract_pdf(bytes: &[u8]) -> Result<(String, Vec<DocumentAnchor>), DocumentError> {

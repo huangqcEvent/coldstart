@@ -477,8 +477,8 @@ fn validate_standard_text(text: &str) -> Result<(), AppError> {
 
 fn map_document_error(error: DocumentError) -> AppError {
     match error {
-        DocumentError::TooLarge { limit } => AppError::ReviewInputTooLarge {
-            actual: usize::try_from(limit).unwrap_or(usize::MAX),
+        DocumentError::TooLarge { actual, .. } => AppError::ReviewInputTooLarge {
+            actual: usize::try_from(actual).unwrap_or(usize::MAX),
             limit: MAX_REVIEW_STANDARD_CHARS,
         },
         DocumentError::TextTooLarge { limit } => AppError::ReviewInputTooLarge {

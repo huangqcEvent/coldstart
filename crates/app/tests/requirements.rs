@@ -710,7 +710,10 @@ fn app_error_codes_are_stable_for_expected_failures() {
             "document_empty",
         ),
         (
-            AppError::Document(DocumentError::TooLarge { limit: 20 }),
+            AppError::Document(DocumentError::TooLarge {
+                actual: 21,
+                limit: 20,
+            }),
             "document_too_large",
         ),
         (

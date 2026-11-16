@@ -31,7 +31,7 @@ pub enum AppError {
     InvalidManifest(#[from] ManifestError),
     #[error("invalid project name: {0}")]
     InvalidProject(#[from] ProjectError),
-    #[error("document failure: {0}")]
+    #[error("需求文档无法导入：{0}")]
     Document(#[from] DocumentError),
     #[error("model failure: {0}")]
     Model(#[from] ModelError),

@@ -19,6 +19,25 @@ fn extract_fixture(name: &str, bytes: &[u8]) -> coldstart_adapters::ExtractedDoc
     extract_document(&path).expect("fixture must be extractable")
 }
 
+fn build_docx(document_xml: &str, styles_xml: Option<&str>) -> Vec<u8> {
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    writer
+        .start_file("word/document.xml", SimpleFileOptions::default())
+        .expect("zip entry must start");
+    writer
+        .write_all(document_xml.as_bytes())
+        .expect("document XML must be written");
+    if let Some(styles_xml) = styles_xml {
+        writer
+            .start_file("word/styles.xml", SimpleFileOptions::default())
+            .expect("style entry must start");
+        writer
+            .write_all(styles_xml.as_bytes())
+            .expect("style XML must be written");
+    }
+    writer.finish().expect("zip must finish").into_inner()
+}
+
 const PNG_BYTES: &[u8] = b"\x89PNG\r\n\x1a\ncoldstart-image";
 
 #[test]
@@ -106,6 +125,88 @@ fn extracts_docx_headings_and_paragraphs() {
 }
 
 #[test]
+fn resolves_custom_docx_style_ids_to_heading_levels() {
+    let styles = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="normalId">
+    <w:name w:val="Normal"/>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="h1Id">
+    <w:name w:val="heading 1"/>
+    <w:pPr><w:outlineLvl w:val="0"/></w:pPr>
+  </w:style>
+  <w:style w:type="paragraph" w:styleId="h2Id">
+    <w:name w:val="heading 2"/>
+    <w:pPr><w:outlineLvl w:val="1"/></w:pPr>
+  </w:style>
+</w:styles>"#;
+    let document_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="h1Id"/></w:pPr><w:r><w:t>项目背景</w:t></w:r></w:p>
+    <w:p><w:r><w:t>机构交易系统需要独立建设。</w:t></w:r></w:p>
+    <w:p><w:pPr><w:pStyle w:val="h2Id"/></w:pPr><w:r><w:t>项目目标</w:t></w:r></w:p>
+    <w:p><w:r><w:t>覆盖 Web、App 和管理后台。</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+    let bytes = build_docx(document_xml, Some(styles));
+    let document = extract_fixture("custom-styles.docx", &bytes);
+
+    assert_eq!(document.anchors.len(), 2);
+    assert_eq!(document.anchors[0].id, "section_1");
+    assert_eq!(document.anchors[0].label, "项目背景");
+    assert!(
+        document.anchors[0]
+            .text
+            .contains("机构交易系统需要独立建设")
+    );
+    assert_eq!(document.anchors[1].label, "项目目标");
+    assert!(
+        document.anchors[1]
+            .text
+            .contains("覆盖 Web、App 和管理后台")
+    );
+}
+
+#[test]
+fn preserves_docx_table_rows_and_cells_in_section_text() {
+    let document_xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>功能清单</w:t></w:r></w:p>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>功能模块</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>功能点</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>功能描述</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>开户</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>注册登录</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>支持手机号与验证码</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+    <w:p><w:r><w:t>以上功能需要一次上线。</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#;
+    let bytes = build_docx(document_xml, None);
+    let document = extract_fixture("table.docx", &bytes);
+
+    assert_eq!(document.anchors.len(), 1);
+    let section = &document.anchors[0];
+    assert_eq!(section.label, "功能清单");
+    assert!(section.text.contains("【表格：2 行 × 3 列】"));
+    assert!(section.text.contains("| 功能模块 | 功能点 | 功能描述 |"));
+    assert!(
+        section
+            .text
+            .contains("| 开户 | 注册登录 | 支持手机号与验证码 |")
+    );
+    assert!(section.text.contains("以上功能需要一次上线"));
+    assert_eq!(document.text.matches("功能模块").count(), 1);
+}
+
+#[test]
 fn extracts_docx_embedded_images_and_links_them_to_section_anchors() {
     let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -150,6 +251,67 @@ fn extracts_docx_embedded_images_and_links_them_to_section_anchors() {
     assert_eq!(image.file_name, "image1.png");
     assert_eq!(image.mime_type, "image/png");
     assert_eq!(image.bytes, PNG_BYTES);
+}
+
+#[test]
+fn imports_more_than_fifty_docx_images_when_within_the_byte_budget() {
+    let mut document_xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>原型图</w:t></w:r></w:p>
+"#,
+    );
+    let mut relationships_xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+"#,
+    );
+    for index in 1..=60 {
+        document_xml.push_str(&format!(
+            r#"<w:p><w:r><w:drawing><a:blip r:embed="rId{index}"/></w:drawing></w:r></w:p>"#
+        ));
+        relationships_xml.push_str(&format!(
+            r#"<Relationship Id="rId{index}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/image{index}.png"/>"#
+        ));
+    }
+    document_xml.push_str("</w:body></w:document>");
+    relationships_xml.push_str("</Relationships>");
+
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, contents) in [
+        ("word/document.xml", document_xml.as_str()),
+        ("word/_rels/document.xml.rels", relationships_xml.as_str()),
+    ] {
+        writer
+            .start_file(name, SimpleFileOptions::default())
+            .expect("zip entry must start");
+        writer
+            .write_all(contents.as_bytes())
+            .expect("XML must be written");
+    }
+    for index in 1..=60 {
+        writer
+            .start_file(
+                format!("word/media/image{index}.png"),
+                SimpleFileOptions::default(),
+            )
+            .expect("image entry must start");
+        writer.write_all(PNG_BYTES).expect("image must be written");
+    }
+    let bytes = writer.finish().expect("zip must finish").into_inner();
+    let document = extract_fixture("many-images.docx", &bytes);
+
+    assert_eq!(document.anchors.len(), 1);
+    assert_eq!(document.images.len(), 60);
+    assert!(
+        document
+            .images
+            .iter()
+            .all(|image| image.anchor_id == "section_1")
+    );
 }
 
 #[test]
@@ -238,6 +400,10 @@ fn rejects_files_larger_than_twenty_mebibytes_before_reading() {
     let error = extract_document(&path).expect_err("oversized document must fail");
     assert!(matches!(error, DocumentError::TooLarge { .. }));
     assert_eq!(error.code(), "document_too_large");
+    let message = error.to_string();
+    assert!(message.contains(&(coldstart_adapters::MAX_DOCUMENT_BYTES + 1).to_string()));
+    assert!(message.contains(&coldstart_adapters::MAX_DOCUMENT_BYTES.to_string()));
+    assert!(message.contains("压缩图片或拆分文档"));
 }
 
 fn build_pdf(content: &str) -> Vec<u8> {

@@ -92,13 +92,13 @@ ColdStart 不会自行扫描整库，也不会替你自动还原完整架构。�
 构建好的 NSIS 安装包位于：
 
 ```text
-target\release\bundle\nsis\ColdStart_0.1.1_x64-setup.exe
+target\release\bundle\nsis\ColdStart_0.1.2_x64-setup.exe
 ```
 
 例如安装到 D 盘独立目录：
 
 ```powershell
-& '.\target\release\bundle\nsis\ColdStart_0.1.1_x64-setup.exe' /S /D=D:\Apps\ColdStart
+& '.\target\release\bundle\nsis\ColdStart_0.1.2_x64-setup.exe' /S /D=D:\Apps\ColdStart
 ```
 
 安装目录包含桌面程序、`coldstart-mcp.exe`、Web 资源和卸载器。卸载不会删除 ColdStart 项目目录、SQLite 数据库、报告或 Git 仓库。
@@ -163,7 +163,7 @@ ColdStart 会在应用数据目录记录最近打开的项目，最多保留 12 
 
 在“需求导入”中导入一个或多个 Markdown、TXT、DOCX、PDF 文档。单个文档不超过 20 MiB，单次抽取锚点文本总量不超过 80,000 字符。扫描型 PDF 暂不执行 OCR。
 
-Markdown 中使用本地相对路径引用的图片，以及 DOCX 内嵌图片，会随需求文档一起固化到项目制品目录并绑定到所在章节锚点。当前支持 PNG、JPEG、GIF 和 WebP；每份文档最多 50 张，单张和整份文档的图片总量都不超过 10 MiB。远程 URL、`data:`、绝对路径、文档目录外路径和非图片内容会被忽略，PDF 中图片暂不提取。远程图片不会由 ColdStart 下载。
+Markdown 中使用本地相对路径引用的图片，以及 DOCX 内嵌图片，会随需求文档一起固化到项目制品目录并绑定到所在章节锚点。当前支持 PNG、JPEG、GIF 和 WebP；每份文档最多 200 张，单张和整份文档的图片总量都不超过 10 MiB。远程 URL、`data:`、绝对路径、文档目录外路径和非图片内容会被忽略，PDF 中图片暂不提取。远程图片不会由 ColdStart 下载。DOCX 表格会按行、列和单元格保留为 Markdown 表格文本，标题样式会结合 `styles.xml` 解析，避免自定义样式 ID 导致章节层级丢失。
 
 需求页默认只展示图片数量、文件名、章节、MIME、大小和哈希，不展示原图，也不会把图片二进制发送给蓝图模型。点击“查看原图”后才从本地制品目录读取，并再次校验路径边界、文件大小和 SHA-256。图片不做 OCR，不参与自动需求分析；人工确认和 Agent 按需查看是两条独立入口。
 
