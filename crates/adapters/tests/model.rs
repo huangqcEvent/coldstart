@@ -108,8 +108,12 @@ fn model_request(base_url: &str) -> ModelExtractionRequest {
 }
 
 fn completion(content: &str) -> String {
+    completion_with_finish_reason(content, "stop")
+}
+
+fn completion_with_finish_reason(content: &str, finish_reason: &str) -> String {
     serde_json::json!({
-        "choices": [{ "message": { "content": content } }]
+        "choices": [{ "message": { "content": content }, "finish_reason": finish_reason }]
     })
     .to_string()
 }
@@ -134,12 +138,28 @@ fn sends_json_mode_request_and_parses_fenced_json() {
     let body: serde_json::Value = serde_json::from_str(&captured.body).expect("body must be JSON");
     assert_eq!(body["model"], "test-model");
     assert_eq!(body["temperature"], 0.1);
+    assert_eq!(body["max_tokens"], 32_768);
     assert_eq!(body["response_format"]["type"], "json_object");
     let prompt = body["messages"][1]["content"]
         .as_str()
         .expect("prompt must be a string");
     assert!(prompt.contains("<anchor id=\"section_1\""));
     assert!(prompt.contains("\"BlueprintProposal\""));
+}
+
+#[test]
+fn reports_a_truncated_response_before_attempting_json_parsing() {
+    let server = MockServer::start(
+        200,
+        &completion_with_finish_reason("{\"productGoal\":\"订单系统\"", "length"),
+    );
+    let error = OpenAiCompatibleModel::new()
+        .propose_blueprint(&model_request(&server.base_url))
+        .expect_err("length-limited output must fail explicitly");
+
+    assert!(matches!(error, ModelError::OutputTruncated { .. }));
+    assert_eq!(error.code(), "model_output_truncated");
+    server.finish();
 }
 
 #[test]

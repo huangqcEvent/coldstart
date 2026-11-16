@@ -11,7 +11,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use thiserror::Error;
 
-const MODEL_TIMEOUT: Duration = Duration::from_secs(120);
+const MODEL_TIMEOUT: Duration = Duration::from_secs(300);
+const BLUEPRINT_MAX_OUTPUT_TOKENS: u32 = 32_768;
 const MAX_ERROR_BODY_CHARS: usize = 600;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,6 +150,7 @@ impl BlueprintModel for OpenAiCompatibleModel {
                 }
             ],
             "temperature": 0.1,
+            "max_tokens": BLUEPRINT_MAX_OUTPUT_TOKENS,
             "response_format": { "type": "json_object" }
         });
         let agent_config = ureq::Agent::config_builder()
@@ -185,12 +187,16 @@ impl BlueprintModel for OpenAiCompatibleModel {
                     &request.config.api_key,
                 ))
             })?;
-        let content = envelope
-            .choices
-            .first()
-            .map(|choice| choice.message.content.trim())
-            .filter(|content| !content.is_empty())
-            .ok_or(ModelError::EmptyChoices)?;
+        let choice = envelope.choices.first().ok_or(ModelError::EmptyChoices)?;
+        if choice.finish_reason.as_deref() == Some("length") {
+            return Err(ModelError::OutputTruncated {
+                output_chars: choice.message.content.chars().count(),
+            });
+        }
+        let content = choice.message.content.trim();
+        if content.is_empty() {
+            return Err(ModelError::EmptyChoices);
+        }
         let json_text = strip_code_fence(content);
         serde_json::from_str::<BlueprintProposal>(json_text).map_err(|error| {
             ModelError::InvalidResponse(redact_secret(&error.to_string(), &request.config.api_key))
@@ -318,6 +324,8 @@ struct ChatCompletionResponse {
 #[derive(Debug, Deserialize)]
 struct ChatChoice {
     message: ChatMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -335,6 +343,10 @@ pub enum ModelError {
     HttpStatus { status: u16, body: String },
     #[error("model response contained no choices")]
     EmptyChoices,
+    #[error(
+        "模型输出在 JSON 完成前被截断（已生成 {output_chars} 个字符），请提高模型的 max_tokens 或减少本次变更集"
+    )]
+    OutputTruncated { output_chars: usize },
     #[error("model response was invalid: {0}")]
     InvalidResponse(String),
 }
@@ -345,6 +357,7 @@ impl ModelError {
             Self::InvalidConfig(_) => "model_config_invalid",
             Self::Request(_) | Self::HttpStatus { .. } => "model_request_failed",
             Self::EmptyChoices | Self::InvalidResponse(_) => "model_response_invalid",
+            Self::OutputTruncated { .. } => "model_output_truncated",
         }
     }
 }

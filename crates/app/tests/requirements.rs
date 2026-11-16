@@ -721,6 +721,12 @@ fn app_error_codes_are_stable_for_expected_failures() {
             "model_response_invalid",
         ),
         (
+            AppError::Model(ModelError::OutputTruncated {
+                output_chars: 33_597,
+            }),
+            "model_output_truncated",
+        ),
+        (
             AppError::Model(ModelError::Request("offline".to_owned())),
             "model_request_failed",
         ),

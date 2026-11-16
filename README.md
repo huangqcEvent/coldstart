@@ -92,13 +92,13 @@ ColdStart 不会自行扫描整库，也不会替你自动还原完整架构。�
 构建好的 NSIS 安装包位于：
 
 ```text
-target\release\bundle\nsis\ColdStart_0.1.2_x64-setup.exe
+target\release\bundle\nsis\ColdStart_0.1.3_x64-setup.exe
 ```
 
 例如安装到 D 盘独立目录：
 
 ```powershell
-& '.\target\release\bundle\nsis\ColdStart_0.1.2_x64-setup.exe' /S /D=D:\Apps\ColdStart
+& '.\target\release\bundle\nsis\ColdStart_0.1.3_x64-setup.exe' /S /D=D:\Apps\ColdStart
 ```
 
 安装目录包含桌面程序、`coldstart-mcp.exe`、Web 资源和卸载器。卸载不会删除 ColdStart 项目目录、SQLite 数据库、报告或 Git 仓库。
@@ -184,6 +184,8 @@ Markdown 中使用本地相对路径引用的图片，以及 DOCX 内嵌图片�
 调查不下载整库，不保存源码正文、完整 Git 输出、Secret 或本地绝对路径。领取令牌只返回一次，SQLite 只保存其哈希；租约默认 60 分钟。蓝图生成最多带入最近 3 个已确认调查，代码证据总预算为 35,000 字符，超限时会明确标注省略数量。
 
 生成蓝图前需要配置 OpenAI 兼容服务的 Base URL、模型名称和 API Key，并明确同意将需求文本发送到该服务。需求模型 Key 只存在于当前界面内存和本次 IPC 调用中，不写入 SQLite、事件、日志或项目文件；切换页面或重启后需要重新输入。
+
+蓝图请求会显式设置 `max_tokens: 32768`，避免 DeepSeek 非思考模式默认 8K 输出上限把大型需求 JSON 截断。若服务端仍返回 `finish_reason: length`，ColdStart 会以稳定的 `model_output_truncated` 错误终止，而不会把半截 JSON 当作普通格式错误；此时应减少本次勾选的来源或在服务端支持下提高输出上限。单次模型请求超时为 300 秒。
 
 ### 2. 生成并发布蓝图
 

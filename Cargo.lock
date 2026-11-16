@@ -530,7 +530,7 @@ checksum = "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486"
 
 [[package]]
 name = "coldstart-adapters"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "base64 0.22.1",
  "coldstart-core",
@@ -554,7 +554,7 @@ dependencies = [
 
 [[package]]
 name = "coldstart-app"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "chrono",
  "coldstart-adapters",
@@ -573,7 +573,7 @@ dependencies = [
 
 [[package]]
 name = "coldstart-cli"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -588,7 +588,7 @@ dependencies = [
 
 [[package]]
 name = "coldstart-core"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "chrono",
  "dunce",
@@ -603,7 +603,7 @@ dependencies = [
 
 [[package]]
 name = "coldstart-desktop"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "base64 0.23.1",
  "coldstart-adapters",
@@ -619,7 +619,7 @@ dependencies = [
 
 [[package]]
 name = "coldstart-mcp"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "base64 0.23.1",
  "chrono",
@@ -641,7 +641,7 @@ dependencies = [
 
 [[package]]
 name = "coldstart-storage"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "chrono",
  "coldstart-core",
