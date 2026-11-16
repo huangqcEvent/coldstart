@@ -27,6 +27,7 @@ const MARKDOWN: &str = r#"# 订单系统
 
 小程序需要提审，App 需要准备证书。
 "#;
+const PNG_BYTES: &[u8] = b"\x89PNG\r\n\x1a\ncoldstart-image";
 
 #[derive(Clone)]
 enum FakeResponse {
@@ -211,6 +212,15 @@ impl Fixture {
         path
     }
 
+    fn write_bytes(&self, name: &str, content: &[u8]) -> PathBuf {
+        let path = self.directory.path().join(name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("fixture directory must be created");
+        }
+        fs::write(&path, content).expect("fixture must be written");
+        path
+    }
+
     fn artifact_directory(&self, artifact_id: ArtifactId) -> PathBuf {
         self.home
             .join(".coldstart")
@@ -254,6 +264,81 @@ fn imports_document_and_copies_immutable_artifacts() {
         serde_json::from_slice(&fs::read(artifact_directory.join("anchors.json")).unwrap())
             .unwrap();
     assert_eq!(anchors[0].id, "section_1");
+}
+
+#[test]
+fn imports_requirement_images_into_the_immutable_artifact_directory() {
+    let fixture = Fixture::new();
+    fixture.write_bytes("images/order.png", PNG_BYTES);
+    let source = fixture.write(
+        "visual-requirements.md",
+        "# 订单原型\n\n![订单列表](images/order.png)\n\n## 发布\n\n小程序提审。\n",
+    );
+    let service = RequirementsService::new(FakeModel::proposal());
+
+    let workspace = service
+        .import_document(fixture.home.clone(), source)
+        .expect("document must import");
+
+    let artifact = &workspace.sources[0];
+    let images = workspace
+        .source_images
+        .get(&artifact.id.to_string())
+        .expect("artifact images must be indexed");
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].anchor_id, "section_1");
+    assert_eq!(images[0].file_name, "order.png");
+    assert_eq!(images[0].mime_type, "image/png");
+    assert_eq!(images[0].relative_path, "images/image_1.png");
+    assert_eq!(
+        fs::read(
+            fixture
+                .artifact_directory(artifact.id)
+                .join(&images[0].relative_path)
+        )
+        .unwrap(),
+        PNG_BYTES
+    );
+    assert!(
+        fixture
+            .artifact_directory(artifact.id)
+            .join("images.json")
+            .exists()
+    );
+}
+
+#[test]
+fn reads_an_imported_requirement_image_only_after_hash_verification() {
+    let fixture = Fixture::new();
+    fixture.write_bytes("images/order.png", PNG_BYTES);
+    let source = fixture.write(
+        "visual-requirements.md",
+        "# 订单原型\n\n![订单列表](images/order.png)\n",
+    );
+    let service = RequirementsService::new(FakeModel::proposal());
+    let workspace = service
+        .import_document(fixture.home.clone(), source)
+        .expect("document must import");
+    let artifact = &workspace.sources[0];
+    let image = &workspace.source_images[&artifact.id.to_string()][0];
+
+    let content =
+        coldstart_app::read_requirement_image(fixture.home.clone(), artifact.id, &image.id)
+            .expect("image must load");
+    assert_eq!(content.bytes, PNG_BYTES);
+    assert_eq!(content.anchor_label, "订单原型");
+    assert_eq!(content.source_file_name, "visual-requirements.md");
+
+    fs::write(
+        fixture
+            .artifact_directory(artifact.id)
+            .join(&image.relative_path),
+        b"tampered",
+    )
+    .expect("stored image must be replaced");
+    let error = coldstart_app::read_requirement_image(fixture.home, artifact.id, &image.id)
+        .expect_err("modified image must be rejected");
+    assert_eq!(error.code(), "requirement_image_invalid");
 }
 
 #[test]

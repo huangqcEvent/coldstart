@@ -1,15 +1,18 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{fs, path::PathBuf, sync::Arc};
 
 use chrono::Utc;
 use coldstart_adapters::{GitAdapter, MemorySecretStore};
 use coldstart_app::{ClaimRequest, IntegrationService, PlanService, ProjectService};
 use coldstart_core::{
-    AcceptanceResult, ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration,
-    ClaimFailure, ClaimResult, GenerationSource, InfoRequestCategory, InfoRequestDraft,
-    ModuleDefinition, PlanContent, PlatformDefinition, PlatformKind, ProjectId, ReportOutcome,
-    SourceReference, TraceableText, VerificationStatus, WorkItemStatus, WorkReportInput,
+    AcceptanceCriterion, AcceptancePolicy, AcceptanceResult, ArtifactFormat, ArtifactId,
+    ArtifactImage, ArtifactMetadata, BlueprintContent, BlueprintEntityId, BlueprintGeneration,
+    ClaimFailure, ClaimResult, DocumentAnchor, GenerationSource, InfoRequestCategory,
+    InfoRequestDraft, ModuleDefinition, PlanContent, PlatformDefinition, PlatformKind, ProjectId,
+    ReportOutcome, SourceReference, TaskKind, TaskSpec, TraceableText, VerificationStatus,
+    WorkItemStatus, WorkReportInput,
 };
 use coldstart_storage::Database;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 #[path = "support/mod.rs"]
@@ -19,6 +22,8 @@ struct Fixture {
     _directory: TempDir,
     home: PathBuf,
     project_id: ProjectId,
+    artifact_id: ArtifactId,
+    unrelated_artifact_id: ArtifactId,
 }
 
 impl Fixture {
@@ -30,7 +35,28 @@ impl Fixture {
             .expect("project must create");
         let database_path = home.join(".coldstart").join("state.db");
         let mut database = Database::open(&database_path).expect("database must open");
-        let blueprint = blueprint_content(status.project_id);
+        let artifact_id = seed_artifact(
+            &home,
+            status.project_id,
+            &[
+                ("section_1", "image_1", PNG_BYTES),
+                (
+                    "section_2",
+                    "image_2",
+                    b"\x89PNG\r\n\x1a\nunrelated-section-image",
+                ),
+            ],
+        );
+        let unrelated_artifact_id = seed_artifact(
+            &home,
+            status.project_id,
+            &[(
+                "section_1",
+                "image_1",
+                b"\x89PNG\r\n\x1a\nunrelated-document-image",
+            )],
+        );
+        let blueprint = blueprint_content(status.project_id, artifact_id);
         let revision = database
             .create_blueprint_revision(
                 &status.project_id,
@@ -52,6 +78,8 @@ impl Fixture {
             _directory: directory,
             home,
             project_id: status.project_id,
+            artifact_id,
+            unrelated_artifact_id,
         }
     }
 
@@ -63,9 +91,67 @@ impl Fixture {
     }
 }
 
-fn blueprint_content(project_id: ProjectId) -> BlueprintContent {
+const PNG_BYTES: &[u8] = b"\x89PNG\r\n\x1a\ncoldstart-image";
+
+fn seed_artifact(
+    home: &std::path::Path,
+    project_id: ProjectId,
+    images: &[(&str, &str, &[u8])],
+) -> ArtifactId {
+    let artifact_id = ArtifactId::new();
+    let artifact = ArtifactMetadata {
+        id: artifact_id,
+        project_id,
+        file_name: "requirements.docx".to_owned(),
+        format: ArtifactFormat::Docx,
+        content_hash: "artifact-content-hash".to_owned(),
+        text_hash: "artifact-text-hash".to_owned(),
+        byte_size: 512,
+        import_source: "requirements.docx".to_owned(),
+        imported_at: Utc::now(),
+    };
+    let anchors = images
+        .iter()
+        .map(|(anchor_id, _, _)| DocumentAnchor {
+            id: (*anchor_id).to_owned(),
+            label: format!("章节 {anchor_id}"),
+            text: format!("章节 {anchor_id} 的需求正文"),
+        })
+        .collect::<Vec<_>>();
+    let artifact_images = images
+        .iter()
+        .map(|(anchor_id, image_id, bytes)| ArtifactImage {
+            id: (*image_id).to_owned(),
+            anchor_id: (*anchor_id).to_owned(),
+            file_name: format!("{image_id}.png"),
+            mime_type: "image/png".to_owned(),
+            byte_size: bytes.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(bytes)),
+            relative_path: format!("images/{image_id}.png"),
+        })
+        .collect::<Vec<_>>();
+    let mut database =
+        Database::open(&home.join(".coldstart").join("state.db")).expect("database must open");
+    database
+        .insert_artifact_with_images(&artifact, &anchors, &artifact_images)
+        .expect("artifact must insert");
+    let images_directory = home
+        .join(".coldstart")
+        .join("artifacts")
+        .join(artifact_id.to_string())
+        .join("images");
+    fs::create_dir_all(&images_directory).expect("image directory must create");
+    for ((_, image_id, bytes), metadata) in images.iter().zip(&artifact_images) {
+        assert_eq!(metadata.id, *image_id);
+        fs::write(images_directory.join(format!("{image_id}.png")), bytes)
+            .expect("image must write");
+    }
+    artifact_id
+}
+
+fn blueprint_content(project_id: ProjectId, artifact_id: ArtifactId) -> BlueprintContent {
     let source = SourceReference {
-        artifact_id: ArtifactId::new(),
+        artifact_id,
         anchor_id: "section_1".to_owned(),
         quote: Some("需要 Web 订单系统".to_owned()),
     };
@@ -308,6 +394,174 @@ fn refuses_a_reference_not_whitelisted_by_the_task() {
     let _ = Utc::now();
 }
 
+fn publish_and_claim_image_task(
+    service: &PlanService,
+    fixture: &Fixture,
+    request_id: &str,
+) -> coldstart_core::ClaimedWork {
+    let module_id = BlueprintEntityId::derive(&fixture.project_id, "module", "Orders");
+    let platform_id = BlueprintEntityId::derive(&fixture.project_id, "platform", "Web");
+    let task = TaskSpec {
+        task_key: "image-slice".to_owned(),
+        title: "订单图片原型任务".to_owned(),
+        kind: TaskKind::AgentCoding,
+        goal: "按订单原型实现任务图片展示".to_owned(),
+        scope: vec!["订单模块".to_owned()],
+        out_of_scope: vec!["不实现其他模块".to_owned()],
+        module_id: Some(module_id.clone()),
+        platform_id: Some(platform_id.clone()),
+        repository_key: Some("web".to_owned()),
+        base_ref: Some("main".to_owned()),
+        work_branch: Some("codex/image-slice".to_owned()),
+        allowed_paths: vec![".".to_owned()],
+        context_refs: vec![module_id, platform_id],
+        acceptance_criteria: vec![AcceptanceCriterion {
+            id: "implementation".to_owned(),
+            text: "订单图片原型对应界面已实现".to_owned(),
+            required_evidence: false,
+        }],
+        acceptance_policy: AcceptancePolicy::AgentReport,
+        evidence_requirements: vec![],
+        priority: 700,
+        critical_path: false,
+        context_budget_tokens: 12_000,
+        resource_keys: vec!["web".to_owned()],
+        dependencies: vec![],
+    };
+    let draft = service
+        .save_draft(
+            fixture.home.clone(),
+            PlanContent {
+                tasks: vec![task],
+                warnings: vec![],
+            },
+        )
+        .expect("image task draft must save")
+        .draft
+        .expect("image task draft must exist");
+    service
+        .publish(fixture.home.clone(), draft.id)
+        .expect("image task plan must publish");
+    match service
+        .claim_next(
+            fixture.home.clone(),
+            ClaimRequest {
+                agent_profile: "codex".to_owned(),
+                repository: Some("web".to_owned()),
+                request_id: request_id.to_owned(),
+            },
+        )
+        .expect("image task claim must call")
+    {
+        ClaimResult::Claimed(claimed) => claimed,
+        other => panic!("image task must be claimed, got {other:?}"),
+    }
+}
+
+#[test]
+fn only_lists_images_referenced_by_the_task_blueprint_anchors() {
+    let fixture = Fixture::new();
+    let service = fixture.service();
+    let claimed = publish_and_claim_image_task(&service, &fixture, "claim-task-images");
+
+    let images = service
+        .list_task_images(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token.clone(),
+        )
+        .expect("task images must list");
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].artifact_id, fixture.artifact_id);
+    assert_eq!(images[0].image_id, "image_1");
+    assert_eq!(images[0].anchor_id, "section_1");
+    assert_eq!(images[0].anchor_label, "章节 section_1");
+    assert_eq!(images[0].artifact_file_name, "requirements.docx");
+    assert_eq!(images[0].mime_type, "image/png");
+    assert_eq!(images[0].byte_size, PNG_BYTES.len() as u64);
+
+    let content = service
+        .read_task_image(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token.clone(),
+            fixture.artifact_id,
+            "image_1".to_owned(),
+        )
+        .expect("authorized image must read");
+    assert_eq!(content.image, images[0]);
+    assert_eq!(content.bytes, PNG_BYTES);
+}
+
+#[test]
+fn task_images_exclude_other_sections_and_unrelated_documents() {
+    let fixture = Fixture::new();
+    let service = fixture.service();
+    let claimed = publish_and_claim_image_task(&service, &fixture, "claim-hidden-images");
+    let images = service
+        .list_task_images(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token.clone(),
+        )
+        .expect("task images must list");
+    assert!(!images.iter().any(|image| image.image_id == "image_2"));
+    assert!(
+        !images
+            .iter()
+            .any(|image| image.artifact_id == fixture.unrelated_artifact_id)
+    );
+
+    let other_section = service
+        .read_task_image(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            claimed.lease_token.clone(),
+            fixture.artifact_id,
+            "image_2".to_owned(),
+        )
+        .expect_err("image from another section must not be readable");
+    assert_eq!(other_section.code(), "requirement_image_not_found");
+
+    let other_document = service
+        .read_task_image(
+            fixture.home,
+            claimed.work_item.id,
+            claimed.lease_token,
+            fixture.unrelated_artifact_id,
+            "image_1".to_owned(),
+        )
+        .expect_err("image from an unrelated document must not be readable");
+    assert_eq!(other_document.code(), "requirement_image_not_found");
+}
+
+#[test]
+fn task_images_require_a_valid_lease() {
+    let fixture = Fixture::new();
+    let service = fixture.service();
+    let claimed = publish_and_claim_image_task(&service, &fixture, "claim-invalid-image-lease");
+
+    let error = service
+        .list_task_images(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            "invalid-lease".to_owned(),
+        )
+        .expect_err("invalid lease must not list task images");
+    assert_eq!(error.code(), "lease_invalid");
+
+    let error = service
+        .read_task_image(
+            fixture.home,
+            claimed.work_item.id,
+            "invalid-lease".to_owned(),
+            fixture.artifact_id,
+            "image_1".to_owned(),
+        )
+        .expect_err("invalid lease must not read a task image");
+    assert_eq!(error.code(), "lease_invalid");
+}
+
 #[test]
 fn authorization_facts_never_enter_the_agent_context() {
     const SENSITIVE_VALUE: &str = "test-only-access-key-do-not-leak";
@@ -317,7 +571,7 @@ fn authorization_facts_never_enter_the_agent_context() {
     let revision = database
         .create_blueprint_revision(
             &fixture.project_id,
-            blueprint_content(fixture.project_id),
+            blueprint_content(fixture.project_id, fixture.artifact_id),
             BlueprintGeneration {
                 source: GenerationSource::Manual,
                 model_provider: None,

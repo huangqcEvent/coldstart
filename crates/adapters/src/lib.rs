@@ -17,8 +17,8 @@ pub use capability_api::{
     UreqCapabilityApiClient,
 };
 pub use document::{
-    DocumentError, ExtractedDocument, MAX_DOCUMENT_BYTES, MAX_EXTRACTED_CHARACTERS,
-    extract_document,
+    DocumentError, ExtractedDocument, ExtractedImage, MAX_DOCUMENT_BYTES, MAX_EXTRACTED_CHARACTERS,
+    MAX_IMAGE_BYTES, MAX_IMAGES_PER_DOCUMENT, extract_document,
 };
 pub use git::{
     GitAdapter, GitAuth, GitCommitVerification, GitError, GitMergeConflictReport,

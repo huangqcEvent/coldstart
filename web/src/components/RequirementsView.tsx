@@ -8,20 +8,26 @@ import { useEffect, useId, useMemo, useState } from 'react';
 
 import * as integrationApi from '../api/integrationApi';
 import * as issueApi from '../api/issueApi';
+import * as requirementsApi from '../api/requirementsApi';
 import { GitHubProjectsPanel } from './GitHubProjectsPanel';
 import type {
+  ArtifactImage,
   ArtifactMetadata,
   CommandError,
+  DocumentAnchor,
   GitHubIssueListState,
   GitHubIssueListView,
   GitHubIssueView,
   ModelConfig,
+  RequirementImagePreview,
   Repository,
 } from '../api/types';
 
 interface RequirementsViewProps {
   path: string;
   sources: ArtifactMetadata[];
+  sourceAnchors: Record<string, DocumentAnchor[]>;
+  sourceImages: Record<string, ArtifactImage[]>;
   busy: boolean;
   busyLabel: string | null;
   onImport: () => void;
@@ -82,6 +88,8 @@ function matchesIssueQuery(issue: GitHubIssueView, query: string) {
 export function RequirementsView({
   path,
   sources,
+  sourceAnchors,
+  sourceImages,
   busy,
   busyLabel,
   onImport,
@@ -111,6 +119,11 @@ export function RequirementsView({
   const [issueBusy, setIssueBusy] = useState(false);
   const [issueError, setIssueError] = useState<CommandError | null>(null);
   const [importingIssue, setImportingIssue] = useState<number | null>(null);
+  const [imagePreviews, setImagePreviews] = useState<
+    Record<string, RequirementImagePreview>
+  >({});
+  const [loadingImage, setLoadingImage] = useState<string | null>(null);
+  const [imageErrors, setImageErrors] = useState<Record<string, CommandError>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -170,6 +183,14 @@ export function RequirementsView({
   );
   const hasIssueFilters =
     issueQuery.trim().length > 0 || issueLabel.length > 0 || onlyUnimported;
+  const totalImages = useMemo(
+    () =>
+      Object.values(sourceImages).reduce(
+        (total, images) => total + images.length,
+        0,
+      ),
+    [sourceImages],
+  );
 
   async function handleLoadIssues() {
     if (!repositoryKey || issueActionBusy) {
@@ -210,6 +231,42 @@ export function RequirementsView({
     setOnlyUnimported(false);
   }
 
+  function anchorLabelFor(sourceId: string, image: ArtifactImage) {
+    return (
+      sourceAnchors[sourceId]?.find((anchor) => anchor.id === image.anchorId)
+        ?.label ?? '未标注章节'
+    );
+  }
+
+  async function handleViewImage(sourceId: string, image: ArtifactImage) {
+    const imageKey = `${sourceId}:${image.id}`;
+    if (imagePreviews[imageKey] || loadingImage === imageKey) {
+      return;
+    }
+
+    setLoadingImage(imageKey);
+    setImageErrors((current) => {
+      const next = { ...current };
+      delete next[imageKey];
+      return next;
+    });
+    try {
+      const preview = await requirementsApi.readRequirementImage(
+        path,
+        sourceId,
+        image.id,
+      );
+      setImagePreviews((current) => ({ ...current, [imageKey]: preview }));
+    } catch (error: unknown) {
+      setImageErrors((current) => ({
+        ...current,
+        [imageKey]: normalizeCommandError(error),
+      }));
+    } finally {
+      setLoadingImage((current) => (current === imageKey ? null : current));
+    }
+  }
+
   return (
     <section className="content-view" aria-labelledby="requirements-title">
       <header className="content-view__header">
@@ -240,6 +297,15 @@ export function RequirementsView({
             <span className="count-badge">{sources.length}</span>
           </div>
 
+          {totalImages > 0 ? (
+            <div className="source-images-note">
+              <span className="source-images-note__count">{totalImages} 张图片</span>
+              <p>
+                原图不参与自动需求分析，仅供人工确认和 Codex 按任务权限按需查看。
+              </p>
+            </div>
+          ) : null}
+
           {sources.length === 0 ? (
             <div className="empty-state">
               <strong>还没有来源文档</strong>
@@ -247,28 +313,95 @@ export function RequirementsView({
             </div>
           ) : (
             <ul className="source-list" aria-label="来源文档列表">
-              {sources.map((source, index) => (
-                <li className="source-item" key={source.id}>
-                  <span className="source-item__index">
-                    {String(index + 1).padStart(2, '0')}
-                  </span>
-                  <div className="source-item__body">
-                    <div className="source-item__title-row">
-                      <strong>{source.fileName}</strong>
-                      <span className="format-badge">
-                        {formatLabels[source.format]}
-                      </span>
+              {sources.map((source, index) => {
+                const images = sourceImages[source.id] ?? [];
+                return (
+                  <li className="source-item" key={source.id}>
+                    <span className="source-item__index">
+                      {String(index + 1).padStart(2, '0')}
+                    </span>
+                    <div className="source-item__body">
+                      <div className="source-item__title-row">
+                        <strong>{source.fileName}</strong>
+                        <span className="format-badge">
+                          {formatLabels[source.format]}
+                        </span>
+                      </div>
+                      <p className="mono source-item__hash">
+                        SHA-256 {source.contentHash.slice(0, 16)}…
+                      </p>
+                      <p className="source-item__meta">
+                        {(source.byteSize / 1024).toFixed(1)} KiB · 已导入{' '}
+                        {source.importedAt}
+                      </p>
+                      {images.length > 0 ? (
+                        <section
+                          className="source-images"
+                          aria-label={`${source.fileName} 的来源图片`}
+                        >
+                          <div className="source-images__head">
+                            <strong>图片 {images.length} 张</strong>
+                            <span>按需预览，不进入模型上下文</span>
+                          </div>
+                          <ul className="source-images__list">
+                            {images.map((image) => {
+                              const imageKey = `${source.id}:${image.id}`;
+                              const label = anchorLabelFor(source.id, image);
+                              const preview = imagePreviews[imageKey];
+                              const error = imageErrors[imageKey];
+                              const isLoading = loadingImage === imageKey;
+                              return (
+                                <li className="source-image" key={imageKey}>
+                                  <div className="source-image__meta">
+                                    <strong>{image.fileName}</strong>
+                                    <span>章节：{label}</span>
+                                    <span>
+                                      {image.mimeType} ·{' '}
+                                      {(image.byteSize / 1024).toFixed(1)} KiB
+                                    </span>
+                                  </div>
+                                  <button
+                                    className="button button--compact button--ghost source-image__button"
+                                    type="button"
+                                    aria-label={`查看原图 ${image.fileName}（${label}）`}
+                                    onClick={() =>
+                                      void handleViewImage(source.id, image)
+                                    }
+                                    disabled={isLoading || preview !== undefined}
+                                  >
+                                    {isLoading
+                                      ? '读取中…'
+                                      : preview
+                                        ? '已加载'
+                                        : '查看原图'}
+                                  </button>
+                                  {error ? (
+                                    <p className="source-image__error" role="alert">
+                                      {error.message}（{error.code}）
+                                    </p>
+                                  ) : null}
+                                  {preview ? (
+                                    <figure className="source-image__preview">
+                                      <img
+                                        src={`data:${preview.image.mimeType};base64,${preview.dataBase64}`}
+                                        alt={`${label} 来源图片：${preview.image.fileName}`}
+                                      />
+                                      <figcaption>
+                                        {preview.sourceFileName} · {preview.anchorLabel}{' '}
+                                        · 仅本地预览
+                                      </figcaption>
+                                    </figure>
+                                  ) : null}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </section>
+                      ) : null}
                     </div>
-                    <p className="mono source-item__hash">
-                      SHA-256 {source.contentHash.slice(0, 16)}…
-                    </p>
-                    <p className="source-item__meta">
-                      {(source.byteSize / 1024).toFixed(1)} KiB · 已导入{' '}
-                      {source.importedAt}
-                    </p>
-                  </div>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

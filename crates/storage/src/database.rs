@@ -14,10 +14,10 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use coldstart_core::{
-    ArtifactFormat, ArtifactId, ArtifactMetadata, BlueprintContent, BlueprintGeneration,
-    BlueprintRevision, BlueprintRevisionId, BlueprintStatus, BlueprintValidationError,
-    DocumentAnchor, DomainEvent, DomainEventKind, GenerationSource, InfoRequest,
-    InfoRequestCategory, InfoRequestDraft, InfoRequestId, InfoRequestStatus,
+    ArtifactFormat, ArtifactId, ArtifactImage, ArtifactMetadata, BlueprintContent,
+    BlueprintGeneration, BlueprintRevision, BlueprintRevisionId, BlueprintStatus,
+    BlueprintValidationError, DocumentAnchor, DomainEvent, DomainEventKind, GenerationSource,
+    InfoRequest, InfoRequestCategory, InfoRequestDraft, InfoRequestId, InfoRequestStatus,
     IntegrationValidationError, PlanRevisionId, PlanValidationError, Project, ProjectFact,
     ProjectFactId, ProjectId, PullRequestId, PullRequestValidationError, WorkItemId,
     validate_blueprint_structure,
@@ -312,7 +312,17 @@ impl Database {
         artifact: &ArtifactMetadata,
         anchors: &[DocumentAnchor],
     ) -> Result<(), StorageError> {
+        self.insert_artifact_with_images(artifact, anchors, &[])
+    }
+
+    pub fn insert_artifact_with_images(
+        &mut self,
+        artifact: &ArtifactMetadata,
+        anchors: &[DocumentAnchor],
+        images: &[ArtifactImage],
+    ) -> Result<(), StorageError> {
         let anchors_json = serde_json::to_string(anchors)?;
+        let images_json = serde_json::to_string(images)?;
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -322,8 +332,8 @@ impl Database {
         transaction.execute(
             "INSERT INTO artifacts (
                 id, project_id, file_name, format, content_hash, text_hash, byte_size,
-                import_source, anchors_json, imported_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                import_source, anchors_json, images_json, imported_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 artifact.id.to_string(),
                 artifact.project_id.to_string(),
@@ -334,6 +344,7 @@ impl Database {
                 artifact.byte_size as i64,
                 artifact.import_source,
                 anchors_json,
+                images_json,
                 artifact.imported_at.to_rfc3339(),
             ],
         )?;
@@ -383,6 +394,22 @@ impl Database {
             .optional()?
             .ok_or(StorageError::ArtifactNotFound(*artifact_id))?;
         Ok(serde_json::from_str(&anchors_json)?)
+    }
+
+    pub fn load_artifact_images(
+        &self,
+        artifact_id: &ArtifactId,
+    ) -> Result<Vec<ArtifactImage>, StorageError> {
+        let images_json = self
+            .connection
+            .query_row(
+                "SELECT images_json FROM artifacts WHERE id = ?1",
+                [artifact_id.to_string()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or(StorageError::ArtifactNotFound(*artifact_id))?;
+        Ok(serde_json::from_str(&images_json)?)
     }
 
     /// 保存蓝图修订、来源锚点和发布状态，确保旧修订仍可追溯。

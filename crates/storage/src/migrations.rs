@@ -7,7 +7,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::StorageError;
 
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let current = read_schema_version(connection)?;
@@ -102,9 +102,13 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v10(&transaction)?;
         }
         9 => create_schema_v10(&transaction)?,
+        10 => {}
         _ => return Err(unsupported_schema(current)),
     }
 
+    if current < 11 {
+        create_schema_v11(&transaction)?;
+    }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
     Ok(())
@@ -639,6 +643,16 @@ fn create_schema_v10(transaction: &Transaction<'_>) -> Result<(), StorageError> 
 
             CREATE INDEX capability_api_endpoints_by_capability
                 ON capability_api_endpoints(project_id, capability_id, environment, name);
+            ",
+    )?;
+    Ok(())
+}
+
+fn create_schema_v11(transaction: &Transaction<'_>) -> Result<(), StorageError> {
+    transaction.execute_batch(
+        "
+            ALTER TABLE artifacts
+                ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]';
             ",
     )?;
     Ok(())

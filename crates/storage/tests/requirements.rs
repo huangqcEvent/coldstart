@@ -2,10 +2,10 @@ use std::{fs, path::Path};
 
 use chrono::Utc;
 use coldstart_core::{
-    ArtifactFormat, ArtifactId, ArtifactMetadata, BlueprintContent, BlueprintEntityId,
-    BlueprintGeneration, BlueprintStatus, DocumentAnchor, GenerationSource, InfoRequestCategory,
-    InfoRequestDraft, InfoRequestStatus, ModuleDefinition, PlatformDefinition, PlatformKind,
-    Project, ProjectId, SourceReference, TraceableText,
+    ArtifactFormat, ArtifactId, ArtifactImage, ArtifactMetadata, BlueprintContent,
+    BlueprintEntityId, BlueprintGeneration, BlueprintStatus, DocumentAnchor, GenerationSource,
+    InfoRequestCategory, InfoRequestDraft, InfoRequestStatus, ModuleDefinition, PlatformDefinition,
+    PlatformKind, Project, ProjectId, SourceReference, TraceableText,
 };
 use coldstart_storage::{Database, StorageError};
 use rusqlite::{Connection, params};
@@ -67,6 +67,18 @@ fn sample_anchors() -> Vec<DocumentAnchor> {
         id: "section_1".to_owned(),
         label: "业务范围".to_owned(),
         text: "需要 Web、管理后台和小程序，文件上传使用阿里云 OSS。".to_owned(),
+    }]
+}
+
+fn sample_images() -> Vec<ArtifactImage> {
+    vec![ArtifactImage {
+        id: "image_1".to_owned(),
+        anchor_id: "section_1".to_owned(),
+        file_name: "prototype.png".to_owned(),
+        mime_type: "image/png".to_owned(),
+        byte_size: 32,
+        sha256: "c".repeat(64),
+        relative_path: "images/image_1.png".to_owned(),
     }]
 }
 
@@ -170,7 +182,7 @@ fn migrates_v2_to_v5_without_losing_projects_or_events() {
             |row| row.get(0),
         )
         .expect("tables must be readable");
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
     assert_eq!(table_count, 4);
 }
 
@@ -200,6 +212,36 @@ fn persists_artifacts_and_anchors_with_an_import_event() {
         fixture.database.event_count(&fixture.project.id).unwrap(),
         2
     );
+}
+
+#[test]
+fn persists_artifact_images_without_storing_binary_data_in_sqlite() {
+    let mut fixture = Fixture::new();
+    let artifact = sample_artifact(fixture.project.id);
+    let artifact_id = artifact.id;
+    fixture
+        .database
+        .insert_artifact_with_images(&artifact, &sample_anchors(), &sample_images())
+        .expect("artifact with images must be inserted");
+
+    assert_eq!(
+        fixture
+            .database
+            .load_artifact_images(&artifact_id)
+            .expect("images must load"),
+        sample_images()
+    );
+    let connection = Connection::open(fixture._directory.path().join(".coldstart/state.db"))
+        .expect("database must open directly");
+    let stored: String = connection
+        .query_row(
+            "SELECT images_json FROM artifacts WHERE id = ?1",
+            [artifact_id.to_string()],
+            |row| row.get(0),
+        )
+        .expect("stored images must be readable");
+    assert!(stored.contains("prototype.png"));
+    assert!(!stored.contains("coldstart-image"));
 }
 
 #[test]

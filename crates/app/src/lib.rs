@@ -24,6 +24,7 @@ mod requirements;
 mod review;
 mod service;
 mod status;
+mod task_images;
 mod workspace;
 
 pub use capability_api::{
@@ -61,11 +62,15 @@ pub use project_overview::{
     GitHubProjectView,
 };
 pub use pull_request::PullRequestService;
-pub use requirements::{MAX_SOURCE_CONTEXT_CHARACTERS, RequirementsService};
+pub use requirements::{
+    MAX_SOURCE_CONTEXT_CHARACTERS, RequirementImageContent, RequirementsService,
+    read_requirement_image,
+};
 pub use review::{
     ReviewHistoryView, ReviewService, ReviewStandardContent, ReviewStandardImport,
     ReviewStandardManualInput, ReviewStandardRevisionInput, ReviewStandardView, ReviewWorkspace,
 };
 pub use service::ProjectService;
 pub use status::ProjectStatus;
+pub use task_images::{TaskImageContent, TaskImageSummary};
 pub use workspace::ProjectWorkspace;

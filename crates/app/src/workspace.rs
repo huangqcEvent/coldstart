@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use coldstart_core::{
-    ArtifactMetadata, BlueprintRevision, DocumentAnchor, InfoRequest, ProjectFact,
+    ArtifactImage, ArtifactMetadata, BlueprintRevision, DocumentAnchor, InfoRequest, ProjectFact,
 };
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +18,7 @@ pub struct ProjectWorkspace {
     pub status: ProjectStatus,
     pub sources: Vec<ArtifactMetadata>,
     pub source_anchors: BTreeMap<String, Vec<DocumentAnchor>>,
+    pub source_images: BTreeMap<String, Vec<ArtifactImage>>,
     pub draft: Option<BlueprintRevision>,
     pub published: Option<BlueprintRevision>,
     pub inbox: Vec<InfoRequest>,

@@ -6,12 +6,29 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
 
-import type { BlueprintContent, ModelConfig, ProjectWorkspace } from './types';
+import type {
+  BlueprintContent,
+  ModelConfig,
+  ProjectWorkspace,
+  RequirementImagePreview,
+} from './types';
 
 export async function importRequirementDocument(path: string, filePath: string) {
   return invoke<ProjectWorkspace>('import_requirement_document', {
     path,
     filePath,
+  });
+}
+
+export async function readRequirementImage(
+  path: string,
+  artifactId: string,
+  imageId: string,
+) {
+  return invoke<RequirementImagePreview>('read_requirement_image', {
+    path,
+    artifactId,
+    imageId,
   });
 }
 

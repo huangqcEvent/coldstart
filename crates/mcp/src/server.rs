@@ -1,19 +1,24 @@
 //! MCP 工具契约与调用分发。
 //!
-//! 当前暴露 12 个受限工具，覆盖简报、记忆、领取、上下文、心跳、报告、阻塞、
+//! 当前暴露 14 个受限工具，覆盖简报、记忆、领取、上下文、图片、心跳、报告、阻塞、
 //! 能力调用和完成交接。工具只接受显式参数，不启动 Codex，也不扩大 Secret 面。
 
 use std::path::PathBuf;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use coldstart_app::{
     AppError, CallCapabilityApiRequest, CapabilityApiQueryParameter, CapabilityApiService,
     ClaimRequest, ContextHandoffService, IntegrationService, PlanService, ProjectMemoryService,
 };
-use coldstart_core::{BlueprintEntityId, CapabilityApiEndpointId, CapabilityApiMethod, WorkItemId};
+use coldstart_core::{
+    ArtifactId, BlueprintEntityId, CapabilityApiEndpointId, CapabilityApiMethod, WorkItemId,
+};
 use rmcp::{
     ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, ErrorData, Implementation, ServerCapabilities, ServerConfig},
+    model::{
+        CallToolResult, ContentBlock, ErrorData, Implementation, ServerCapabilities, ServerConfig,
+    },
     tool, tool_handler, tool_router,
 };
 use serde::Serialize;
@@ -22,8 +27,8 @@ use crate::{
     error::{app_error_result, invalid_capability_id_result, invalid_id_result, tool_error_result},
     types::{
         CallCapabilityApiArgs, CapabilityStatusArgs, ClaimNextWorkArgs, ProjectBriefArgs,
-        ProjectMemoryArgs, ReadTaskReferenceArgs, ReleaseWorkArgs, ReportWorkBlockerArgs,
-        SubmitWorkReportArgs, WorkLeaseArgs,
+        ProjectMemoryArgs, ReadTaskImageArgs, ReadTaskReferenceArgs, ReleaseWorkArgs,
+        ReportWorkBlockerArgs, SubmitWorkReportArgs, WorkLeaseArgs,
     },
 };
 
@@ -264,6 +269,81 @@ impl ColdStartMcp {
             )
         })
         .await
+    }
+
+    /// 列出当前任务契约允许查看的需求图片，不返回二进制或本地路径。
+    #[tool(
+        description = "List requirement images authorized by the active task contract. Image bytes are only returned by read_task_image."
+    )]
+    pub async fn list_task_images(
+        &self,
+        Parameters(args): Parameters<WorkLeaseArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let work_id = match Self::parse_work_id(&args.work_id) {
+            Ok(work_id) => work_id,
+            Err(result) => return Ok(result),
+        };
+        let project_home = self.project_home.clone();
+        Self::execute(move || {
+            PlanService::new()
+                .list_task_images(project_home, work_id, args.lease_token)
+                .map(|images| serde_json::json!({ "images": images }))
+        })
+        .await
+    }
+
+    /// 按需读取当前任务有权查看的一张需求图片，返回元数据和 MCP 图片内容块。
+    #[tool(
+        description = "Read one requirement image authorized by the active task contract. Returns source metadata plus one base64 image content block."
+    )]
+    pub async fn read_task_image(
+        &self,
+        Parameters(args): Parameters<ReadTaskImageArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let work_id = match Self::parse_work_id(&args.work_id) {
+            Ok(work_id) => work_id,
+            Err(result) => return Ok(result),
+        };
+        let artifact_id = match args.artifact_id.parse::<ArtifactId>() {
+            Ok(artifact_id) => artifact_id,
+            Err(_) => return Ok(invalid_id_result("artifact_id", &args.artifact_id)),
+        };
+        let project_home = self.project_home.clone();
+        let content = match tokio::task::spawn_blocking(move || {
+            PlanService::new().read_task_image(
+                project_home,
+                work_id,
+                args.lease_token,
+                artifact_id,
+                args.image_id,
+            )
+        })
+        .await
+        {
+            Ok(Ok(content)) => content,
+            Ok(Err(error)) => return Ok(app_error_result(error)),
+            Err(error) => {
+                return Err(ErrorData::internal_error(
+                    format!("MCP blocking task failed: {error}"),
+                    None,
+                ));
+            }
+        };
+        let structured = serde_json::json!({ "image": &content.image });
+        let data = BASE64_STANDARD.encode(&content.bytes);
+        let mut result = CallToolResult::success(vec![
+            ContentBlock::text(format!(
+                "需求图片：{} / {} / {}；MIME {}；{} 字节。原图不参与自动需求分析，仅供当前任务按需查看。",
+                content.image.artifact_file_name,
+                content.image.anchor_label,
+                content.image.file_name,
+                content.image.mime_type,
+                content.image.byte_size,
+            )),
+            ContentBlock::image(data, content.image.mime_type.clone()),
+        ]);
+        result.structured_content = Some(structured);
+        Ok(result)
     }
 
     /// 延长有效租约；过期、旧契约或错误令牌返回稳定错误。

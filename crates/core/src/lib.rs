@@ -21,7 +21,9 @@ mod review;
 mod source_reference;
 mod verification;
 
-pub use artifact::{ArtifactFormat, ArtifactFormatError, ArtifactMetadata, DocumentAnchor};
+pub use artifact::{
+    ArtifactFormat, ArtifactFormatError, ArtifactImage, ArtifactMetadata, DocumentAnchor,
+};
 pub use blueprint::*;
 pub use capability_api::*;
 pub use context::*;

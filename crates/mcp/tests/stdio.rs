@@ -6,16 +6,18 @@ use std::{
     sync::Arc,
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use coldstart_adapters::{GitAdapter, MemorySecretStore};
 use coldstart_app::{
     IntegrationService, PlanService, ProjectService, RepositoryDraft, SaveCredentialInput,
 };
 use coldstart_core::{
-    ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration, CapabilityApiEndpointId,
-    CapabilityObligation, CapabilityStatus, CredentialEnvironment, CredentialKind,
-    GenerationSource, ModuleDefinition, PlatformDefinition, PlatformKind, ProjectId,
-    RepositoryAuthMode, RepositorySyncPolicy, RepositoryVerificationCommand, SourceReference,
-    TraceableText, WorkItemStatus,
+    ArtifactFormat, ArtifactId, ArtifactImage, ArtifactMetadata, BlueprintContent,
+    BlueprintEntityId, BlueprintGeneration, CapabilityApiEndpointId, CapabilityObligation,
+    CapabilityStatus, CredentialEnvironment, CredentialKind, DocumentAnchor, GenerationSource,
+    ModuleDefinition, PlatformDefinition, PlatformKind, ProjectId, RepositoryAuthMode,
+    RepositorySyncPolicy, RepositoryVerificationCommand, SourceReference, TraceableText,
+    WorkItemStatus,
 };
 use coldstart_storage::Database;
 use rusqlite::Connection;
@@ -28,6 +30,7 @@ struct Fixture {
     home: PathBuf,
     project_id: ProjectId,
     work: PathBuf,
+    artifact_id: ArtifactId,
 }
 
 impl Fixture {
@@ -42,10 +45,11 @@ impl Fixture {
             .expect("project must create");
         let mut database =
             Database::open(&home.join(".coldstart").join("state.db")).expect("database must open");
+        let artifact_id = seed_image_artifact(&mut database, &home, status.project_id);
         let blueprint = database
             .create_blueprint_revision(
                 &status.project_id,
-                blueprint_content(status.project_id),
+                blueprint_content(status.project_id, artifact_id),
                 BlueprintGeneration {
                     source: GenerationSource::Manual,
                     model_provider: None,
@@ -106,6 +110,7 @@ impl Fixture {
             home,
             project_id: status.project_id,
             work,
+            artifact_id,
         }
     }
 
@@ -222,9 +227,71 @@ fn commit_file(work: &Path, relative_path: &str, content: &str) -> String {
         .to_owned()
 }
 
-fn blueprint_content(project_id: ProjectId) -> BlueprintContent {
+const TASK_IMAGE_BYTES: &[u8] = b"\x89PNG\r\n\x1a\nmcp-task-image";
+
+fn seed_image_artifact(database: &mut Database, home: &Path, project_id: ProjectId) -> ArtifactId {
+    let artifact_id = ArtifactId::new();
+    let artifact = ArtifactMetadata {
+        id: artifact_id,
+        project_id,
+        file_name: "requirements.docx".to_owned(),
+        format: ArtifactFormat::Docx,
+        content_hash: "mcp-artifact-content-hash".to_owned(),
+        text_hash: "mcp-artifact-text-hash".to_owned(),
+        byte_size: 1024,
+        import_source: "requirements.docx".to_owned(),
+        imported_at: chrono::Utc::now(),
+    };
+    let anchors = vec![
+        DocumentAnchor {
+            id: "section_1".to_owned(),
+            label: "订单原型".to_owned(),
+            text: "订单列表原型".to_owned(),
+        },
+        DocumentAnchor {
+            id: "section_2".to_owned(),
+            label: "发布说明".to_owned(),
+            text: "小程序提审说明".to_owned(),
+        },
+    ];
+    let images = vec![
+        ArtifactImage {
+            id: "image_1".to_owned(),
+            anchor_id: "section_1".to_owned(),
+            file_name: "orders.png".to_owned(),
+            mime_type: "image/png".to_owned(),
+            byte_size: TASK_IMAGE_BYTES.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(TASK_IMAGE_BYTES)),
+            relative_path: "images/image_1.png".to_owned(),
+        },
+        ArtifactImage {
+            id: "image_2".to_owned(),
+            anchor_id: "section_2".to_owned(),
+            file_name: "release.png".to_owned(),
+            mime_type: "image/png".to_owned(),
+            byte_size: 10,
+            sha256: format!("{:x}", Sha256::digest(b"unrelated!")),
+            relative_path: "images/image_2.png".to_owned(),
+        },
+    ];
+    database
+        .insert_artifact_with_images(&artifact, &anchors, &images)
+        .expect("image artifact must insert");
+    let images_directory = home
+        .join(".coldstart")
+        .join("artifacts")
+        .join(artifact_id.to_string())
+        .join("images");
+    fs::create_dir_all(&images_directory).expect("image directory must create");
+    fs::write(images_directory.join("image_1.png"), TASK_IMAGE_BYTES)
+        .expect("task image must write");
+    fs::write(images_directory.join("image_2.png"), b"unrelated!").expect("other image must write");
+    artifact_id
+}
+
+fn blueprint_content(project_id: ProjectId, artifact_id: ArtifactId) -> BlueprintContent {
     let source = SourceReference {
-        artifact_id: ArtifactId::new(),
+        artifact_id,
         anchor_id: "section_1".to_owned(),
         quote: Some("需要 Web 订单系统".to_owned()),
     };
@@ -260,7 +327,7 @@ fn blueprint_content(project_id: ProjectId) -> BlueprintContent {
             provider: "aliyun_oss".to_owned(),
             description: "上传订单附件".to_owned(),
             sources: vec![SourceReference {
-                artifact_id: ArtifactId::new(),
+                artifact_id,
                 anchor_id: "section_1".to_owned(),
                 quote: Some("需要文件上传".to_owned()),
             }],
@@ -574,6 +641,8 @@ fn stdio_server_lists_all_work_tools_and_rejects_an_unknown_tool() {
             "get_work_context",
             "get_work_handoff",
             "heartbeat_work",
+            "list_task_images",
+            "read_task_image",
             "read_task_reference",
             "release_work",
             "report_work_blocker",
@@ -615,6 +684,85 @@ fn stdio_server_exposes_a_safe_project_brief_and_memory_page() {
     assert_eq!(memory["items"].as_array().unwrap().len(), 1);
     assert_eq!(memory["items"][0]["isHeartbeat"].as_bool(), Some(false));
     assert!(memory["totalCount"].as_u64().unwrap() >= 1);
+}
+
+#[test]
+fn stdio_server_returns_authorized_task_images_without_local_paths() {
+    let fixture = Fixture::new();
+    let mut client = McpStdioClient::spawn(&fixture.home);
+    client.initialize();
+    let claimed = claim_one(&mut client, "stdio-task-image-claim");
+    let work_id = claimed["workItem"]["id"].as_str().unwrap().to_owned();
+    let lease_token = claimed["leaseToken"].as_str().unwrap().to_owned();
+
+    let listed = client.call_tool(
+        "list_task_images",
+        json!({ "work_id": work_id, "lease_token": lease_token }),
+    );
+    let listed = structured(&listed);
+    let images = listed["images"]
+        .as_array()
+        .expect("task image list must be an array");
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0]["artifactId"], fixture.artifact_id.to_string());
+    assert_eq!(images[0]["imageId"], "image_1");
+    assert_eq!(images[0]["anchorId"], "section_1");
+    assert_eq!(images[0]["anchorLabel"], "订单原型");
+    assert!(
+        !serde_json::to_string(&listed)
+            .expect("image list must serialize")
+            .contains(&fixture.home.to_string_lossy().into_owned())
+    );
+
+    let read = client.call_tool(
+        "read_task_image",
+        json!({
+            "work_id": work_id,
+            "lease_token": lease_token,
+            "artifact_id": fixture.artifact_id,
+            "image_id": "image_1"
+        }),
+    );
+    let image = structured(&read);
+    assert_eq!(image["image"]["imageId"], "image_1");
+    let image_block = read["content"]
+        .as_array()
+        .expect("tool content must be an array")
+        .iter()
+        .find(|block| block["type"] == "image")
+        .expect("tool result must include an image block");
+    assert_eq!(image_block["mimeType"], "image/png");
+    assert_eq!(
+        image_block["data"].as_str(),
+        Some(BASE64_STANDARD.encode(TASK_IMAGE_BYTES).as_str())
+    );
+    let serialized = serde_json::to_string(&read).expect("image result must serialize");
+    assert!(!serialized.contains(&fixture.home.to_string_lossy().into_owned()));
+    assert!(!serialized.contains("images/image_1.png"));
+    assert!(!serialized.contains(&lease_token));
+
+    let unauthorized = client.call_tool(
+        "read_task_image",
+        json!({
+            "work_id": work_id,
+            "lease_token": lease_token,
+            "artifact_id": fixture.artifact_id,
+            "image_id": "image_2"
+        }),
+    );
+    assert_eq!(
+        tool_error(&unauthorized)["code"].as_str(),
+        Some("requirement_image_not_found")
+    );
+
+    let invalid_lease = client.call_tool(
+        "list_task_images",
+        json!({ "work_id": work_id, "lease_token": "invalid-lease" }),
+    );
+    assert_eq!(
+        tool_error(&invalid_lease)["code"].as_str(),
+        Some("lease_invalid")
+    );
 }
 
 #[test]

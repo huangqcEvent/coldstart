@@ -93,6 +93,17 @@ pub(crate) struct ReadTaskReferenceArgs {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct ReadTaskImageArgs {
+    pub work_id: String,
+    pub lease_token: String,
+    #[schemars(description = "Artifact ID returned by list_task_images")]
+    pub artifact_id: String,
+    #[schemars(description = "Image ID returned by list_task_images")]
+    pub image_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct ReportWorkBlockerArgs {
     pub work_id: String,
     pub lease_token: String,

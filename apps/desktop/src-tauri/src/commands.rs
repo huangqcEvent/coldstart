@@ -5,6 +5,7 @@
 
 use std::{path::PathBuf, sync::Arc};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use coldstart_adapters::{GitHubIssueListState, ModelConfig, OpenAiCompatibleModel};
 use coldstart_app::{
     CreatePrivateRepositoryInput, DeliveryOverviewService, DeliveryOverviewView, DeviceFlowView,
@@ -14,13 +15,14 @@ use coldstart_app::{
     PullRequestService, RepositoryDraft, RepositoryValidationView, RequirementsService,
     ReviewService, ReviewStandardContent, ReviewStandardImport, ReviewStandardManualInput,
     ReviewStandardRevisionInput, ReviewStandardView, ReviewWorkspace, SaveCredentialInput,
+    read_requirement_image as read_requirement_image_content,
 };
 use coldstart_core::{
-    BlueprintContent, BlueprintEntityId, BlueprintRevisionId, CapabilityApiEndpointId,
-    CapabilityApiEndpointInput, CapabilityStatus, CredentialId, InfoRequestId, PlanContent,
-    PlanPublishPreview, PlanRevisionId, PullRequestId, PullRequestRecord,
-    RepositoryVerificationCommand, ReviewConfiguration, ReviewConfigurationInput, ReviewStandardId,
-    WorkItemId, WorkReportId, WorkReportRecord,
+    ArtifactId, ArtifactImage, BlueprintContent, BlueprintEntityId, BlueprintRevisionId,
+    CapabilityApiEndpointId, CapabilityApiEndpointInput, CapabilityStatus, CredentialId,
+    InfoRequestId, PlanContent, PlanPublishPreview, PlanRevisionId, PullRequestId,
+    PullRequestRecord, RepositoryVerificationCommand, ReviewConfiguration,
+    ReviewConfigurationInput, ReviewStandardId, WorkItemId, WorkReportId, WorkReportRecord,
 };
 use tauri::State;
 
@@ -131,6 +133,44 @@ pub async fn import_requirement_document(
     tauri::async_runtime::spawn_blocking(move || import_requirement_document_sync(path, file_path))
         .await
         .map_err(join_error)?
+}
+
+/// 供桌面端按需预览的来源图片；二进制以 base64 返回，不暴露本地路径。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequirementImagePreview {
+    pub image: ArtifactImage,
+    pub source_file_name: String,
+    pub anchor_label: String,
+    pub data_base64: String,
+}
+
+pub fn read_requirement_image_sync(
+    path: String,
+    artifact_id: String,
+    image_id: String,
+) -> Result<RequirementImagePreview, CommandError> {
+    let artifact_id = parse_artifact_id(&artifact_id)?;
+    let content = read_requirement_image_content(PathBuf::from(path), artifact_id, &image_id)?;
+    Ok(RequirementImagePreview {
+        data_base64: BASE64_STANDARD.encode(&content.bytes),
+        image: content.image,
+        source_file_name: content.source_file_name,
+        anchor_label: content.anchor_label,
+    })
+}
+
+#[tauri::command]
+pub async fn read_requirement_image(
+    path: String,
+    artifact_id: String,
+    image_id: String,
+) -> Result<RequirementImagePreview, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        read_requirement_image_sync(path, artifact_id, image_id)
+    })
+    .await
+    .map_err(join_error)?
 }
 
 pub fn generate_blueprint_sync(
@@ -1020,6 +1060,13 @@ fn parse_revision_id(value: &str) -> Result<BlueprintRevisionId, CommandError> {
     })
 }
 
+fn parse_artifact_id(value: &str) -> Result<ArtifactId, CommandError> {
+    value.parse().map_err(|_| CommandError {
+        code: "invalid_id".to_owned(),
+        message: "需求来源 ID 无效".to_owned(),
+    })
+}
+
 fn parse_info_request_id(value: &str) -> Result<InfoRequestId, CommandError> {
     value.parse().map_err(|_| CommandError {
         code: "invalid_id".to_owned(),
@@ -1199,6 +1246,44 @@ mod tests {
         assert_eq!(workspace.sources.len(), 1);
         assert_eq!(loaded.sources.len(), 1);
         assert_eq!(loaded.status.event_count, 2);
+    }
+
+    #[test]
+    fn read_requirement_image_sync_returns_base64_without_local_paths() {
+        const IMAGE_BYTES: &[u8] = b"\x89PNG\r\n\x1a\ndesktop-image";
+        let temp = TempDir::new().expect("temporary directory must exist");
+        let home = path_string(&temp.path().join("demo"));
+        create_project_sync("Image Project".to_owned(), home.clone())
+            .expect("project must be created");
+        fs::create_dir_all(temp.path().join("images")).expect("image directory must create");
+        fs::write(temp.path().join("images/order.png"), IMAGE_BYTES).expect("image must write");
+        let source = temp.path().join("requirements.md");
+        fs::write(
+            &source,
+            "# 订单原型\n\n![订单列表](images/order.png)\n\n## 发布\n\n小程序提审。\n",
+        )
+        .expect("source must be written");
+
+        let workspace = import_requirement_document_sync(home.clone(), path_string(&source))
+            .expect("document must import");
+        let artifact = &workspace.sources[0];
+        let image = &workspace.source_images[&artifact.id.to_string()][0];
+        let preview =
+            read_requirement_image_sync(home.clone(), artifact.id.to_string(), image.id.clone())
+                .expect("image must read");
+
+        assert_eq!(preview.image.mime_type, "image/png");
+        assert_eq!(preview.source_file_name, "requirements.md");
+        assert_eq!(preview.anchor_label, "订单原型");
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(&preview.data_base64)
+                .expect("preview must be valid base64"),
+            IMAGE_BYTES
+        );
+        let serialized = serde_json::to_string(&preview).expect("preview must serialize");
+        assert!(!serialized.contains(&home));
+        assert!(!serialized.contains("images/order.png"));
     }
 
     #[test]

@@ -16,6 +16,7 @@ edition = "2024"
 rust-version = "1.89"
 
 [workspace.dependencies]
+base64 = "0.23.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 dunce = "1.0.5"
 regex = "1.13.1"

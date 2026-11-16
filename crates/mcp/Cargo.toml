@@ -13,6 +13,7 @@ name = "coldstart-mcp"
 path = "src/main.rs"
 
 [dependencies]
+base64.workspace = true
 chrono.workspace = true
 coldstart-app = { path = "../app" }
 coldstart-core = { path = "../core" }

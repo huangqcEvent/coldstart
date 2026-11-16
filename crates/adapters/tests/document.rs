@@ -19,6 +19,8 @@ fn extract_fixture(name: &str, bytes: &[u8]) -> coldstart_adapters::ExtractedDoc
     extract_document(&path).expect("fixture must be extractable")
 }
 
+const PNG_BYTES: &[u8] = b"\x89PNG\r\n\x1a\ncoldstart-image";
+
 #[test]
 fn extracts_markdown_sections_with_heading_anchors() {
     let document = extract_fixture(
@@ -101,6 +103,90 @@ fn extracts_docx_headings_and_paragraphs() {
     assert_eq!(document.anchors[0].label, "订单系统");
     assert!(document.anchors[0].text.contains("前台使用 App"));
     assert!(document.anchors[1].text.contains("小程序提审"));
+}
+
+#[test]
+fn extracts_docx_embedded_images_and_links_them_to_section_anchors() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+  xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"
+  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <w:body>
+    <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>订单原型</w:t></w:r></w:p>
+    <w:p>
+      <w:r>
+        <w:drawing>
+          <a:blip r:embed="rId5"/>
+        </w:drawing>
+      </w:r>
+    </w:p>
+  </w:body>
+</w:document>"#;
+    let relationships = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId5"
+    Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+    Target="media/image1.png"/>
+</Relationships>"#;
+    let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+    for (name, contents) in [
+        ("word/document.xml", xml.as_bytes()),
+        ("word/_rels/document.xml.rels", relationships.as_bytes()),
+        ("word/media/image1.png", PNG_BYTES),
+    ] {
+        writer
+            .start_file(name, SimpleFileOptions::default())
+            .expect("zip entry must start");
+        writer
+            .write_all(contents)
+            .expect("zip entry must be written");
+    }
+    let bytes = writer.finish().expect("zip must finish").into_inner();
+    let document = extract_fixture("requirements.docx", &bytes);
+
+    assert_eq!(document.images.len(), 1);
+    let image = &document.images[0];
+    assert_eq!(image.anchor_id, "section_1");
+    assert_eq!(image.file_name, "image1.png");
+    assert_eq!(image.mime_type, "image/png");
+    assert_eq!(image.bytes, PNG_BYTES);
+}
+
+#[test]
+fn extracts_markdown_images_from_the_document_directory() {
+    let directory = fixture_dir();
+    let images = directory.path().join("images");
+    fs::create_dir(&images).expect("image directory must be created");
+    fs::write(images.join("prototype.png"), PNG_BYTES).expect("image must be written");
+    let path = directory.path().join("requirements.md");
+    fs::write(
+        &path,
+        "# 订单原型\n\n![订单列表](images/prototype.png)\n\n## 状态\n\n待付款。\n",
+    )
+    .expect("markdown must be written");
+
+    let document = extract_document(&path).expect("markdown must be extractable");
+
+    assert_eq!(document.images.len(), 1);
+    assert_eq!(document.images[0].anchor_id, "section_1");
+    assert_eq!(document.images[0].file_name, "prototype.png");
+    assert_eq!(document.images[0].mime_type, "image/png");
+    assert_eq!(document.images[0].bytes, PNG_BYTES);
+}
+
+#[test]
+fn ignores_markdown_images_outside_the_document_directory() {
+    let directory = fixture_dir();
+    let outside = directory.path().join("outside.png");
+    fs::write(&outside, PNG_BYTES).expect("outside image must be written");
+    let document_directory = directory.path().join("docs");
+    fs::create_dir(&document_directory).expect("document directory must be created");
+    let path = document_directory.join("requirements.md");
+    fs::write(&path, "# 原型\n\n![越界](../outside.png)\n").expect("markdown must be written");
+
+    let document = extract_document(&path).expect("markdown must remain importable");
+
+    assert!(document.images.is_empty());
 }
 
 #[test]

@@ -71,6 +71,10 @@ pub enum AppError {
     DuplicateClaimRequest(String),
     #[error("task reference not found: {0}")]
     ReferenceNotFound(String),
+    #[error("requirement image not found: {0}")]
+    RequirementImageNotFound(String),
+    #[error("requirement image is missing, modified, or outside the artifact directory")]
+    RequirementImageInvalid,
     #[error("blueprint revision {0} does not exist")]
     BlueprintNotFound(BlueprintRevisionId),
     #[error("blueprint revision {0} is not a draft")]
@@ -243,6 +247,8 @@ impl AppError {
             Self::ReportRejected(_) => "report_invalid",
             Self::DuplicateClaimRequest(_) => "claim_request_duplicate",
             Self::ReferenceNotFound(_) => "reference_not_found",
+            Self::RequirementImageNotFound(_) => "requirement_image_not_found",
+            Self::RequirementImageInvalid => "requirement_image_invalid",
             Self::BlueprintNotFound(_) => "blueprint_not_found",
             Self::BlueprintNotDraft(_) => "blueprint_not_draft",
             Self::InfoRequestNotFound(_) => "info_request_not_found",

@@ -52,6 +52,25 @@ export interface DocumentAnchor {
   text: string;
 }
 
+/** 来源文档中的内嵌图片；二进制只在显式预览时按需读取。 */
+export interface ArtifactImage {
+  id: string;
+  anchorId: string;
+  fileName: string;
+  mimeType: string;
+  byteSize: number;
+  sha256: string;
+  relativePath: string;
+}
+
+/** 桌面端按需读取的图片内容和安全溯源信息。 */
+export interface RequirementImagePreview {
+  image: ArtifactImage;
+  sourceFileName: string;
+  anchorLabel: string;
+  dataBase64: string;
+}
+
 export interface SourceReference {
   artifactId: string;
   anchorId: string;
@@ -530,6 +549,7 @@ export interface ProjectWorkspace {
   status: ProjectStatus;
   sources: ArtifactMetadata[];
   sourceAnchors: Record<string, DocumentAnchor[]>;
+  sourceImages: Record<string, ArtifactImage[]>;
   draft: BlueprintRevision | null;
   published: BlueprintRevision | null;
   inbox: InfoRequest[];

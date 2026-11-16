@@ -548,6 +548,8 @@ export default function App() {
             <RequirementsView
               path={workspace.status.rootPath}
               sources={workspace.sources}
+              sourceAnchors={workspace.sourceAnchors}
+              sourceImages={workspace.sourceImages}
               busy={busy}
               busyLabel={busyLabel}
               onImport={() => void handleImport()}

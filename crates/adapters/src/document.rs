@@ -4,30 +4,45 @@
 //! 校验扩展名与大小，避免把二进制或超限内容送入模型。
 
 use std::{
+    collections::HashMap,
     fs,
     io::{Cursor, Read},
     panic::{AssertUnwindSafe, catch_unwind},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use coldstart_core::{ArtifactFormat, DocumentAnchor};
 use encoding_rs::{GB18030, UTF_16BE, UTF_16LE};
 use quick_xml::{Reader, events::Event};
+use regex::Regex;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use zip::ZipArchive;
 
 pub const MAX_DOCUMENT_BYTES: u64 = 20 * 1024 * 1024;
 pub const MAX_EXTRACTED_CHARACTERS: usize = 500_000;
+pub const MAX_IMAGE_BYTES: u64 = 10 * 1024 * 1024;
+pub const MAX_IMAGES_PER_DOCUMENT: usize = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtractedDocument {
     pub format: ArtifactFormat,
     pub text: String,
     pub anchors: Vec<DocumentAnchor>,
+    pub images: Vec<ExtractedImage>,
     pub content_hash: String,
     pub text_hash: String,
     pub byte_size: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtractedImage {
+    pub id: String,
+    pub anchor_id: String,
+    pub file_name: String,
+    pub mime_type: String,
+    pub sha256: String,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Error)]
@@ -87,23 +102,24 @@ pub fn extract_document(path: &Path) -> Result<ExtractedDocument, DocumentError>
     }
     let bytes = fs::read(path)?;
     let content_hash = sha256_hex(&bytes);
-    let (text, anchors) = match format {
+    let (text, anchors, images) = match format {
         ArtifactFormat::Markdown => {
             let text = decode_text(&bytes)?;
             let normalized = normalize_line_endings(&text);
             let anchors = extract_markdown_anchors(&normalized);
-            (normalized.trim().to_owned(), anchors)
+            let images = extract_markdown_images(path, &normalized, &anchors)?;
+            (normalized.trim().to_owned(), anchors, images)
         }
         ArtifactFormat::Text => {
             let text = decode_text(&bytes)?;
             let normalized = normalize_line_endings(&text);
             let anchors = extract_text_anchors(&normalized);
-            (normalized.trim().to_owned(), anchors)
+            (normalized.trim().to_owned(), anchors, Vec::new())
         }
         ArtifactFormat::Docx => extract_docx(&bytes)?,
         ArtifactFormat::Pdf => {
             let (text, anchors) = extract_pdf(&bytes)?;
-            (text, anchors)
+            (text, anchors, Vec::new())
         }
     };
     if text.trim().is_empty() || anchors.is_empty() {
@@ -120,6 +136,7 @@ pub fn extract_document(path: &Path) -> Result<ExtractedDocument, DocumentError>
         format,
         text,
         anchors,
+        images,
         content_hash,
         text_hash,
         byte_size,
@@ -192,6 +209,99 @@ fn extract_markdown_anchors(text: &str) -> Vec<DocumentAnchor> {
     }
     flush_markdown_anchor(&mut anchors, &mut label, &mut lines, &mut section_number);
     anchors
+}
+
+fn extract_markdown_images(
+    document_path: &Path,
+    text: &str,
+    anchors: &[DocumentAnchor],
+) -> Result<Vec<ExtractedImage>, DocumentError> {
+    let parent = document_path.parent().unwrap_or_else(|| Path::new("."));
+    let canonical_parent = fs::canonicalize(parent)?;
+    let image_pattern = Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)")
+        .map_err(|error| DocumentError::InvalidEncoding(error.to_string()))?;
+    let mut section_number = 0usize;
+    let mut anchor_id = "preamble".to_owned();
+    let mut images = Vec::new();
+    let mut total_bytes = 0u64;
+
+    for line in text.lines() {
+        if markdown_heading(line).is_some() {
+            section_number += 1;
+            anchor_id = format!("section_{section_number}");
+        }
+        for capture in image_pattern.captures_iter(line) {
+            if images.len() >= MAX_IMAGES_PER_DOCUMENT {
+                return Ok(images);
+            }
+            if !anchors.iter().any(|anchor| anchor.id == anchor_id) {
+                continue;
+            }
+            let target = capture[2]
+                .trim()
+                .trim_matches(|character| character == '<' || character == '>')
+                .split_whitespace()
+                .next()
+                .unwrap_or_default();
+            if target.is_empty()
+                || target.contains("://")
+                || target.starts_with("data:")
+                || target.starts_with('#')
+            {
+                continue;
+            }
+            let target_path = PathBuf::from(target);
+            if target_path.is_absolute() {
+                continue;
+            }
+            let resolved = parent.join(&target_path);
+            let Ok(canonical) = fs::canonicalize(&resolved) else {
+                continue;
+            };
+            if !canonical.starts_with(&canonical_parent) || !canonical.is_file() {
+                continue;
+            }
+            let metadata = fs::metadata(&canonical)?;
+            if metadata.len() > MAX_IMAGE_BYTES
+                || total_bytes.saturating_add(metadata.len()) > MAX_IMAGE_BYTES
+            {
+                continue;
+            }
+            let bytes = fs::read(&canonical)?;
+            let Some(mime_type) = detect_image_mime(&bytes) else {
+                continue;
+            };
+            total_bytes = total_bytes.saturating_add(bytes.len() as u64);
+            let file_name = canonical
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("image")
+                .to_owned();
+            images.push(ExtractedImage {
+                id: format!("image_{}", images.len() + 1),
+                anchor_id: anchor_id.clone(),
+                file_name,
+                mime_type: mime_type.to_owned(),
+                sha256: sha256_hex(&bytes),
+                bytes,
+            });
+        }
+    }
+    Ok(images)
+}
+
+fn detect_image_mime(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
 }
 
 fn markdown_heading(line: &str) -> Option<String> {
@@ -272,17 +382,12 @@ fn truncate_label(value: &str, max: usize) -> String {
     label
 }
 
-fn extract_docx(bytes: &[u8]) -> Result<(String, Vec<DocumentAnchor>), DocumentError> {
-    let archive = ZipArchive::new(Cursor::new(bytes))
+fn extract_docx(
+    bytes: &[u8],
+) -> Result<(String, Vec<DocumentAnchor>, Vec<ExtractedImage>), DocumentError> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))
         .map_err(|error| DocumentError::InvalidDocx(error.to_string()))?;
-    let mut archive = archive;
-    let mut document = archive
-        .by_name("word/document.xml")
-        .map_err(|error| DocumentError::InvalidDocx(error.to_string()))?;
-    let mut xml = String::new();
-    document
-        .read_to_string(&mut xml)
-        .map_err(|error| DocumentError::InvalidDocx(error.to_string()))?;
+    let xml = read_docx_entry(&mut archive, "word/document.xml")?;
     let paragraphs = parse_docx_paragraphs(&xml)?;
     let text = paragraphs
         .iter()
@@ -290,16 +395,138 @@ fn extract_docx(bytes: &[u8]) -> Result<(String, Vec<DocumentAnchor>), DocumentE
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
-    if paragraphs.iter().any(|paragraph| paragraph.is_heading) {
-        Ok((text.clone(), group_docx_anchors(&paragraphs)))
+    let (anchors, placements) = if paragraphs.iter().any(|paragraph| paragraph.is_heading) {
+        group_docx_content(&paragraphs)
     } else {
-        Ok((text.clone(), extract_text_anchors(&text)))
+        let anchors = extract_text_anchors(&text);
+        let placements = paragraph_image_placements(&paragraphs);
+        (anchors, placements)
+    };
+    let relationships = read_docx_image_relationships(&mut archive)?;
+    let images = read_docx_images(&mut archive, &relationships, placements)?;
+    Ok((text, anchors, images))
+}
+
+fn read_docx_entry(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    name: &str,
+) -> Result<String, DocumentError> {
+    let mut entry = archive
+        .by_name(name)
+        .map_err(|error| DocumentError::InvalidDocx(error.to_string()))?;
+    let mut content = String::new();
+    entry
+        .read_to_string(&mut content)
+        .map_err(|error| DocumentError::InvalidDocx(error.to_string()))?;
+    Ok(content)
+}
+
+fn read_docx_image_relationships(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+) -> Result<HashMap<String, String>, DocumentError> {
+    let Ok(xml) = read_docx_entry(archive, "word/_rels/document.xml.rels") else {
+        return Ok(HashMap::new());
+    };
+    let mut reader = Reader::from_str(&xml);
+    let mut buffer = Vec::new();
+    let mut relationships = HashMap::new();
+    loop {
+        let event = reader
+            .read_event_into(&mut buffer)
+            .map_err(|error| DocumentError::InvalidDocx(error.to_string()))?;
+        match event {
+            Event::Start(start) | Event::Empty(start)
+                if start.name().local_name().as_ref() == "Relationship" =>
+            {
+                let Some(id) = docx_attribute(&start, "Id") else {
+                    buffer.clear();
+                    continue;
+                };
+                if let Some(target) = docx_attribute(&start, "Target")
+                    .and_then(|target| normalize_docx_media_target(&target))
+                {
+                    relationships.insert(id, target);
+                }
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        buffer.clear();
     }
+    Ok(relationships)
+}
+
+fn normalize_docx_media_target(target: &str) -> Option<String> {
+    let normalized = target.replace('\\', "/");
+    let relative = normalized.trim_start_matches('/');
+    let relative = relative.strip_prefix("word/").unwrap_or(relative);
+    if !relative.starts_with("media/")
+        || relative
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        return None;
+    }
+    Some(relative.to_owned())
+}
+
+fn read_docx_images(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    relationships: &HashMap<String, String>,
+    placements: Vec<DocxImagePlacement>,
+) -> Result<Vec<ExtractedImage>, DocumentError> {
+    let mut images = Vec::new();
+    let mut total_bytes = 0u64;
+    for placement in placements {
+        if images.len() >= MAX_IMAGES_PER_DOCUMENT {
+            break;
+        }
+        let Some(target) = relationships.get(&placement.relationship_id) else {
+            continue;
+        };
+        let entry_name = format!("word/{target}");
+        let Ok(entry) = archive.by_name(&entry_name) else {
+            continue;
+        };
+        if entry.size() > MAX_IMAGE_BYTES {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        entry
+            .take(MAX_IMAGE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| DocumentError::InvalidDocx(error.to_string()))?;
+        if bytes.len() as u64 > MAX_IMAGE_BYTES
+            || total_bytes.saturating_add(bytes.len() as u64) > MAX_IMAGE_BYTES
+        {
+            continue;
+        }
+        let Some(mime_type) = detect_image_mime(&bytes) else {
+            continue;
+        };
+        total_bytes = total_bytes.saturating_add(bytes.len() as u64);
+        let file_name = target.rsplit('/').next().unwrap_or("image").to_owned();
+        images.push(ExtractedImage {
+            id: format!("image_{}", images.len() + 1),
+            anchor_id: placement.anchor_id,
+            file_name,
+            mime_type: mime_type.to_owned(),
+            sha256: sha256_hex(&bytes),
+            bytes,
+        });
+    }
+    Ok(images)
+}
+
+struct DocxImagePlacement {
+    relationship_id: String,
+    anchor_id: String,
 }
 
 struct DocxParagraph {
     text: String,
     is_heading: bool,
+    image_relationships: Vec<String>,
 }
 
 fn parse_docx_paragraphs(xml: &str) -> Result<Vec<DocxParagraph>, DocumentError> {
@@ -308,6 +535,7 @@ fn parse_docx_paragraphs(xml: &str) -> Result<Vec<DocxParagraph>, DocumentError>
     let mut paragraphs = Vec::new();
     let mut current_text = String::new();
     let mut current_style: Option<String> = None;
+    let mut current_images = Vec::<String>::new();
     let mut in_paragraph = false;
     let mut in_text = false;
 
@@ -321,16 +549,30 @@ fn parse_docx_paragraphs(xml: &str) -> Result<Vec<DocxParagraph>, DocumentError>
                     in_paragraph = true;
                     current_text.clear();
                     current_style = None;
+                    current_images.clear();
                 }
                 "pStyle" if in_paragraph => {
                     current_style = docx_attribute(&start, "val");
                 }
                 "t" if in_paragraph => in_text = true,
+                "blip" | "imagedata" if in_paragraph => {
+                    if let Some(id) = docx_image_relationship(&start) {
+                        current_images.push(id);
+                    }
+                }
                 _ => {}
             },
             Event::Empty(empty) => {
-                if empty.name().local_name().as_ref() == "pStyle" && in_paragraph {
-                    current_style = docx_attribute(&empty, "val");
+                if in_paragraph {
+                    match empty.name().local_name().as_ref() {
+                        "pStyle" => current_style = docx_attribute(&empty, "val"),
+                        "blip" | "imagedata" => {
+                            if let Some(id) = docx_image_relationship(&empty) {
+                                current_images.push(id);
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
             Event::Text(text) if in_text => {
@@ -342,14 +584,16 @@ fn parse_docx_paragraphs(xml: &str) -> Result<Vec<DocxParagraph>, DocumentError>
                     in_paragraph = false;
                     in_text = false;
                     let text = normalize_inline_text(&current_text);
-                    if !text.is_empty() {
+                    if !text.is_empty() || !current_images.is_empty() {
                         paragraphs.push(DocxParagraph {
                             text,
                             is_heading: current_style.as_deref().is_some_and(is_docx_heading_style),
+                            image_relationships: std::mem::take(&mut current_images),
                         });
                     }
                     current_text.clear();
                     current_style = None;
+                    current_images.clear();
                 }
                 _ => {}
             },
@@ -359,6 +603,10 @@ fn parse_docx_paragraphs(xml: &str) -> Result<Vec<DocxParagraph>, DocumentError>
         buffer.clear();
     }
     Ok(paragraphs)
+}
+
+fn docx_image_relationship(start: &quick_xml::events::BytesStart<'_>) -> Option<String> {
+    docx_attribute(start, "embed").or_else(|| docx_attribute(start, "id"))
 }
 
 fn docx_attribute(start: &quick_xml::events::BytesStart<'_>, local_name: &str) -> Option<String> {
@@ -384,34 +632,56 @@ fn normalize_inline_text(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn group_docx_anchors(paragraphs: &[DocxParagraph]) -> Vec<DocumentAnchor> {
+fn group_docx_content(
+    paragraphs: &[DocxParagraph],
+) -> (Vec<DocumentAnchor>, Vec<DocxImagePlacement>) {
     let mut anchors = Vec::new();
+    let mut placements = Vec::new();
     let mut label: Option<String> = None;
     let mut lines = Vec::<String>::new();
+    let mut images = Vec::<String>::new();
     let mut section_number = 0usize;
 
     for paragraph in paragraphs {
         if paragraph.is_heading {
-            flush_docx_anchor(&mut anchors, &mut label, &mut lines, &mut section_number);
+            flush_docx_content(
+                &mut anchors,
+                &mut placements,
+                &mut label,
+                &mut lines,
+                &mut images,
+                &mut section_number,
+            );
             label = Some(paragraph.text.clone());
             lines.push(paragraph.text.clone());
         } else {
             lines.push(paragraph.text.clone());
         }
+        images.extend(paragraph.image_relationships.iter().cloned());
     }
-    flush_docx_anchor(&mut anchors, &mut label, &mut lines, &mut section_number);
-    anchors
+    flush_docx_content(
+        &mut anchors,
+        &mut placements,
+        &mut label,
+        &mut lines,
+        &mut images,
+        &mut section_number,
+    );
+    (anchors, placements)
 }
 
-fn flush_docx_anchor(
+fn flush_docx_content(
     anchors: &mut Vec<DocumentAnchor>,
+    placements: &mut Vec<DocxImagePlacement>,
     label: &mut Option<String>,
     lines: &mut Vec<String>,
+    images: &mut Vec<String>,
     section_number: &mut usize,
 ) {
     let text = lines.join("\n").trim().to_owned();
     lines.clear();
     if text.is_empty() {
+        images.clear();
         *label = None;
         return;
     }
@@ -421,11 +691,38 @@ fn flush_docx_anchor(
     } else {
         ("preamble".to_owned(), "开篇".to_owned())
     };
+    placements.extend(images.drain(..).map(|relationship_id| DocxImagePlacement {
+        relationship_id,
+        anchor_id: id.clone(),
+    }));
     anchors.push(DocumentAnchor {
         id,
         label: anchor_label,
         text,
     });
+}
+
+fn paragraph_image_placements(paragraphs: &[DocxParagraph]) -> Vec<DocxImagePlacement> {
+    let mut placements = Vec::new();
+    let mut paragraph_number = 0usize;
+    let mut anchor_id = "paragraph_1".to_owned();
+    for paragraph in paragraphs {
+        if !paragraph.text.trim().is_empty() {
+            paragraph_number += 1;
+            anchor_id = format!("paragraph_{paragraph_number}");
+        }
+        placements.extend(
+            paragraph
+                .image_relationships
+                .iter()
+                .cloned()
+                .map(|relationship_id| DocxImagePlacement {
+                    relationship_id,
+                    anchor_id: anchor_id.clone(),
+                }),
+        );
+    }
+    placements
 }
 
 fn extract_pdf(bytes: &[u8]) -> Result<(String, Vec<DocumentAnchor>), DocumentError> {

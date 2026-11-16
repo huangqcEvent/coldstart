@@ -30,6 +30,7 @@ pub fn run() {
             commands::load_delivery_overview,
             commands::read_project_memory,
             commands::import_requirement_document,
+            commands::read_requirement_image,
             commands::generate_blueprint,
             commands::save_blueprint_draft,
             commands::publish_blueprint,

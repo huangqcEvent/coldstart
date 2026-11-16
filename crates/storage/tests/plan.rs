@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use support::{PlanFixture, agent_task};
 
 #[test]
-fn migrates_v3_database_to_v10_and_preserves_the_published_blueprint() {
+fn migrates_v3_database_to_v11_and_preserves_the_published_blueprint() {
     let fixture = PlanFixture::new(vec![agent_task("foundation:demo", &[])]);
     let database_path = fixture.database_path.clone();
     let project_id = fixture.project_id;
@@ -36,12 +36,13 @@ fn migrates_v3_database_to_v10_and_preserves_the_published_blueprint() {
              DROP TABLE work_items;
              DROP TABLE task_specs;
              DROP TABLE plan_revisions;
+             ALTER TABLE artifacts DROP COLUMN images_json;
              PRAGMA user_version = 3;",
         )
         .expect("v3 state must be restored");
     drop(connection);
 
-    let database = Database::open(&database_path).expect("v10 migration must run");
+    let database = Database::open(&database_path).expect("v11 migration must run");
     let published = database
         .latest_blueprint(&project_id, BlueprintStatus::Published)
         .expect("blueprint query must work")
@@ -52,7 +53,7 @@ fn migrates_v3_database_to_v10_and_preserves_the_published_blueprint() {
         .expect("read connection must open")
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("schema version must be readable");
-    assert_eq!(version, 10);
+    assert_eq!(version, 11);
 }
 
 #[test]

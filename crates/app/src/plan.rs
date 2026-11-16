@@ -30,12 +30,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    AppError, PlanGitGateway, PlanWorkspace,
+    AppError, PlanGitGateway, PlanWorkspace, TaskImageContent, TaskImageSummary,
     context::OpenProject,
     context_compiler::{compile_reference, compile_task_context},
     integration::git_auth_for_repository,
     plan_workspace::build_plan_workspace,
+    requirements::read_requirement_image,
     review::{read_review_snapshot_standard, validate_review_standards_for_claim},
+    task_images::collect_task_images,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -326,6 +328,61 @@ impl PlanService {
             authorization.run.review_snapshot.as_ref(),
         )?
         .ok_or(AppError::ReferenceNotFound(reference_id))
+    }
+
+    /// 列出当前任务契约能够查看的需求图片，不返回本地路径或二进制。
+    pub fn list_task_images(
+        &self,
+        project_home: PathBuf,
+        work_item_id: WorkItemId,
+        lease_token: String,
+    ) -> Result<Vec<TaskImageSummary>, AppError> {
+        let mut project = OpenProject::open(project_home)?;
+        let authorization = project.database.authorize_work(
+            &work_item_id,
+            &lease_token,
+            Utc::now(),
+            default_lease_duration(),
+        )?;
+        let plan = published_plan_for(&project, &authorization.work_item)?;
+        let blueprint = project
+            .database
+            .load_blueprint(&plan.blueprint_revision_id)?
+            .ok_or(AppError::BlueprintNotFound(plan.blueprint_revision_id))?;
+        collect_task_images(&project, &blueprint.content, &authorization.task_spec)
+    }
+
+    /// 在有效租约与蓝图来源锚点双重校验后读取一张需求图片。
+    pub fn read_task_image(
+        &self,
+        project_home: PathBuf,
+        work_item_id: WorkItemId,
+        lease_token: String,
+        artifact_id: coldstart_core::ArtifactId,
+        image_id: String,
+    ) -> Result<TaskImageContent, AppError> {
+        let mut project = OpenProject::open(project_home.clone())?;
+        let authorization = project.database.authorize_work(
+            &work_item_id,
+            &lease_token,
+            Utc::now(),
+            default_lease_duration(),
+        )?;
+        let plan = published_plan_for(&project, &authorization.work_item)?;
+        let blueprint = project
+            .database
+            .load_blueprint(&plan.blueprint_revision_id)?
+            .ok_or(AppError::BlueprintNotFound(plan.blueprint_revision_id))?;
+        let image = collect_task_images(&project, &blueprint.content, &authorization.task_spec)?
+            .into_iter()
+            .find(|image| image.artifact_id == artifact_id && image.image_id == image_id)
+            .ok_or_else(|| AppError::RequirementImageNotFound(image_id.clone()))?;
+        drop(project);
+        let content = read_requirement_image(project_home, artifact_id, &image_id)?;
+        Ok(TaskImageContent {
+            image,
+            bytes: content.bytes,
+        })
     }
 
     pub fn heartbeat(

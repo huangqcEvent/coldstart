@@ -13,6 +13,7 @@ import * as projectApi from './api/projectApi';
 import * as requirementsApi from './api/requirementsApi';
 import * as reviewApi from './api/reviewApi';
 import type {
+  ArtifactImage,
   BlueprintContent,
   BlueprintRevision,
   CapabilityApiEndpoint,
@@ -65,6 +66,7 @@ vi.mock('./api/deliveryApi', () => ({
 
 vi.mock('./api/requirementsApi', () => ({
   importRequirementDocument: vi.fn(),
+  readRequirementImage: vi.fn(),
   generateBlueprint: vi.fn(),
   saveBlueprintDraft: vi.fn(),
   publishBlueprint: vi.fn(),
@@ -130,6 +132,15 @@ vi.mock('./api/memoryApi', () => ({
 const projectPath = String.raw`D:\coldstart-projects\permafrost`;
 const sourceId = '11111111-1111-4111-8111-111111111111';
 const anchorId = 'section_1';
+const sourceImage: ArtifactImage = {
+  id: 'image_1',
+  anchorId,
+  fileName: 'order-flow.png',
+  mimeType: 'image/png',
+  byteSize: 2048,
+  sha256: 'e'.repeat(64),
+  relativePath: 'images/image_1.png',
+};
 
 const status: ProjectStatus = {
   projectId: 'prj_01JCMQ4W7T3K8Y9F2N6R5D0XAB',
@@ -711,6 +722,7 @@ function makeWorkspace(overrides: Partial<ProjectWorkspace> = {}): ProjectWorksp
     status,
     sources: [],
     sourceAnchors: {},
+    sourceImages: {},
     draft: null,
     published: null,
     inbox: [],
@@ -902,6 +914,7 @@ beforeEach(() => {
   } as never);
   vi.mocked(deliveryApi.readDeliveryOverview).mockReset();
   vi.mocked(requirementsApi.importRequirementDocument).mockReset();
+  vi.mocked(requirementsApi.readRequirementImage).mockReset();
   vi.mocked(requirementsApi.generateBlueprint).mockReset();
   vi.mocked(requirementsApi.saveBlueprintDraft).mockReset();
   vi.mocked(requirementsApi.publishBlueprint).mockReset();
@@ -1249,6 +1262,46 @@ describe('ColdStart project workspace', () => {
 
     await user.click(screen.getByRole('button', { name: '项目总览' }));
     expect(await screen.findByText(/2 个事件/)).toBeInTheDocument();
+  });
+
+  it('lists imported requirement images and previews originals only on demand', async () => {
+    const imageWorkspace = makeWorkspace({
+      sources: [source],
+      sourceAnchors: { [sourceId]: [anchor] },
+      sourceImages: { [sourceId]: [sourceImage] },
+    });
+    const user = await openProject(imageWorkspace);
+    vi.mocked(requirementsApi.readRequirementImage).mockResolvedValue({
+      image: sourceImage,
+      sourceFileName: source.fileName,
+      anchorLabel: anchor.label,
+      dataBase64: 'iVBORw0KGgo=',
+    });
+
+    await user.click(screen.getByRole('button', { name: '需求导入' }));
+    expect(
+      await screen.findByText(
+        '原图不参与自动需求分析，仅供人工确认和 Codex 按任务权限按需查看。',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('1 张图片')).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole('button', { name: '查看原图 order-flow.png（订单系统）' }),
+    );
+
+    const preview = await screen.findByRole('img', {
+      name: '订单系统 来源图片：order-flow.png',
+    });
+    expect(preview).toHaveAttribute(
+      'src',
+      'data:image/png;base64,iVBORw0KGgo=',
+    );
+    expect(requirementsApi.readRequirementImage).toHaveBeenCalledWith(
+      projectPath,
+      sourceId,
+      sourceImage.id,
+    );
   });
 
   it('loads open GitHub issues and imports a selected issue as a requirement source', async () => {

@@ -84,6 +84,18 @@ pub struct DocumentAnchor {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ArtifactImage {
+    pub id: String,
+    pub anchor_id: String,
+    pub file_name: String,
+    pub mime_type: String,
+    pub byte_size: u64,
+    pub sha256: String,
+    pub relative_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ArtifactMetadata {
     pub id: ArtifactId,
     pub project_id: ProjectId,

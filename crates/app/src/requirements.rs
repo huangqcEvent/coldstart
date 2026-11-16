@@ -14,11 +14,12 @@ use coldstart_adapters::{
     BlueprintModel, ModelAnchor, ModelConfig, ModelExtractionRequest, ModelSource, extract_document,
 };
 use coldstart_core::{
-    ArtifactId, ArtifactMetadata, BLUEPRINT_PROMPT_VERSION, BlueprintContent, BlueprintGeneration,
-    BlueprintRevisionId, BlueprintStatus, GenerationSource, InfoRequestDraft, InfoRequestId,
-    ProjectId, validate_blueprint_structure,
+    ArtifactId, ArtifactImage, ArtifactMetadata, BLUEPRINT_PROMPT_VERSION, BlueprintContent,
+    BlueprintGeneration, BlueprintRevisionId, BlueprintStatus, GenerationSource, InfoRequestDraft,
+    InfoRequestId, ProjectId, validate_blueprint_structure,
 };
 use coldstart_storage::Database;
+use sha2::{Digest, Sha256};
 
 use crate::{
     AppError, ProjectWorkspace, context::OpenProject, plan_workspace::build_plan_workspace,
@@ -26,6 +27,79 @@ use crate::{
 
 pub const MAX_SOURCE_CONTEXT_CHARACTERS: usize = 80_000;
 const MODEL_PROVIDER: &str = "OpenAI Compatible";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequirementImageContent {
+    pub image: ArtifactImage,
+    pub source_file_name: String,
+    pub anchor_label: String,
+    pub bytes: Vec<u8>,
+}
+
+/// 读取来源图片前再次校验相对路径、大小和哈希，避免 UI 或 Agent 读到被替换的文件。
+pub fn read_requirement_image(
+    project_home: PathBuf,
+    artifact_id: ArtifactId,
+    image_id: &str,
+) -> Result<RequirementImageContent, AppError> {
+    let project = OpenProject::open(project_home)?;
+    let artifact = project
+        .database
+        .list_artifacts(&project.project.id)?
+        .into_iter()
+        .find(|artifact| artifact.id == artifact_id)
+        .ok_or(AppError::Storage(
+            coldstart_storage::StorageError::ArtifactNotFound(artifact_id),
+        ))?;
+    let images = project.database.load_artifact_images(&artifact_id)?;
+    let image = images
+        .into_iter()
+        .find(|image| image.id == image_id)
+        .ok_or_else(|| AppError::RequirementImageNotFound(image_id.to_owned()))?;
+    let anchor_label = project
+        .database
+        .load_artifact_anchors(&artifact_id)?
+        .into_iter()
+        .find(|anchor| anchor.id == image.anchor_id)
+        .map(|anchor| anchor.label)
+        .unwrap_or_else(|| image.anchor_id.clone());
+    let relative_path = Path::new(&image.relative_path);
+    if relative_path.is_absolute()
+        || !relative_path.starts_with("images")
+        || relative_path
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(AppError::RequirementImageInvalid);
+    }
+    let artifact_directory = project
+        .home
+        .artifacts_directory()
+        .join(artifact_id.to_string());
+    let images_directory = fs::canonicalize(artifact_directory.join("images"))
+        .map_err(|_| AppError::RequirementImageInvalid)?;
+    let stored_path = fs::canonicalize(artifact_directory.join(relative_path))
+        .map_err(|_| AppError::RequirementImageInvalid)?;
+    if !stored_path.starts_with(&images_directory) {
+        return Err(AppError::RequirementImageInvalid);
+    }
+    let bytes = fs::read(&stored_path).map_err(|_| AppError::RequirementImageInvalid)?;
+    if bytes.len() as u64 != image.byte_size || sha256_hex(&bytes) != image.sha256 {
+        return Err(AppError::RequirementImageInvalid);
+    }
+    Ok(RequirementImageContent {
+        image,
+        source_file_name: artifact.file_name,
+        anchor_label,
+        bytes,
+    })
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut digest = Sha256::new();
+    digest.update(bytes);
+    format!("{:x}", digest.finalize())
+}
 
 pub struct RequirementsService<M> {
     model: M,
@@ -211,6 +285,19 @@ pub(crate) fn import_requirement_file_as(
         import_source,
         imported_at: Utc::now(),
     };
+    let artifact_images = extracted
+        .images
+        .iter()
+        .map(|image| ArtifactImage {
+            id: image.id.clone(),
+            anchor_id: image.anchor_id.clone(),
+            file_name: image.file_name.clone(),
+            mime_type: image.mime_type.clone(),
+            byte_size: image.bytes.len() as u64,
+            sha256: image.sha256.clone(),
+            relative_path: format!("images/{}.{}", image.id, image_extension(&image.mime_type)),
+        })
+        .collect::<Vec<_>>();
 
     let result: Result<(), AppError> = (|| {
         fs::create_dir_all(&artifact_directory)?;
@@ -220,9 +307,21 @@ pub(crate) fn import_requirement_file_as(
             extracted.text.as_bytes(),
         )?;
         write_pretty_json(&artifact_directory.join("anchors.json"), &extracted.anchors)?;
-        project
-            .database
-            .insert_artifact(&artifact, &extracted.anchors)?;
+        if !artifact_images.is_empty() {
+            fs::create_dir_all(artifact_directory.join("images"))?;
+            for (image, metadata) in extracted.images.iter().zip(&artifact_images) {
+                fs::write(
+                    artifact_directory.join(&metadata.relative_path),
+                    &image.bytes,
+                )?;
+            }
+            write_pretty_json(&artifact_directory.join("images.json"), &artifact_images)?;
+        }
+        project.database.insert_artifact_with_images(
+            &artifact,
+            &extracted.anchors,
+            &artifact_images,
+        )?;
         Ok(())
     })();
 
@@ -237,10 +336,15 @@ pub(crate) fn build_workspace(project: OpenProject) -> Result<ProjectWorkspace, 
     let status = project.status()?;
     let sources = project.database.list_artifacts(&project.project.id)?;
     let mut source_anchors = BTreeMap::new();
+    let mut source_images = BTreeMap::new();
     for source in &sources {
         source_anchors.insert(
             source.id.to_string(),
             project.database.load_artifact_anchors(&source.id)?,
+        );
+        source_images.insert(
+            source.id.to_string(),
+            project.database.load_artifact_images(&source.id)?,
         );
     }
     let draft = project
@@ -255,12 +359,22 @@ pub(crate) fn build_workspace(project: OpenProject) -> Result<ProjectWorkspace, 
         status,
         sources,
         source_anchors,
+        source_images,
         draft,
         published,
         inbox,
         facts,
         plan,
     })
+}
+
+fn image_extension(mime_type: &str) -> &'static str {
+    match mime_type {
+        "image/jpeg" => "jpg",
+        "image/gif" => "gif",
+        "image/webp" => "webp",
+        _ => "png",
+    }
 }
 
 fn validate_content(

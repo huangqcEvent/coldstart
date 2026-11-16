@@ -48,7 +48,7 @@ fn credential(project_id: coldstart_core::ProjectId) -> CredentialMetadata {
 }
 
 #[test]
-fn migrates_v4_to_v10_and_persists_integration_state() {
+fn migrates_v4_to_v11_and_persists_integration_state() {
     let fixture = PlanFixture::new(vec![support::agent_task("foundation:demo", &[])]);
     let database_path = fixture.database_path.clone();
     let project_id = fixture.project_id;
@@ -89,6 +89,7 @@ fn migrates_v4_to_v10_and_persists_integration_state() {
              DROP TABLE repositories;
              DROP TABLE credentials;
              DROP TABLE project_settings;
+             ALTER TABLE artifacts DROP COLUMN images_json;
              PRAGMA user_version = 4;",
         )
         .expect("v4 state must be restored");
@@ -97,7 +98,7 @@ fn migrates_v4_to_v10_and_persists_integration_state() {
     let mut database = Database::open(&database_path).expect("v4 migration must run");
     assert_eq!(
         database.schema_version().expect("schema version must load"),
-        10
+        11
     );
 
     let credential = credential(project_id);
