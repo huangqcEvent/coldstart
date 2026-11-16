@@ -8,9 +8,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    ArtifactId, BlueprintRevisionId, CredentialId, GenerationSource, GitSyncId, InfoRequestId,
-    LeaseId, PlanRevisionId, Project, ProjectFactId, ProjectId, PullRequestId, RepositoryId,
-    WorkItemId, WorkReportId,
+    ArtifactId, BlueprintRevisionId, CodeInvestigationId, CredentialId, GenerationSource,
+    GitSyncId, InfoRequestId, LeaseId, PlanRevisionId, Project, ProjectFactId, ProjectId,
+    PullRequestId, RepositoryId, WorkItemId, WorkReportId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,6 +73,9 @@ pub enum DomainEventKind {
         fact_id: ProjectFactId,
         version: u64,
     },
+    InfoRequestDismissed {
+        request_id: InfoRequestId,
+    },
     PlanDraftCreated {
         revision_id: PlanRevisionId,
         revision_number: u64,
@@ -114,6 +117,31 @@ pub enum DomainEventKind {
     WorkCompleted {
         work_item_id: WorkItemId,
         task_key: String,
+    },
+    WorkIntegrated {
+        work_item_id: WorkItemId,
+        task_key: String,
+        reference: String,
+    },
+    CodeInvestigationCreated {
+        investigation_id: CodeInvestigationId,
+        repository_key: String,
+        base_ref: String,
+    },
+    CodeInvestigationClaimed {
+        investigation_id: CodeInvestigationId,
+        agent_profile: String,
+    },
+    CodeInvestigationSubmitted {
+        investigation_id: CodeInvestigationId,
+        commit_sha: String,
+        finding_count: usize,
+    },
+    CodeInvestigationConfirmed {
+        investigation_id: CodeInvestigationId,
+    },
+    CodeInvestigationRejected {
+        investigation_id: CodeInvestigationId,
     },
     VerificationStarted {
         work_item_id: WorkItemId,
@@ -246,6 +274,7 @@ impl DomainEventKind {
             Self::BlueprintPublished { .. } => "blueprint_published",
             Self::InfoRequestCreated { .. } => "info_request_created",
             Self::InfoRequestResolved { .. } => "info_request_resolved",
+            Self::InfoRequestDismissed { .. } => "info_request_dismissed",
             Self::PlanDraftCreated { .. } => "plan_draft_created",
             Self::PlanPublished { .. } => "plan_published",
             Self::PlanSuperseded { .. } => "plan_superseded",
@@ -255,6 +284,12 @@ impl DomainEventKind {
             Self::WorkBlocked { .. } => "work_blocked",
             Self::WorkReportSubmitted { .. } => "work_report_submitted",
             Self::WorkCompleted { .. } => "work_completed",
+            Self::WorkIntegrated { .. } => "work_integrated",
+            Self::CodeInvestigationCreated { .. } => "code_investigation_created",
+            Self::CodeInvestigationClaimed { .. } => "code_investigation_claimed",
+            Self::CodeInvestigationSubmitted { .. } => "code_investigation_submitted",
+            Self::CodeInvestigationConfirmed { .. } => "code_investigation_confirmed",
+            Self::CodeInvestigationRejected { .. } => "code_investigation_rejected",
             Self::VerificationStarted { .. } => "verification_started",
             Self::VerificationPassed { .. } => "verification_passed",
             Self::VerificationFailed { .. } => "verification_failed",

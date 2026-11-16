@@ -249,6 +249,14 @@ impl PullRequestService {
             project.database.save_pull_request(&record)?;
         }
         project.database.save_pull_request_insights(&insights)?;
+        if remote.merged && remote.base.reference == repository.default_branch {
+            project.database.mark_work_integrated(
+                &project.project.id,
+                &record.work_item_id,
+                &format!("GitHub PR #{}", record.number),
+                Utc::now(),
+            )?;
+        }
         Ok(record)
     }
 

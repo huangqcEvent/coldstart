@@ -6,6 +6,7 @@ import App from './App';
 import * as deliveryApi from './api/deliveryApi';
 import * as githubProjectApi from './api/githubProjectApi';
 import * as integrationApi from './api/integrationApi';
+import * as investigationApi from './api/investigationApi';
 import * as issueApi from './api/issueApi';
 import * as memoryApi from './api/memoryApi';
 import * as planApi from './api/planApi';
@@ -18,6 +19,7 @@ import type {
   BlueprintRevision,
   CapabilityApiEndpoint,
   CapabilityStatusView,
+  CodeInvestigation,
   CredentialMetadata,
   DeliveryOverviewView,
   DeliveryPullRequestView,
@@ -71,7 +73,14 @@ vi.mock('./api/requirementsApi', () => ({
   saveBlueprintDraft: vi.fn(),
   publishBlueprint: vi.fn(),
   resolveInfoRequest: vi.fn(),
+  dismissInfoRequest: vi.fn(),
   pickRequirementFile: vi.fn(),
+}));
+
+vi.mock('./api/investigationApi', () => ({
+  createCodeInvestigation: vi.fn(),
+  confirmCodeInvestigation: vi.fn(),
+  rejectCodeInvestigation: vi.fn(),
 }));
 
 vi.mock('./api/planApi', () => ({
@@ -365,6 +374,8 @@ function makeAgentWorkItem(
       createdAt: '2026-10-30T11:05:00Z',
       updatedAt: '2026-10-30T11:05:00Z',
       completedAt: null,
+      integratedAt: null,
+      integrationReference: null,
       ...overrides,
     },
   };
@@ -411,6 +422,8 @@ function makeHumanWorkItem(
       createdAt: '2026-10-30T11:05:00Z',
       updatedAt: '2026-10-30T11:05:00Z',
       completedAt: null,
+      integratedAt: null,
+      integrationReference: null,
       ...overrides,
     },
   };
@@ -727,7 +740,35 @@ function makeWorkspace(overrides: Partial<ProjectWorkspace> = {}): ProjectWorksp
     published: null,
     inbox: [],
     facts: [],
+    codeInvestigations: [],
     plan: makePlanWorkspace(),
+    ...overrides,
+  };
+}
+
+function makeCodeInvestigation(
+  overrides: Partial<CodeInvestigation> = {},
+): CodeInvestigation {
+  return {
+    id: '20202020-2020-4020-8020-202020202020',
+    projectId: status.projectId,
+    repositoryId: repository.id,
+    repositoryKey: repository.key,
+    baseRef: repository.defaultBranch,
+    question: '现有订单入口在哪里？',
+    status: 'requested',
+    agentProfile: null,
+    leaseExpiresAt: null,
+    commitSha: null,
+    summary: null,
+    findings: [],
+    limitations: [],
+    reportHash: null,
+    rejectionReason: null,
+    createdAt: '2026-11-16T09:00:00Z',
+    claimedAt: null,
+    submittedAt: null,
+    confirmedAt: null,
     ...overrides,
   };
 }
@@ -914,11 +955,15 @@ beforeEach(() => {
   } as never);
   vi.mocked(deliveryApi.readDeliveryOverview).mockReset();
   vi.mocked(requirementsApi.importRequirementDocument).mockReset();
+  vi.mocked(investigationApi.createCodeInvestigation).mockReset();
+  vi.mocked(investigationApi.confirmCodeInvestigation).mockReset();
+  vi.mocked(investigationApi.rejectCodeInvestigation).mockReset();
   vi.mocked(requirementsApi.readRequirementImage).mockReset();
   vi.mocked(requirementsApi.generateBlueprint).mockReset();
   vi.mocked(requirementsApi.saveBlueprintDraft).mockReset();
   vi.mocked(requirementsApi.publishBlueprint).mockReset();
   vi.mocked(requirementsApi.resolveInfoRequest).mockReset();
+  vi.mocked(requirementsApi.dismissInfoRequest).mockReset();
   vi.mocked(requirementsApi.pickRequirementFile).mockReset();
   vi.mocked(planApi.readPlanWorkspace).mockReset();
   vi.mocked(planApi.generatePlanDraft).mockReset();
@@ -1264,6 +1309,146 @@ describe('ColdStart project workspace', () => {
     expect(await screen.findByText(/2 个事件/)).toBeInTheDocument();
   });
 
+  it('creates a read-only code investigation with the selected repository and base ref', async () => {
+    const investigation = makeCodeInvestigation({
+      findings: [
+        {
+          path: 'src/not-authorized.ts',
+          lineStart: 1,
+          lineEnd: 3,
+          symbol: null,
+          summary: '这条证据还不应展示。',
+          risk: '未经人工确认。',
+          suggestedChangePaths: [],
+        },
+      ],
+    });
+    const user = await openProject(makeWorkspace());
+    vi.mocked(investigationApi.createCodeInvestigation).mockResolvedValue(
+      makeWorkspace({ codeInvestigations: [investigation] }),
+    );
+
+    await user.click(screen.getByRole('button', { name: '需求导入' }));
+    const repositorySelect = await screen.findByLabelText('调查仓库');
+    await waitFor(() => expect(repositorySelect).toHaveValue('web'));
+    const baseRefInput = screen.getByLabelText('调查基线分支');
+    await user.clear(baseRefInput);
+    await user.type(baseRefInput, 'release/2026');
+    await user.type(
+      screen.getByLabelText('需要 Codex 查清什么'),
+      '现有订单入口和库存事务边界在哪里？',
+    );
+
+    await user.click(screen.getByRole('button', { name: '创建调查请求' }));
+
+    expect(investigationApi.createCodeInvestigation).toHaveBeenCalledWith(
+      projectPath,
+      'web',
+      'release/2026',
+      '现有订单入口和库存事务边界在哪里？',
+    );
+    expect(await screen.findByText('等待 Codex 领取')).toBeInTheDocument();
+    expect(screen.queryByText('这条证据还不应展示。')).not.toBeInTheDocument();
+  });
+
+  it('shows submitted evidence and confirms a code investigation explicitly', async () => {
+    const investigation = makeCodeInvestigation({
+      status: 'submitted',
+      agentProfile: 'codex',
+      commitSha: 'abcdef0123456789abcdef0123456789abcdef01',
+      summary: '订单创建入口位于订单服务，库存扣减使用独立事务。',
+      findings: [
+        {
+          path: 'server/src/order/service.rs',
+          lineStart: 41,
+          lineEnd: 88,
+          symbol: 'create_order',
+          summary: '订单创建在库存扣减之后提交。',
+          risk: '新增优惠逻辑需要保持库存事务边界。',
+          suggestedChangePaths: ['server/src/order/service.rs'],
+        },
+      ],
+      limitations: ['未覆盖后台手工补单流程。'],
+      submittedAt: '2026-11-16T09:30:00Z',
+    });
+    const user = await openProject(
+      makeWorkspace({ codeInvestigations: [investigation] }),
+    );
+    vi.mocked(investigationApi.confirmCodeInvestigation).mockResolvedValue(
+      makeWorkspace({
+        codeInvestigations: [{ ...investigation, status: 'confirmed' }],
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: '需求导入' }));
+
+    expect(await screen.findByText('等待人工确认')).toBeInTheDocument();
+    expect(screen.getByText('server/src/order/service.rs:41-88')).toBeInTheDocument();
+    expect(
+      screen.getByText('风险：新增优惠逻辑需要保持库存事务边界。'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('调查限制 · 1')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '确认证据' }));
+
+    expect(investigationApi.confirmCodeInvestigation).toHaveBeenCalledWith(
+      projectPath,
+      investigation.id,
+    );
+    expect(await screen.findByText('已确认')).toBeInTheDocument();
+  });
+
+  it('rejects a submitted code investigation only after a reason is entered', async () => {
+    const investigation = makeCodeInvestigation({
+      status: 'submitted',
+      question: '现有订单入口在哪里？',
+      summary: '仅找到 Web 入口。',
+      findings: [
+        {
+          path: 'web/src/order.ts',
+          lineStart: 10,
+          lineEnd: 20,
+          symbol: null,
+          summary: '只覆盖 Web 入口。',
+          risk: '遗漏小程序入口。',
+          suggestedChangePaths: [],
+        },
+      ],
+      submittedAt: '2026-11-16T09:30:00Z',
+    });
+    const user = await openProject(
+      makeWorkspace({ codeInvestigations: [investigation] }),
+    );
+    vi.mocked(investigationApi.rejectCodeInvestigation).mockResolvedValue(
+      makeWorkspace({
+        codeInvestigations: [
+          {
+            ...investigation,
+            status: 'rejected',
+            rejectionReason: '请补充小程序下单入口。',
+          },
+        ],
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: '需求导入' }));
+    const reason = await screen.findByLabelText('驳回调查：现有订单入口在哪里？');
+    const rejectButton = screen.getByRole('button', { name: '驳回报告' });
+    expect(rejectButton).toBeDisabled();
+
+    await user.type(reason, '请补充小程序下单入口。');
+    await user.click(rejectButton);
+
+    expect(investigationApi.rejectCodeInvestigation).toHaveBeenCalledWith(
+      projectPath,
+      investigation.id,
+      '请补充小程序下单入口。',
+    );
+    expect(
+      await screen.findByText('驳回原因：请补充小程序下单入口。'),
+    ).toBeInTheDocument();
+  });
+
   it('lists imported requirement images and previews originals only on demand', async () => {
     const imageWorkspace = makeWorkspace({
       sources: [source],
@@ -1564,15 +1749,23 @@ describe('ColdStart project workspace', () => {
 
     const generateButton = screen.getByRole('button', { name: '生成蓝图草稿' });
     expect(generateButton).toBeDisabled();
-    await user.click(screen.getByRole('checkbox'));
+    await user.click(
+      screen.getByRole('checkbox', {
+        name: /我确认将当前需求文档发送到所配置的模型服务/,
+      }),
+    );
     expect(generateButton).toBeEnabled();
     await user.click(generateButton);
 
-    expect(requirementsApi.generateBlueprint).toHaveBeenCalledWith(projectPath, {
-      baseUrl: 'http://127.0.0.1:9000/v1',
-      model: 'test-model',
-      apiKey: 'secret-key',
-    });
+    expect(requirementsApi.generateBlueprint).toHaveBeenCalledWith(
+      projectPath,
+      {
+        baseUrl: 'http://127.0.0.1:9000/v1',
+        model: 'test-model',
+        apiKey: 'secret-key',
+      },
+      [sourceId],
+    );
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '生成蓝图草稿' })).toBeEnabled();
     });
@@ -1727,6 +1920,48 @@ describe('ColdStart project workspace', () => {
     ).toBeInTheDocument();
     expect(screen.getByText('已回答与已关闭 · 1')).toBeInTheDocument();
     expect(screen.getAllByText('华东 1').length).toBeGreaterThan(0);
+  });
+
+  it('dismisses an obsolete inbox question only with an audit reason', async () => {
+    const user = await openProject(makeWorkspace({ inbox: [infoRequest] }));
+    vi.mocked(requirementsApi.dismissInfoRequest).mockResolvedValue(
+      makeWorkspace({
+        inbox: [
+          {
+            ...infoRequest,
+            status: 'dismissed',
+            answer: '该问题已被新的库存方案取代。',
+            resolvedAt: '2026-10-30T10:12:00Z',
+          },
+        ],
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: '人工 Inbox' }));
+    await user.click(screen.getByText('问题已过时或不适用？关闭它'));
+    const dismissButton = screen.getByRole('button', {
+      name: `关闭问题：${infoRequest.question}`,
+    });
+    expect(dismissButton).toBeDisabled();
+
+    await user.type(
+      screen.getByLabelText(`关闭原因：${infoRequest.question}`),
+      '该问题已被新的库存方案取代。',
+    );
+    await user.click(dismissButton);
+
+    expect(requirementsApi.dismissInfoRequest).toHaveBeenCalledWith(
+      projectPath,
+      infoRequest.id,
+      '该问题已被新的库存方案取代。',
+    );
+    expect(
+      await screen.findByText('当前没有需要人工补充的信息'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('已回答与已关闭 · 1')).toBeInTheDocument();
+    expect(
+      screen.getByText('关闭原因：该问题已被新的库存方案取代。'),
+    ).toBeInTheDocument();
   });
 
   it('keeps the last good workspace when an action fails', async () => {

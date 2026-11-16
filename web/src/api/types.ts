@@ -233,6 +233,45 @@ export interface ProjectFact {
   createdAt: string;
 }
 
+export type CodeInvestigationStatus =
+  | 'requested'
+  | 'claimed'
+  | 'submitted'
+  | 'confirmed'
+  | 'rejected';
+
+export interface CodeFinding {
+  path: string;
+  lineStart: number;
+  lineEnd: number;
+  symbol: string | null;
+  summary: string;
+  risk: string;
+  suggestedChangePaths: string[];
+}
+
+export interface CodeInvestigation {
+  id: string;
+  projectId: string;
+  repositoryId: string;
+  repositoryKey: string;
+  baseRef: string;
+  question: string;
+  status: CodeInvestigationStatus;
+  agentProfile: string | null;
+  leaseExpiresAt: string | null;
+  commitSha: string | null;
+  summary: string | null;
+  findings: CodeFinding[];
+  limitations: string[];
+  reportHash: string | null;
+  rejectionReason: string | null;
+  createdAt: string;
+  claimedAt: string | null;
+  submittedAt: string | null;
+  confirmedAt: string | null;
+}
+
 export type PlanStatus = 'draft' | 'published' | 'superseded';
 export type TaskKind =
   | 'agent_coding'
@@ -356,6 +395,8 @@ export interface WorkItem {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+  integratedAt: string | null;
+  integrationReference: string | null;
 }
 
 export interface LeaseSummary {
@@ -511,6 +552,7 @@ export type MemoryReferenceType =
   | 'capability'
   | 'git_sync'
   | 'pull_request'
+  | 'code_investigation'
   | 'project_setting';
 
 export interface ProjectMemoryReference {
@@ -554,6 +596,7 @@ export interface ProjectWorkspace {
   published: BlueprintRevision | null;
   inbox: InfoRequest[];
   facts: ProjectFact[];
+  codeInvestigations: CodeInvestigation[];
   plan: PlanWorkspace;
 }
 

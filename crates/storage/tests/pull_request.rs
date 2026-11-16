@@ -11,7 +11,7 @@ use support::{PlanFixture, agent_task, report_for};
 #[test]
 fn records_a_pull_request_and_its_state_changes_with_project_audit_events() {
     let mut fixture = PlanFixture::new(vec![agent_task("foundation-demo", &[])]);
-    assert_eq!(fixture.database.schema_version().expect("schema"), 11);
+    assert_eq!(fixture.database.schema_version().expect("schema"), 13);
     let claimed = fixture
         .database
         .claim_work(

@@ -38,8 +38,8 @@ pub use github::{
     MAX_GITHUB_PROJECTS, import_gh_token,
 };
 pub use model::{
-    BlueprintModel, ModelAnchor, ModelConfig, ModelError, ModelExtractionRequest, ModelSource,
-    OpenAiCompatibleModel,
+    BlueprintModel, ModelAnchor, ModelCodeEvidence, ModelCodeFinding, ModelConfig, ModelError,
+    ModelExtractionRequest, ModelFact, ModelSource, OpenAiCompatibleModel,
 };
 pub use review::{
     OpenAiCompatibleReviewModel, ReviewDiff, ReviewDiffFile, ReviewModel, ReviewModelError,

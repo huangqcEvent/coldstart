@@ -7,10 +7,10 @@ use std::{io, path::PathBuf};
 
 use coldstart_adapters::{DocumentError, GitError, GitHubError, ModelError, SecretStoreError};
 use coldstart_core::{
-    BlueprintRevisionId, CapabilityApiEndpointId, CapabilityApiValidationError, CredentialId,
-    InfoRequestId, IntegrationValidationError, ManifestError, PlanCompileError, PlanRevisionId,
-    ProjectError, ProjectId, PullRequestId, PullRequestValidationError, RepositoryId, WorkItemId,
-    WorkReportId,
+    BlueprintRevisionId, CapabilityApiEndpointId, CapabilityApiValidationError,
+    CodeInvestigationId, CredentialId, InfoRequestId, IntegrationValidationError, ManifestError,
+    PlanCompileError, PlanRevisionId, ProjectError, ProjectId, PullRequestId,
+    PullRequestValidationError, RepositoryId, WorkItemId, WorkReportId,
 };
 use coldstart_storage::StorageError;
 use thiserror::Error;
@@ -45,6 +45,8 @@ pub enum AppError {
     NoRequirementSources,
     #[error("publishing a plan requires a published blueprint")]
     PublishedBlueprintRequired,
+    #[error("蓝图仍有 {0} 个阻塞信息未确认，请先在人工 Inbox 处理")]
+    UnresolvedBlockingInfoRequests(usize),
     #[error("invalid plan: {0}")]
     InvalidPlan(String),
     #[error("plan revision {0} does not exist")]
@@ -85,6 +87,10 @@ pub enum AppError {
     InfoRequestNotOpen(InfoRequestId),
     #[error("info request answer cannot be empty")]
     InfoRequestAnswerEmpty,
+    #[error("关闭信息请求时必须填写原因")]
+    InfoRequestDismissReasonEmpty,
+    #[error("关闭信息请求的原因不能超过 {limit} 个字符")]
+    InfoRequestDismissReasonTooLong { limit: usize },
     #[error("project {0} is missing from the database")]
     ProjectMissingFromDatabase(ProjectId),
     #[error("project manifest and database metadata disagree for project {0}")]
@@ -190,6 +196,14 @@ pub enum AppError {
     GitHubProjectIneligible(String, String),
     #[error("invalid capability API endpoint: {0}")]
     InvalidCapabilityApiEndpoint(#[from] CapabilityApiValidationError),
+    #[error("invalid code investigation: {0}")]
+    InvalidCodeInvestigation(String),
+    #[error(
+        "code investigation report contains a value that looks like a Secret; remove it and resubmit"
+    )]
+    CodeInvestigationContainsSecret,
+    #[error("code investigation {0} does not exist")]
+    CodeInvestigationNotFound(CodeInvestigationId),
     #[error("capability API endpoint {0} does not exist")]
     CapabilityApiEndpointNotFound(CapabilityApiEndpointId),
     #[error("capability API call is not authorized: {0}")]
@@ -234,6 +248,7 @@ impl AppError {
             Self::SourceContextTooLarge { .. } => "source_context_too_large",
             Self::NoRequirementSources => "no_requirement_sources",
             Self::PublishedBlueprintRequired => "published_blueprint_required",
+            Self::UnresolvedBlockingInfoRequests(_) => "unresolved_blocking_info_requests",
             Self::InvalidPlan(_) => "invalid_plan",
             Self::PlanNotFound(_) => "plan_not_found",
             Self::PlanNotDraft(_) => "plan_not_draft",
@@ -254,6 +269,8 @@ impl AppError {
             Self::InfoRequestNotFound(_) => "info_request_not_found",
             Self::InfoRequestNotOpen(_) => "info_request_not_open",
             Self::InfoRequestAnswerEmpty => "info_request_answer_empty",
+            Self::InfoRequestDismissReasonEmpty => "info_request_dismiss_reason_empty",
+            Self::InfoRequestDismissReasonTooLong { .. } => "info_request_dismiss_reason_too_long",
             Self::ProjectMissingFromDatabase(_) => "project_missing_from_database",
             Self::ProjectMetadataMismatch(_) => "project_metadata_mismatch",
             Self::NonUtf8Path(_) => "non_utf8_path",
@@ -262,6 +279,9 @@ impl AppError {
             Self::Storage(StorageError::InfoRequestNotFound(_)) => "info_request_not_found",
             Self::Storage(StorageError::InfoRequestNotOpen(_)) => "info_request_not_open",
             Self::Storage(StorageError::EmptyInfoRequestAnswer) => "info_request_answer_empty",
+            Self::Storage(StorageError::EmptyInfoRequestDismissReason) => {
+                "info_request_dismiss_reason_empty"
+            }
             Self::Storage(StorageError::InvalidBlueprint(_)) => "invalid_blueprint",
             Self::Storage(StorageError::PlanNotFound(_)) => "plan_not_found",
             Self::Storage(StorageError::PlanNotDraft(_)) => "plan_not_draft",
@@ -302,6 +322,30 @@ impl AppError {
             | Self::Storage(StorageError::CapabilityApiEndpointProjectMismatch(_))
             | Self::Storage(StorageError::CapabilityApiEndpointNameAlreadyExists { .. }) => {
                 "invalid_capability_api_endpoint"
+            }
+            Self::InvalidCodeInvestigation(_) => "invalid_code_investigation",
+            Self::CodeInvestigationContainsSecret => "code_investigation_contains_secret",
+            Self::CodeInvestigationNotFound(_)
+            | Self::Storage(StorageError::CodeInvestigationNotFound(_)) => {
+                "code_investigation_not_found"
+            }
+            Self::Storage(StorageError::CodeInvestigationNotClaimable(_)) => {
+                "code_investigation_not_claimable"
+            }
+            Self::Storage(StorageError::CodeInvestigationClaimInvalid(_)) => {
+                "code_investigation_claim_invalid"
+            }
+            Self::Storage(StorageError::CodeInvestigationLeaseExpired(_)) => {
+                "code_investigation_lease_expired"
+            }
+            Self::Storage(StorageError::CodeInvestigationNotSubmitted(_)) => {
+                "code_investigation_not_submitted"
+            }
+            Self::Storage(StorageError::CodeInvestigationReportConflict(_)) => {
+                "code_investigation_report_conflict"
+            }
+            Self::Storage(StorageError::EmptyCodeInvestigationRejection) => {
+                "code_investigation_rejection_empty"
             }
             Self::Storage(_) => "storage",
             Self::Io(_) => "io",

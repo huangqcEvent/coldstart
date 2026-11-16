@@ -7,7 +7,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior};
 
 use crate::StorageError;
 
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 13;
 
 pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
     let current = read_schema_version(connection)?;
@@ -102,12 +102,19 @@ pub(crate) fn migrate(connection: &mut Connection) -> Result<(), StorageError> {
             create_schema_v10(&transaction)?;
         }
         9 => create_schema_v10(&transaction)?,
-        10 => {}
+        // 10、11、12 已包含公共表结构，由下方按版本增量补齐 v11/v12/v13 的改动。
+        10..=12 => {}
         _ => return Err(unsupported_schema(current)),
     }
 
     if current < 11 {
         create_schema_v11(&transaction)?;
+    }
+    if current < 12 {
+        create_schema_v12(&transaction)?;
+    }
+    if current < 13 {
+        create_schema_v13(&transaction)?;
     }
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()?;
@@ -653,6 +660,63 @@ fn create_schema_v11(transaction: &Transaction<'_>) -> Result<(), StorageError> 
         "
             ALTER TABLE artifacts
                 ADD COLUMN images_json TEXT NOT NULL DEFAULT '[]';
+            ",
+    )?;
+    Ok(())
+}
+
+fn create_schema_v12(transaction: &Transaction<'_>) -> Result<(), StorageError> {
+    transaction.execute_batch(
+        "
+            ALTER TABLE work_items ADD COLUMN integrated_at TEXT;
+            ALTER TABLE work_items ADD COLUMN integration_reference TEXT;
+
+            UPDATE work_items
+            SET integrated_at = completed_at,
+                integration_reference = 'legacy-completed'
+            WHERE status = 'done' AND completed_at IS NOT NULL;
+
+            CREATE INDEX work_items_by_integration
+                ON work_items(project_id, plan_revision_id, integrated_at);
+            ",
+    )?;
+    Ok(())
+}
+
+fn create_schema_v13(transaction: &Transaction<'_>) -> Result<(), StorageError> {
+    transaction.execute_batch(
+        "
+            CREATE TABLE code_investigations (
+                id TEXT PRIMARY KEY NOT NULL,
+                project_id TEXT NOT NULL,
+                repository_id TEXT NOT NULL,
+                repository_key TEXT NOT NULL,
+                base_ref TEXT NOT NULL,
+                question TEXT NOT NULL,
+                status TEXT NOT NULL,
+                agent_profile TEXT,
+                claim_token_hash TEXT,
+                lease_expires_at TEXT,
+                commit_sha TEXT,
+                summary TEXT,
+                findings_json TEXT NOT NULL DEFAULT '[]',
+                limitations_json TEXT NOT NULL DEFAULT '[]',
+                report_hash TEXT,
+                report_idempotency_key TEXT,
+                rejection_reason TEXT,
+                created_at TEXT NOT NULL,
+                claimed_at TEXT,
+                submitted_at TEXT,
+                confirmed_at TEXT,
+                UNIQUE(project_id, report_idempotency_key),
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX code_investigations_by_project_status
+                ON code_investigations(project_id, status, created_at);
+            CREATE INDEX code_investigations_by_repository
+                ON code_investigations(project_id, repository_key, created_at DESC);
             ",
     )?;
     Ok(())

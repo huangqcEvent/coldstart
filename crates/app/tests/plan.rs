@@ -822,6 +822,13 @@ fn task_context_and_references_use_only_the_active_plan() {
             report_for(&foundation_task, "active-context-foundation"),
         )
         .expect("foundation report must submit");
+    service
+        .mark_work_integrated(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            "test merge into main".to_owned(),
+        )
+        .expect("foundation must be integrated before dependent work starts");
 
     let second = service
         .generate_draft(fixture.home.clone())

@@ -27,6 +27,7 @@ interface PlanViewProps {
   onPreviewPublish: (revisionId: string) => Promise<PlanPublishPreview | null>;
   onPublish: (revisionId: string) => Promise<boolean>;
   onRefresh: () => Promise<ProjectWorkspace | null>;
+  onMarkIntegrated: (workItemId: string, reference: string) => Promise<boolean>;
   onNavigateBlueprint: () => void;
   onNavigateInbox: () => void;
   onNavigateReview: () => void;
@@ -169,7 +170,7 @@ function PlanDraftEditor({
         <span className="count-badge">{content.tasks.length} 个任务</span>
       </div>
       <p className="field__hint">
-        只开放任务目标、范围、优先级、验收与阻塞依赖。保存时会重新校验 DAG、任务键和路径边界。
+        可调整编码任务的基线分支与允许修改路径，以及任务目标、范围、优先级、验收和阻塞依赖。保存时会重新校验 DAG、任务键与路径边界。
       </p>
       <div className="plan-editor__list">
         {content.tasks.map((task, index) => (
@@ -212,6 +213,35 @@ function PlanDraftEditor({
                   aria-label={`优先级：${task.taskKey}`}
                 />
               </label>
+              {task.kind === 'agent_coding' ? (
+                <label className="field">
+                  <span>基线分支</span>
+                  <input
+                    value={task.baseRef ?? ''}
+                    onChange={(event) =>
+                      updateTask(index, {
+                        baseRef: event.target.value.trim() || null,
+                      })
+                    }
+                    aria-label={`基线分支：${task.taskKey}`}
+                  />
+                </label>
+              ) : null}
+              {task.kind === 'agent_coding' ? (
+                <label className="field plan-editor-card__wide">
+                  <span>允许修改路径（每行一个）</span>
+                  <textarea
+                    value={task.allowedPaths.join('\n')}
+                    onChange={(event) =>
+                      updateTask(index, {
+                        allowedPaths: linesToItems(event.target.value),
+                      })
+                    }
+                    aria-label={`允许修改路径：${task.taskKey}`}
+                    rows={3}
+                  />
+                </label>
+              ) : null}
               <label className="field plan-editor-card__wide">
                 <span>目标</span>
                 <textarea
@@ -330,11 +360,13 @@ function PlanDraftEditor({
 function PlanTaskCard({
   item,
   blockers,
+  onMarkIntegrated,
   onNavigateInbox,
   onNavigateReview,
 }: {
   item: WorkItemView;
   blockers: ProjectWorkspace['plan']['blockers'];
+  onMarkIntegrated: (workItemId: string, reference: string) => Promise<boolean>;
   onNavigateInbox: () => void;
   onNavigateReview: () => void;
 }) {
@@ -352,6 +384,24 @@ function PlanTaskCard({
   );
   const review = item.latestReport?.review ?? null;
   const reviewStatus = item.latestReport?.reviewStatus ?? 'not_required';
+  const [confirmingIntegration, setConfirmingIntegration] = useState(false);
+  const [integrationReference, setIntegrationReference] = useState(
+    `人工确认已合入 ${item.task.baseRef ?? '基线分支'}`,
+  );
+  const awaitingIntegration =
+    item.task.kind === 'agent_coding' &&
+    item.workItem.status === 'done' &&
+    !item.workItem.integratedAt;
+
+  async function handleConfirmIntegration() {
+    const reference = integrationReference.trim();
+    if (!reference) {
+      return;
+    }
+    if (await onMarkIntegrated(item.workItem.id, reference)) {
+      setConfirmingIntegration(false);
+    }
+  }
 
   return (
     <article className={`plan-task plan-task--${item.workItem.status}`}>
@@ -404,6 +454,64 @@ function PlanTaskCard({
           ))}
         </ul>
       </div>
+
+      {awaitingIntegration ? (
+        <div className="plan-task__integration">
+          <strong>已完成，待合入基线</strong>
+          <p>
+            本地验收已通过，但代码尚未确认进入基线。依赖此任务的下游会保持草稿，直到 PR
+            合并或人工确认。
+          </p>
+          {confirmingIntegration ? (
+            <div className="plan-task__integration-form">
+              <label>
+                <span>合入引用</span>
+                <input
+                  value={integrationReference}
+                  onChange={(event) => setIntegrationReference(event.target.value)}
+                  aria-label={`合入引用：${item.task.title}`}
+                  placeholder="例如 PR #31 或 release/2026.11"
+                />
+              </label>
+              <div>
+                <button
+                  className="button button--primary button--compact"
+                  type="button"
+                  disabled={!integrationReference.trim()}
+                  onClick={() => void handleConfirmIntegration()}
+                >
+                  确认已合入
+                </button>
+                <button
+                  className="button button--ghost button--compact"
+                  type="button"
+                  onClick={() => setConfirmingIntegration(false)}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              className="button button--secondary button--compact"
+              type="button"
+              onClick={() => setConfirmingIntegration(true)}
+            >
+              确认已合入基线
+            </button>
+          )}
+        </div>
+      ) : null}
+
+      {item.workItem.integratedAt ? (
+        <div className="plan-task__integration plan-task__integration--done">
+          <strong>已合入基线</strong>
+          <p>
+            {item.workItem.integrationReference ?? '未填写引用'} ·{' '}
+            {formatDateTime(item.workItem.integratedAt)}
+          </p>
+        </div>
+      ) : null}
 
       {item.activeLease ? (
         <div className="plan-task__lease">
@@ -562,6 +670,7 @@ export function PlanView({
   onPreviewPublish,
   onPublish,
   onRefresh,
+  onMarkIntegrated,
   onNavigateBlueprint,
   onNavigateInbox,
   onNavigateReview,
@@ -984,6 +1093,7 @@ export function PlanView({
                     <PlanTaskCard
                       item={item}
                       blockers={plan.blockers}
+                      onMarkIntegrated={onMarkIntegrated}
                       onNavigateInbox={onNavigateInbox}
                       onNavigateReview={onNavigateReview}
                       key={item.workItem.id}

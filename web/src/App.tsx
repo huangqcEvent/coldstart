@@ -10,6 +10,7 @@ import * as planApi from './api/planApi';
 import * as projectApi from './api/projectApi';
 import * as requirementsApi from './api/requirementsApi';
 import * as issueApi from './api/issueApi';
+import * as investigationApi from './api/investigationApi';
 import type {
   BlueprintContent,
   CommandError,
@@ -343,13 +344,55 @@ export default function App() {
     );
   }
 
-  async function handleGenerate(config: ModelConfig) {
+  async function handleGenerate(config: ModelConfig, artifactIds: string[]) {
     if (!workspace) {
       return;
     }
     const path = workspace.status.rootPath;
     await runWorkspaceAction('正在生成蓝图草稿', () =>
-      requirementsApi.generateBlueprint(path, config),
+      requirementsApi.generateBlueprint(path, config, artifactIds),
+    );
+  }
+
+  async function handleCreateCodeInvestigation(
+    repositoryKey: string,
+    baseRef: string,
+    question: string,
+  ) {
+    if (!workspace) {
+      return false;
+    }
+    const path = workspace.status.rootPath;
+    return runWorkspaceAction('正在创建历史代码调查', () =>
+      investigationApi.createCodeInvestigation(
+        path,
+        repositoryKey,
+        baseRef.trim() || null,
+        question,
+      ),
+    );
+  }
+
+  async function handleConfirmCodeInvestigation(investigationId: string) {
+    if (!workspace) {
+      return false;
+    }
+    const path = workspace.status.rootPath;
+    return runWorkspaceAction('正在确认历史代码调查', () =>
+      investigationApi.confirmCodeInvestigation(path, investigationId),
+    );
+  }
+
+  async function handleRejectCodeInvestigation(
+    investigationId: string,
+    reason: string,
+  ) {
+    if (!workspace) {
+      return false;
+    }
+    const path = workspace.status.rootPath;
+    return runWorkspaceAction('正在驳回历史代码调查', () =>
+      investigationApi.rejectCodeInvestigation(path, investigationId, reason),
     );
   }
 
@@ -393,6 +436,16 @@ export default function App() {
     const path = workspace.status.rootPath;
     return runWorkspaceAction('正在提交 Inbox 回答', () =>
       requirementsApi.resolveInfoRequest(path, requestId, answer),
+    );
+  }
+
+  async function handleDismissInfoRequest(requestId: string, reason: string) {
+    if (!workspace) {
+      return false;
+    }
+    const path = workspace.status.rootPath;
+    return runWorkspaceAction('正在关闭 Inbox 问题', () =>
+      requirementsApi.dismissInfoRequest(path, requestId, reason),
     );
   }
 
@@ -455,6 +508,19 @@ export default function App() {
     return runWorkspaceAction(
       accepted ? '正在完成人工任务' : '正在标记人工阻塞',
       () => planApi.completeHumanWork(path, workItemId, note, accepted),
+    );
+  }
+
+  async function handleMarkWorkIntegrated(
+    workItemId: string,
+    reference: string,
+  ) {
+    if (!workspace) {
+      return false;
+    }
+    const path = workspace.status.rootPath;
+    return runWorkspaceAction('正在确认合入基线', () =>
+      planApi.markWorkIntegrated(path, workItemId, reference),
     );
   }
 
@@ -550,11 +616,17 @@ export default function App() {
               sources={workspace.sources}
               sourceAnchors={workspace.sourceAnchors}
               sourceImages={workspace.sourceImages}
+              codeInvestigations={workspace.codeInvestigations}
               busy={busy}
               busyLabel={busyLabel}
               onImport={() => void handleImport()}
-              onGenerate={(config) => void handleGenerate(config)}
+              onGenerate={(config, artifactIds) =>
+                void handleGenerate(config, artifactIds)
+              }
               onImportIssue={handleImportGitHubIssue}
+              onCreateCodeInvestigation={handleCreateCodeInvestigation}
+              onConfirmCodeInvestigation={handleConfirmCodeInvestigation}
+              onRejectCodeInvestigation={handleRejectCodeInvestigation}
             />
           ) : null}
 
@@ -582,6 +654,7 @@ export default function App() {
               busy={busy}
               busyLabel={busyLabel}
               onResolve={handleResolveInfoRequest}
+              onDismiss={handleDismissInfoRequest}
               onCompleteHuman={handleCompleteHumanWork}
             />
           ) : null}
@@ -596,6 +669,7 @@ export default function App() {
               onPreviewPublish={handlePreviewPlanPublish}
               onPublish={handlePublishPlan}
               onRefresh={handlePlanRefresh}
+              onMarkIntegrated={handleMarkWorkIntegrated}
               onNavigateBlueprint={() => setView('blueprint')}
               onNavigateInbox={() => setView('inbox')}
               onNavigateReview={() => setView('review')}

@@ -283,6 +283,12 @@ pub struct WorkItem {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+    /// 表示任务分支已经进入基线分支，后继编码任务只有在该时间存在后才能解锁。
+    #[serde(default)]
+    pub integrated_at: Option<DateTime<Utc>>,
+    /// 记录合入确认来源，例如 GitHub PR 编号或人工确认说明。
+    #[serde(default)]
+    pub integration_reference: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -402,6 +408,7 @@ pub enum ClaimFailure {
     NoActivePlan,
     AllDone,
     WaitingDependencies,
+    WaitingIntegration,
     WaitingHuman,
     NoMatchingRepository,
     VerificationNotConfigured,
@@ -416,6 +423,7 @@ impl ClaimFailure {
             Self::NoActivePlan => "no_active_plan",
             Self::AllDone => "all_done",
             Self::WaitingDependencies => "waiting_dependencies",
+            Self::WaitingIntegration => "waiting_integration",
             Self::WaitingHuman => "waiting_human",
             Self::NoMatchingRepository => "no_matching_repository",
             Self::VerificationNotConfigured => "verification_not_configured",

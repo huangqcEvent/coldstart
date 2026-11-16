@@ -2,7 +2,8 @@ mod support;
 
 use chrono::{Duration, Utc};
 use coldstart_core::{
-    ClaimResult, ContractState, DependencyKind, PlanStatus, TaskDependency, WorkItemStatus,
+    ClaimResult, ContractState, DependencyKind, GitSyncRecord, GitSyncStatus, PlanStatus,
+    TaskDependency, WorkItemStatus,
 };
 use coldstart_storage::StorageError;
 use rusqlite::Connection;
@@ -71,6 +72,32 @@ fn replacing_a_plan_inherits_done_reopens_changed_and_cancels_removed() {
             .load_work_item(&claimed.work_item.id)
             .expect("work item query must pass")
             .expect("work item must exist");
+        let repository = fixture
+            .database
+            .repository_by_key(&fixture.project_id, "server")
+            .expect("repository query must work")
+            .expect("fixture repository must exist");
+        fixture
+            .database
+            .record_git_sync(&GitSyncRecord::new(
+                fixture.project_id,
+                old_item.id,
+                repository.id,
+                "codex/done-stable".to_owned(),
+                "0123456789abcdef0123456789abcdef01234567".to_owned(),
+                GitSyncStatus::Pushed,
+                None,
+            ))
+            .expect("pushed branch must persist");
+        let old_item = fixture
+            .database
+            .mark_work_integrated(
+                &fixture.project_id,
+                &old_item.id,
+                "PR #12",
+                now + Duration::minutes(1),
+            )
+            .expect("completed task must integrate");
 
         let mut changed_new = changed.clone();
         changed_new.goal = "实现已经变化的新契约".to_owned();
@@ -143,6 +170,11 @@ fn replacing_a_plan_inherits_done_reopens_changed_and_cancels_removed() {
             .expect("stable task must exist");
         assert_eq!(current_done.status, WorkItemStatus::Done);
         assert_eq!(current_done.completed_at, old_item.completed_at);
+        assert_eq!(current_done.integrated_at, old_item.integrated_at);
+        assert_eq!(
+            current_done.integration_reference.as_deref(),
+            Some("PR #12")
+        );
         assert_eq!(
             current
                 .iter()

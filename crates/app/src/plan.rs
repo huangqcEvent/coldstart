@@ -115,7 +115,21 @@ impl PlanService {
                 coldstart_core::BlueprintStatus::Published,
             )?
             .ok_or(AppError::PublishedBlueprintRequired)?;
-        let content = compile_plan(&project.project.id, &blueprint.content)?;
+        let mut content = compile_plan(&project.project.id, &blueprint.content)?;
+        // 计划生成发生在仓库映射之后时，直接采用仓库真实默认分支。计划编辑仍可在
+        // 发布前覆盖单任务基线，适配非 main 或临时集成分支。
+        let repositories = project.database.list_repositories(&project.project.id)?;
+        for task in &mut content.tasks {
+            let Some(repository_key) = task.repository_key.as_deref() else {
+                continue;
+            };
+            if let Some(repository) = repositories
+                .iter()
+                .find(|repository| repository.key == repository_key)
+            {
+                task.base_ref = Some(repository.default_branch.clone());
+            }
+        }
         project.database.create_plan_revision(
             &project.project.id,
             blueprint.id,
@@ -204,6 +218,25 @@ impl PlanService {
             &work_item_id,
             &note,
             accepted,
+            Utc::now(),
+        )?;
+        build_plan_workspace(&project)
+    }
+
+    /// 在人工合并或非 GitHub 托管流程中确认任务代码已经进入基线分支。
+    ///
+    /// 这里只记录合入事实并刷新依赖图，不执行 Git 合并，也不改变任务分支或远程历史。
+    pub fn mark_work_integrated(
+        &self,
+        project_home: PathBuf,
+        work_item_id: WorkItemId,
+        reference: String,
+    ) -> Result<PlanWorkspace, AppError> {
+        let mut project = OpenProject::open(project_home)?;
+        project.database.mark_work_integrated(
+            &project.project.id,
+            &work_item_id,
+            &reference,
             Utc::now(),
         )?;
         build_plan_workspace(&project)

@@ -1,17 +1,20 @@
 //! MCP 工具契约与调用分发。
 //!
-//! 当前暴露 14 个受限工具，覆盖简报、记忆、领取、上下文、图片、心跳、报告、阻塞、
-//! 能力调用和完成交接。工具只接受显式参数，不启动 Codex，也不扩大 Secret 面。
+//! 当前暴露 16 个受限工具，覆盖简报、记忆、任务与历史代码调查领取、上下文、图片、
+//! 心跳、报告、阻塞、能力调用和完成交接。工具只接受显式参数，不启动 Codex，
+//! 也不扩大 Secret 面。
 
 use std::path::PathBuf;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use coldstart_app::{
     AppError, CallCapabilityApiRequest, CapabilityApiQueryParameter, CapabilityApiService,
-    ClaimRequest, ContextHandoffService, IntegrationService, PlanService, ProjectMemoryService,
+    ClaimRequest, CodeInvestigationService, ContextHandoffService, IntegrationService, PlanService,
+    ProjectMemoryService,
 };
 use coldstart_core::{
-    ArtifactId, BlueprintEntityId, CapabilityApiEndpointId, CapabilityApiMethod, WorkItemId,
+    ArtifactId, BlueprintEntityId, CapabilityApiEndpointId, CapabilityApiMethod,
+    CodeInvestigationId, WorkItemId,
 };
 use rmcp::{
     ServerHandler,
@@ -26,9 +29,10 @@ use serde::Serialize;
 use crate::{
     error::{app_error_result, invalid_capability_id_result, invalid_id_result, tool_error_result},
     types::{
-        CallCapabilityApiArgs, CapabilityStatusArgs, ClaimNextWorkArgs, ProjectBriefArgs,
-        ProjectMemoryArgs, ReadTaskImageArgs, ReadTaskReferenceArgs, ReleaseWorkArgs,
-        ReportWorkBlockerArgs, SubmitWorkReportArgs, WorkLeaseArgs,
+        CallCapabilityApiArgs, CapabilityStatusArgs, ClaimNextCodeInvestigationArgs,
+        ClaimNextWorkArgs, ProjectBriefArgs, ProjectMemoryArgs, ReadTaskImageArgs,
+        ReadTaskReferenceArgs, ReleaseWorkArgs, ReportWorkBlockerArgs, SubmitCodeInvestigationArgs,
+        SubmitWorkReportArgs, WorkLeaseArgs,
     },
 };
 
@@ -223,6 +227,54 @@ impl ColdStartMcp {
                     repository: args.repository,
                     request_id: args.request_id,
                 },
+            )
+        })
+        .await
+    }
+
+    /// 主动领取一条历史项目只读调查请求，返回一次性领取令牌与最小调查上下文。
+    #[tool(
+        description = "Atomically claim the next read-only historical code investigation. The agent must inspect the mapped repository and submit only structured file/line evidence, never secrets or source dumps."
+    )]
+    pub async fn claim_next_code_investigation(
+        &self,
+        Parameters(args): Parameters<ClaimNextCodeInvestigationArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let project_home = self.project_home.clone();
+        Self::execute(move || {
+            CodeInvestigationService::new().claim_next(
+                project_home,
+                args.agent_profile,
+                args.repository,
+            )
+        })
+        .await
+    }
+
+    /// 提交带路径、行号、风险和建议修改范围的调查证据。
+    #[tool(
+        description = "Submit structured read-only investigation evidence with a valid claim token. Reports are immutable and require human confirmation before they can influence a blueprint."
+    )]
+    pub async fn submit_code_investigation(
+        &self,
+        Parameters(args): Parameters<SubmitCodeInvestigationArgs>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let investigation_id = match args.investigation_id.parse::<CodeInvestigationId>() {
+            Ok(investigation_id) => investigation_id,
+            Err(_) => {
+                return Ok(invalid_id_result(
+                    "investigation_id",
+                    &args.investigation_id,
+                ));
+            }
+        };
+        let project_home = self.project_home.clone();
+        Self::execute(move || {
+            CodeInvestigationService::new().submit(
+                project_home,
+                investigation_id,
+                args.claim_token,
+                args.report.into(),
             )
         })
         .await
@@ -429,7 +481,7 @@ impl ServerHandler for ColdStartMcp {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("coldstart", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "ColdStart work protocol. Read the safe project brief or project memory when resuming. Claim one task at a time, read its context and optional handoff, heartbeat while working, and submit a structured report. Never bypass lease checks.",
+                "ColdStart work protocol. Read the safe project brief or project memory when resuming. Claim one coding task or one read-only historical investigation at a time. Coding tasks require context, heartbeat, and a structured report; investigations require mapped-repository inspection and structured file/line evidence. Never bypass lease checks or include secrets.",
             )
     }
 }

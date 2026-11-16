@@ -102,6 +102,8 @@ fn model_request(base_url: &str) -> ModelExtractionRequest {
                 text: "需要 Web、管理后台和小程序。".to_owned(),
             }],
         }],
+        project_facts: Vec::new(),
+        code_evidence: Vec::new(),
     }
 }
 

@@ -28,10 +28,11 @@ impl Fixture {
             .expect("project must create");
         let database_path = home.join(".coldstart").join("state.db");
         let mut database = Database::open(&database_path).expect("database must open");
+        let artifact_id = support::seed_requirement_artifact(&mut database, status.project_id);
         let revision = database
             .create_blueprint_revision(
                 &status.project_id,
-                blueprint_content(status.project_id),
+                blueprint_content(status.project_id, artifact_id),
                 BlueprintGeneration {
                     source: GenerationSource::Manual,
                     model_provider: None,
@@ -104,9 +105,9 @@ impl Fixture {
     }
 }
 
-fn blueprint_content(project_id: ProjectId) -> BlueprintContent {
+fn blueprint_content(project_id: ProjectId, artifact_id: ArtifactId) -> BlueprintContent {
     let source = SourceReference {
-        artifact_id: ArtifactId::new(),
+        artifact_id,
         anchor_id: "section_1".to_owned(),
         quote: Some("需要 Web 订单系统".to_owned()),
     };
@@ -315,6 +316,13 @@ fn work_handoff_includes_related_completed_work_and_requires_a_lease() {
             report_for(&first_task, "handoff-report"),
         )
         .expect("first report must complete");
+    service
+        .mark_work_integrated(
+            fixture.home.clone(),
+            first.work_item.id,
+            "test merge into main".to_owned(),
+        )
+        .expect("first work must be integrated before dependent work can start");
 
     let second = claim_one(&service, &fixture, "handoff-second");
     let lease_token = second.lease_token.clone();

@@ -62,6 +62,7 @@ const eventTypeLabels: Record<string, string> = {
   pull_request_opened: 'PR 创建',
   pull_request_state_changed: 'PR 状态',
   pull_request_insights_synced: 'PR 验收同步',
+  work_integrated: '合入基线',
   project_setting_updated: '项目设置',
 };
 

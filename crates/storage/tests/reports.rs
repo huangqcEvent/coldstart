@@ -1,12 +1,12 @@
 mod support;
 
 use chrono::{Duration, Utc};
-use coldstart_core::{ClaimResult, WorkItemStatus};
+use coldstart_core::{ClaimResult, GitSyncRecord, GitSyncStatus, WorkItemStatus};
 use coldstart_storage::StorageError;
 use support::{PlanFixture, agent_task, report_for};
 
 #[test]
-fn accepts_a_complete_report_once_and_unlocks_the_next_task() {
+fn accepts_a_complete_report_once_and_waits_for_integration_before_unlocking() {
     let mut fixture = PlanFixture::new(vec![
         agent_task("foundation:one", &[]),
         agent_task("slice:next", &["foundation:one"]),
@@ -60,6 +60,68 @@ fn accepts_a_complete_report_once_and_unlocks_the_next_task() {
             .status,
         WorkItemStatus::Done
     );
+    assert_eq!(
+        items
+            .iter()
+            .find(|item| item.task_key == "slice:next")
+            .unwrap()
+            .status,
+        WorkItemStatus::Draft
+    );
+    let integrated = fixture
+        .database
+        .mark_work_integrated(
+            &fixture.project_id,
+            &claimed.work_item.id,
+            "PR #1",
+            Utc::now(),
+        )
+        .expect_err("a completed task without a pushed branch cannot be integrated");
+    assert!(matches!(integrated, StorageError::WorkNotPushed(_)));
+
+    let repository = fixture
+        .database
+        .repository_by_key(&fixture.project_id, "server")
+        .expect("repository query must work")
+        .expect("fixture repository must exist");
+    fixture
+        .database
+        .record_git_sync(&GitSyncRecord::new(
+            fixture.project_id,
+            claimed.work_item.id,
+            repository.id,
+            "codex/foundation-one".to_owned(),
+            "0123456789abcdef0123456789abcdef01234567".to_owned(),
+            GitSyncStatus::Pushed,
+            None,
+        ))
+        .expect("pushed branch must persist");
+    let first = fixture
+        .database
+        .mark_work_integrated(
+            &fixture.project_id,
+            &claimed.work_item.id,
+            "PR #1",
+            Utc::now(),
+        )
+        .expect("pushed completed task must integrate");
+    assert!(first.integrated_at.is_some());
+    assert_eq!(first.integration_reference.as_deref(), Some("PR #1"));
+    let repeated = fixture
+        .database
+        .mark_work_integrated(
+            &fixture.project_id,
+            &claimed.work_item.id,
+            "manual retry",
+            Utc::now(),
+        )
+        .expect("integration confirmation must be idempotent");
+    assert_eq!(repeated.integrated_at, first.integrated_at);
+    assert_eq!(repeated.integration_reference.as_deref(), Some("PR #1"));
+    let items = fixture
+        .database
+        .list_work_items(&fixture.project_id)
+        .expect("work items must load");
     assert_eq!(
         items
             .iter()

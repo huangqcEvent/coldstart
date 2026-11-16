@@ -51,3 +51,15 @@ export async function completeHumanWork(
     accepted,
   });
 }
+
+export async function markWorkIntegrated(
+  path: string,
+  workItemId: string,
+  reference: string,
+) {
+  return invoke<ProjectWorkspace>('mark_work_integrated', {
+    path,
+    workItemId,
+    reference,
+  });
+}

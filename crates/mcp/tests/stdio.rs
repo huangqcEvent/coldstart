@@ -634,6 +634,7 @@ fn stdio_server_lists_all_work_tools_and_rejects_an_unknown_tool() {
         names,
         vec![
             "call_capability_api",
+            "claim_next_code_investigation",
             "claim_next_work",
             "get_capability_status",
             "get_project_brief",
@@ -646,6 +647,7 @@ fn stdio_server_lists_all_work_tools_and_rejects_an_unknown_tool() {
             "read_task_reference",
             "release_work",
             "report_work_blocker",
+            "submit_code_investigation",
             "submit_work_report",
         ]
     );
@@ -655,6 +657,79 @@ fn stdio_server_lists_all_work_tools_and_rejects_an_unknown_tool() {
         error.contains("tool not found"),
         "unexpected error: {error}"
     );
+}
+
+#[test]
+fn stdio_server_claims_and_submits_a_read_only_code_investigation() {
+    let fixture = Fixture::new();
+    let mut database = Database::open(&fixture.home.join(".coldstart").join("state.db"))
+        .expect("database must open");
+    let created = database
+        .create_code_investigation(
+            &fixture.project_id,
+            "web",
+            "main",
+            "现有订单页面入口和状态管理方式是什么？",
+            chrono::Utc::now(),
+        )
+        .expect("investigation must create");
+    drop(database);
+
+    let mut client = McpStdioClient::spawn(&fixture.home);
+    client.initialize();
+    let claim = client.call_tool(
+        "claim_next_code_investigation",
+        json!({ "agent_profile": "codex", "repository": "web" }),
+    );
+    let claim = structured(&claim);
+    assert_eq!(
+        claim["investigation"]["id"].as_str(),
+        Some(created.id.to_string().as_str())
+    );
+    assert_eq!(claim["investigation"]["status"].as_str(), Some("claimed"));
+    let claim_token = claim["claimToken"]
+        .as_str()
+        .expect("claim token must be returned exactly once")
+        .to_owned();
+    let serialized_claim = serde_json::to_string(claim).expect("claim must serialize");
+    assert!(!serialized_claim.contains(&fixture.home.to_string_lossy().into_owned()));
+    assert!(!serialized_claim.contains(&fixture.work.to_string_lossy().into_owned()));
+
+    let submitted = client.call_tool(
+        "submit_code_investigation",
+        json!({
+            "investigation_id": created.id.to_string(),
+            "claim_token": claim_token,
+            "report": {
+                "commitSha": "a".repeat(40),
+                "summary": "订单页面从 Web 应用入口挂载，状态集中在页面级 store",
+                "findings": [{
+                    "path": "src/pages/orders.tsx",
+                    "lineStart": 10,
+                    "lineEnd": 42,
+                    "symbol": "OrdersPage",
+                    "summary": "页面入口与订单查询状态位于同一组件",
+                    "risk": "直接扩展可能影响现有筛选状态",
+                    "suggestedChangePaths": ["src/pages/orders.tsx"]
+                }],
+                "limitations": ["未检查测试覆盖"],
+                "idempotencyKey": "mcp-investigation-report-1"
+            }
+        }),
+    );
+    let submitted = structured(&submitted);
+    assert_eq!(submitted["status"].as_str(), Some("submitted"));
+    assert_eq!(submitted["findings"].as_array().unwrap().len(), 1);
+    assert!(
+        !serde_json::to_string(submitted)
+            .expect("submission must serialize")
+            .contains("claimToken")
+    );
+
+    let database_path = fixture.home.join(".coldstart").join("state.db");
+    for (_, _, value) in scan_text_columns(&database_path) {
+        assert!(!value.contains(&claim["claimToken"].as_str().unwrap().to_owned()));
+    }
 }
 
 #[test]

@@ -4,7 +4,7 @@
  * 支持导入本地文档、筛选/阅读 Issue 并触发人工导入；导入后来源保持不可变，
  * 不会自动生成或发布蓝图。
  */
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import * as integrationApi from '../api/integrationApi';
 import * as issueApi from '../api/issueApi';
@@ -13,6 +13,8 @@ import { GitHubProjectsPanel } from './GitHubProjectsPanel';
 import type {
   ArtifactImage,
   ArtifactMetadata,
+  CodeInvestigation,
+  CodeInvestigationStatus,
   CommandError,
   DocumentAnchor,
   GitHubIssueListState,
@@ -28,11 +30,22 @@ interface RequirementsViewProps {
   sources: ArtifactMetadata[];
   sourceAnchors: Record<string, DocumentAnchor[]>;
   sourceImages: Record<string, ArtifactImage[]>;
+  codeInvestigations: CodeInvestigation[];
   busy: boolean;
   busyLabel: string | null;
   onImport: () => void;
-  onGenerate: (config: ModelConfig) => void;
+  onGenerate: (config: ModelConfig, artifactIds: string[]) => void;
   onImportIssue: (repositoryKey: string, issueNumber: number) => Promise<boolean>;
+  onCreateCodeInvestigation: (
+    repositoryKey: string,
+    baseRef: string,
+    question: string,
+  ) => Promise<boolean>;
+  onConfirmCodeInvestigation: (investigationId: string) => Promise<boolean>;
+  onRejectCodeInvestigation: (
+    investigationId: string,
+    reason: string,
+  ) => Promise<boolean>;
 }
 
 const formatLabels: Record<ArtifactMetadata['format'], string> = {
@@ -46,6 +59,14 @@ const issueListStateLabels: Record<GitHubIssueListState, string> = {
   open: '开放',
   closed: '已关闭',
   all: '全部',
+};
+
+const investigationStatusLabels: Record<CodeInvestigationStatus, string> = {
+  requested: '等待 Codex 领取',
+  claimed: 'Codex 调查中',
+  submitted: '等待人工确认',
+  confirmed: '已确认',
+  rejected: '已驳回',
 };
 
 function normalizeCommandError(error: unknown): CommandError {
@@ -90,11 +111,15 @@ export function RequirementsView({
   sources,
   sourceAnchors,
   sourceImages,
+  codeInvestigations,
   busy,
   busyLabel,
   onImport,
   onGenerate,
   onImportIssue,
+  onCreateCodeInvestigation,
+  onConfirmCodeInvestigation,
+  onRejectCodeInvestigation,
 }: RequirementsViewProps) {
   const baseUrlId = useId();
   const modelId = useId();
@@ -105,10 +130,15 @@ export function RequirementsView({
   const issueSearchId = useId();
   const issueLabelId = useId();
   const issueUnimportedId = useId();
+  const investigationRepositoryId = useId();
+  const investigationBaseRefId = useId();
+  const investigationQuestionId = useId();
   const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [consent, setConsent] = useState(false);
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  const previousSourceIds = useRef<Set<string>>(new Set());
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [repositoryKey, setRepositoryKey] = useState('');
   const [issueState, setIssueState] = useState<GitHubIssueListState>('open');
@@ -124,6 +154,10 @@ export function RequirementsView({
   >({});
   const [loadingImage, setLoadingImage] = useState<string | null>(null);
   const [imageErrors, setImageErrors] = useState<Record<string, CommandError>>({});
+  const [investigationRepositoryKey, setInvestigationRepositoryKey] = useState('');
+  const [investigationBaseRef, setInvestigationBaseRef] = useState('');
+  const [investigationQuestion, setInvestigationQuestion] = useState('');
+  const [rejectionReasons, setRejectionReasons] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -139,6 +173,9 @@ export function RequirementsView({
             ? current
             : workspace.repositories[0]?.key ?? '',
         );
+        const firstRepository = workspace.repositories[0];
+        setInvestigationRepositoryKey(firstRepository?.key ?? '');
+        setInvestigationBaseRef(firstRepository?.defaultBranch ?? 'main');
       })
       .catch((error: unknown) => {
         if (!cancelled) {
@@ -151,13 +188,66 @@ export function RequirementsView({
   }, [path]);
 
   const configReady =
-    baseUrl.trim().length > 0 && model.trim().length > 0 && sources.length > 0;
+    baseUrl.trim().length > 0 &&
+    model.trim().length > 0 &&
+    selectedSourceIds.length > 0;
   const canGenerate = configReady && consent && !busy;
   const issueActionBusy = busy || issueBusy || importingIssue !== null;
   const importedSourceReferences = useMemo(
     () => new Set(sources.map((source) => source.importSource)),
     [sources],
   );
+
+  useEffect(() => {
+    const sourceIds = sources.map((source) => source.id);
+    setSelectedSourceIds((current) => {
+      if (current.length === 0) {
+        return sourceIds;
+      }
+      const retained = current.filter((id) => sourceIds.includes(id));
+      const added = sourceIds.filter((id) => !previousSourceIds.current.has(id));
+      return Array.from(new Set([...retained, ...added]));
+    });
+    previousSourceIds.current = new Set(sourceIds);
+  }, [sources]);
+
+  function toggleSource(sourceId: string, selected: boolean) {
+    setSelectedSourceIds((current) =>
+      selected
+        ? Array.from(new Set([...current, sourceId]))
+        : current.filter((id) => id !== sourceId),
+    );
+  }
+
+  async function handleCreateInvestigation() {
+    const question = investigationQuestion.trim();
+    if (!investigationRepositoryKey || question.length < 5 || busy) {
+      return;
+    }
+    const created = await onCreateCodeInvestigation(
+      investigationRepositoryKey,
+      investigationBaseRef,
+      question,
+    );
+    if (created) {
+      setInvestigationQuestion('');
+    }
+  }
+
+  async function handleRejectInvestigation(investigationId: string) {
+    const reason = rejectionReasons[investigationId]?.trim() ?? '';
+    if (!reason) {
+      return;
+    }
+    const rejected = await onRejectCodeInvestigation(investigationId, reason);
+    if (rejected) {
+      setRejectionReasons((current) => {
+        const next = { ...current };
+        delete next[investigationId];
+        return next;
+      });
+    }
+  }
   const issueLabels = useMemo(
     () =>
       Array.from(new Set((issueList?.issues ?? []).flatMap((issue) => issue.labels))).sort(
@@ -297,6 +387,41 @@ export function RequirementsView({
             <span className="count-badge">{sources.length}</span>
           </div>
 
+          {sources.length > 0 ? (
+            <div className="source-change-set" aria-label="本次蓝图变更集">
+              <div>
+                <strong>
+                  本次变更集 {selectedSourceIds.length}/{sources.length}
+                </strong>
+                <span>只把勾选来源发送给模型，并记录到新的蓝图版本。</span>
+              </div>
+              <div className="source-change-set__actions">
+                <button
+                  className="button button--ghost button--compact"
+                  type="button"
+                  onClick={() =>
+                    setSelectedSourceIds(sources.map((source) => source.id))
+                  }
+                  disabled={busy}
+                >
+                  全选
+                </button>
+                <button
+                  className="button button--ghost button--compact"
+                  type="button"
+                  onClick={() =>
+                    setSelectedSourceIds(
+                      sources.length > 0 ? [sources[sources.length - 1].id] : [],
+                    )
+                  }
+                  disabled={busy || sources.length === 0}
+                >
+                  仅选最新导入
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           {totalImages > 0 ? (
             <div className="source-images-note">
               <span className="source-images-note__count">{totalImages} 张图片</span>
@@ -321,6 +446,17 @@ export function RequirementsView({
                       {String(index + 1).padStart(2, '0')}
                     </span>
                     <div className="source-item__body">
+                      <label className="source-select">
+                        <input
+                          type="checkbox"
+                          checked={selectedSourceIds.includes(source.id)}
+                          onChange={(event) =>
+                            toggleSource(source.id, event.target.checked)
+                          }
+                          disabled={busy}
+                        />
+                        <span>纳入本次蓝图变更集</span>
+                      </label>
                       <div className="source-item__title-row">
                         <strong>{source.fileName}</strong>
                         <span className="format-badge">
@@ -469,18 +605,21 @@ export function RequirementsView({
           </label>
 
           <p className="field__hint">
-            生成前会检查来源总量不超过 80,000 字符。模型返回的每个来源锚点都会在写入草稿前核验。
+            生成前会检查本次变更集总量不超过 80,000 字符；历史文档可以保留在项目中但不参与本轮分析。模型返回的每个来源锚点都会在写入草稿前核验。
           </p>
 
           <button
             className="button button--primary button--wide"
             type="button"
             onClick={() =>
-              onGenerate({
-                baseUrl: baseUrl.trim(),
-                model: model.trim(),
-                apiKey,
-              })
+              onGenerate(
+                {
+                  baseUrl: baseUrl.trim(),
+                  model: model.trim(),
+                  apiKey,
+                },
+                selectedSourceIds,
+              )
             }
             disabled={!canGenerate}
           >
@@ -495,6 +634,247 @@ export function RequirementsView({
           ) : null}
         </section>
       </div>
+
+      <section
+        className="panel code-investigation"
+        aria-labelledby="code-investigation-title"
+      >
+        <div className="panel__head">
+          <div>
+            <p className="panel__eyebrow">历史项目接入</p>
+            <h2 id="code-investigation-title">只读代码调查</h2>
+            <p className="issue-intake__lead">
+              为本次需求创建调查问题，由 Codex 通过 MCP 主动领取并读取已映射仓库。
+              它只能上报路径、行号和风险；人工确认前不会进入蓝图上下文。
+            </p>
+          </div>
+          <span className="status-dot">人工确认</span>
+        </div>
+
+        <div className="code-investigation__form">
+          <label className="field" htmlFor={investigationRepositoryId}>
+            <span>调查仓库</span>
+            <select
+              id={investigationRepositoryId}
+              value={investigationRepositoryKey}
+              onChange={(event) => {
+                const key = event.target.value;
+                const repository = repositories.find((item) => item.key === key);
+                setInvestigationRepositoryKey(key);
+                setInvestigationBaseRef(repository?.defaultBranch ?? 'main');
+              }}
+              disabled={busy || repositories.length === 0}
+            >
+              {repositories.length === 0 ? (
+                <option value="">尚未映射仓库</option>
+              ) : null}
+              {repositories.map((repository) => (
+                <option key={repository.id} value={repository.key}>
+                  {repository.name} · {repository.key}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field" htmlFor={investigationBaseRefId}>
+            <span>调查基线分支</span>
+            <input
+              id={investigationBaseRefId}
+              type="text"
+              value={investigationBaseRef}
+              onChange={(event) => setInvestigationBaseRef(event.target.value)}
+              placeholder="main"
+              autoComplete="off"
+              disabled={busy || repositories.length === 0}
+            />
+          </label>
+          <label
+            className="field code-investigation__question"
+            htmlFor={investigationQuestionId}
+          >
+            <span>需要 Codex 查清什么</span>
+            <textarea
+              id={investigationQuestionId}
+              value={investigationQuestion}
+              onChange={(event) => setInvestigationQuestion(event.target.value)}
+              placeholder="例如：现有订单创建入口、库存事务边界和可复用的鉴权中间件在哪里？新增优惠能力可能影响哪些模块？"
+              rows={4}
+              disabled={busy || repositories.length === 0}
+            />
+          </label>
+        </div>
+
+        <div className="code-investigation__create">
+          <p className="field__hint">
+            调查不下载整库、不保存源码正文，也不会把本地路径或 Secret 上报给桌面端。
+            报告提交后必须由你确认，才可作为下一次蓝图生成的参考证据。
+          </p>
+          <button
+            className="button button--secondary"
+            type="button"
+            onClick={() => void handleCreateInvestigation()}
+            disabled={
+              busy ||
+              !investigationRepositoryKey ||
+              investigationQuestion.trim().length < 5
+            }
+          >
+            {busyLabel === '正在创建历史代码调查'
+              ? '创建中…'
+              : '创建调查请求'}
+          </button>
+        </div>
+
+        {repositories.length === 0 ? (
+          <div className="empty-state">
+            <strong>先映射历史项目仓库</strong>
+            <p>到“仓库与能力”配置本地 Git 工作区后，才能创建只读调查。</p>
+          </div>
+        ) : codeInvestigations.length === 0 ? (
+          <div className="empty-state">
+            <strong>还没有历史代码调查</strong>
+            <p>创建问题后，Codex 会通过 MCP 主动领取；桌面端不会自行启动 Agent。</p>
+          </div>
+        ) : (
+          <ul className="code-investigation__list">
+            {codeInvestigations.map((investigation) => {
+              const submitted = investigation.status === 'submitted';
+              const canShowReport =
+                investigation.status === 'submitted' ||
+                investigation.status === 'confirmed';
+              return (
+                <li
+                  className={`code-investigation-card code-investigation-card--${investigation.status}`}
+                  key={investigation.id}
+                >
+                  <header className="code-investigation-card__head">
+                    <div>
+                      <span
+                        className={`code-investigation-status code-investigation-status--${investigation.status}`}
+                      >
+                        {investigationStatusLabels[investigation.status]}
+                      </span>
+                      <code>{investigation.repositoryKey}</code>
+                      <span>基线 {investigation.baseRef}</span>
+                    </div>
+                    <time dateTime={investigation.createdAt}>
+                      {formatIssueTime(investigation.createdAt)}
+                    </time>
+                  </header>
+                  <h3>{investigation.question}</h3>
+                  <dl className="code-investigation-card__meta">
+                    {investigation.agentProfile ? (
+                      <div>
+                        <dt>领取者</dt>
+                        <dd>{investigation.agentProfile}</dd>
+                      </div>
+                    ) : null}
+                    {investigation.leaseExpiresAt &&
+                    investigation.status === 'claimed' ? (
+                      <div>
+                        <dt>领取有效期</dt>
+                        <dd>{formatIssueTime(investigation.leaseExpiresAt)}</dd>
+                      </div>
+                    ) : null}
+                    {investigation.commitSha ? (
+                      <div>
+                        <dt>Commit</dt>
+                        <dd className="mono">{investigation.commitSha.slice(0, 12)}</dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                  {investigation.summary ? (
+                    <p className="code-investigation-card__summary">
+                      {investigation.summary}
+                    </p>
+                  ) : null}
+                  {canShowReport && investigation.findings.length > 0 ? (
+                    <ol className="code-findings">
+                      {investigation.findings.map((finding, index) => (
+                        <li key={`${investigation.id}:${index}`}>
+                          <div className="code-findings__location">
+                            <code>
+                              {finding.path}:{finding.lineStart}-{finding.lineEnd}
+                            </code>
+                            {finding.symbol ? <span>{finding.symbol}</span> : null}
+                          </div>
+                          <p>{finding.summary}</p>
+                          <p className="code-findings__risk">风险：{finding.risk}</p>
+                          {finding.suggestedChangePaths.length > 0 ? (
+                            <p className="code-findings__paths">
+                              建议修改范围：{finding.suggestedChangePaths.join('、')}
+                            </p>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ol>
+                  ) : null}
+                  {canShowReport && investigation.limitations.length > 0 ? (
+                    <details className="code-investigation-card__limits">
+                      <summary>调查限制 · {investigation.limitations.length}</summary>
+                      <ul>
+                        {investigation.limitations.map((limitation) => (
+                          <li key={limitation}>{limitation}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  ) : null}
+                  {investigation.status === 'rejected' ? (
+                    <p className="code-investigation-card__rejected" role="status">
+                      驳回原因：{investigation.rejectionReason ?? '未填写'}
+                    </p>
+                  ) : null}
+                  {submitted ? (
+                    <div className="code-investigation-card__review">
+                      <label className="field">
+                        <span>驳回原因</span>
+                        <textarea
+                          value={rejectionReasons[investigation.id] ?? ''}
+                          onChange={(event) =>
+                            setRejectionReasons((current) => ({
+                              ...current,
+                              [investigation.id]: event.target.value,
+                            }))
+                          }
+                          placeholder="证据不足时填写需要补充的调查范围"
+                          aria-label={`驳回调查：${investigation.question}`}
+                          rows={2}
+                          disabled={busy}
+                        />
+                      </label>
+                      <div className="code-investigation-card__actions">
+                        <button
+                          className="button button--compact button--primary"
+                          type="button"
+                          onClick={() =>
+                            void onConfirmCodeInvestigation(investigation.id)
+                          }
+                          disabled={busy}
+                        >
+                          {busyLabel === '正在确认历史代码调查'
+                            ? '确认中…'
+                            : '确认证据'}
+                        </button>
+                        <button
+                          className="button button--compact button--ghost code-investigation-card__reject"
+                          type="button"
+                          onClick={() => void handleRejectInvestigation(investigation.id)}
+                          disabled={
+                            busy || !(rejectionReasons[investigation.id] ?? '').trim()
+                          }
+                        >
+                          {busyLabel === '正在驳回历史代码调查'
+                            ? '驳回中…'
+                            : '驳回报告'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
 
       <section className="panel issue-intake" aria-labelledby="issue-intake-title">
         <div className="panel__head">

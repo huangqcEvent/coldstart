@@ -13,14 +13,14 @@ use coldstart_app::{
     IntegrationService, PlanService, ProjectService,
 };
 use coldstart_core::{
-    AcceptanceCriterion, AcceptancePolicy, ArtifactId, BlueprintContent, BlueprintEntityId,
-    BlueprintGeneration, CapabilityApiEndpoint, CapabilityApiEndpointId,
-    CapabilityApiEndpointInput, CapabilityApiMethod, CapabilityDescriptor, CapabilityObligation,
-    CapabilityState, CapabilityStatus, ClaimResult, CredentialEnvironment, CredentialKind,
-    CredentialMetadata, GenerationSource, MAX_CAPABILITY_API_REQUEST_BODY_BYTES, ModuleDefinition,
-    PlanContent, PlatformDefinition, PlatformKind, ProjectId, Repository, RepositoryAuthMode,
-    RepositorySyncPolicy, RepositoryVerificationCommand, SourceReference, TaskKind, TaskSpec,
-    TraceableText, WorkItemId,
+    AcceptanceCriterion, AcceptancePolicy, ArtifactFormat, ArtifactId, ArtifactMetadata,
+    BlueprintContent, BlueprintEntityId, BlueprintGeneration, CapabilityApiEndpoint,
+    CapabilityApiEndpointId, CapabilityApiEndpointInput, CapabilityApiMethod, CapabilityDescriptor,
+    CapabilityObligation, CapabilityState, CapabilityStatus, ClaimResult, CredentialEnvironment,
+    CredentialKind, CredentialMetadata, DocumentAnchor, GenerationSource,
+    MAX_CAPABILITY_API_REQUEST_BODY_BYTES, ModuleDefinition, PlanContent, PlatformDefinition,
+    PlatformKind, ProjectId, Repository, RepositoryAuthMode, RepositorySyncPolicy,
+    RepositoryVerificationCommand, SourceReference, TaskKind, TaskSpec, TraceableText, WorkItemId,
 };
 use coldstart_storage::Database;
 use tempfile::TempDir;
@@ -51,10 +51,31 @@ impl Fixture {
         let database_path = home.join(".coldstart").join("state.db");
         let mut database = Database::open(&database_path).expect("database must open");
         let capability_id = BlueprintEntityId::derive(&project_id, "capability", "阿里云 OSS");
+        let artifact_id = ArtifactId::new();
+        database
+            .insert_artifact(
+                &ArtifactMetadata {
+                    id: artifact_id,
+                    project_id,
+                    file_name: "requirements.md".to_owned(),
+                    format: ArtifactFormat::Markdown,
+                    content_hash: "capability-api-content-hash".to_owned(),
+                    text_hash: "capability-api-text-hash".to_owned(),
+                    byte_size: 64,
+                    import_source: "requirements.md".to_owned(),
+                    imported_at: Utc::now(),
+                },
+                &[DocumentAnchor {
+                    id: "section_1".to_owned(),
+                    label: "文件上传".to_owned(),
+                    text: "需要文件上传".to_owned(),
+                }],
+            )
+            .expect("artifact must insert");
         let blueprint = database
             .create_blueprint_revision(
                 &project_id,
-                blueprint_content(project_id, &capability_id),
+                blueprint_content(project_id, artifact_id, &capability_id),
                 BlueprintGeneration {
                     source: GenerationSource::Manual,
                     model_provider: None,
@@ -254,9 +275,13 @@ impl CapabilityApiClient for FakeCapabilityApiClient {
     }
 }
 
-fn blueprint_content(project_id: ProjectId, capability_id: &BlueprintEntityId) -> BlueprintContent {
+fn blueprint_content(
+    project_id: ProjectId,
+    artifact_id: ArtifactId,
+    capability_id: &BlueprintEntityId,
+) -> BlueprintContent {
     let source = SourceReference {
-        artifact_id: ArtifactId::new(),
+        artifact_id,
         anchor_id: "section_1".to_owned(),
         quote: Some("需要文件上传".to_owned()),
     };

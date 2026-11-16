@@ -43,7 +43,7 @@ fn credential(fixture: &PlanFixture) -> CredentialMetadata {
 }
 
 #[test]
-fn migrates_schema_nine_to_eleven_without_losing_project_data() {
+fn migrates_schema_nine_to_current_without_losing_project_data() {
     let fixture = PlanFixture::new(vec![agent_task("foundation:demo", &[])]);
     let database_path = fixture.database_path.clone();
     let project_id = fixture.project_id;
@@ -61,14 +61,18 @@ fn migrates_schema_nine_to_eleven_without_losing_project_data() {
     connection
         .execute_batch(
             "DROP TABLE capability_api_endpoints;
+             DROP TABLE code_investigations;
+             DROP INDEX work_items_by_integration;
+             ALTER TABLE work_items DROP COLUMN integrated_at;
+             ALTER TABLE work_items DROP COLUMN integration_reference;
              ALTER TABLE artifacts DROP COLUMN images_json;
              PRAGMA user_version = 9;",
         )
         .expect("schema nine must be restored");
     drop(connection);
 
-    let database = Database::open(&database_path).expect("schema eleven migration must run");
-    assert_eq!(database.schema_version().expect("schema version"), 11);
+    let database = Database::open(&database_path).expect("current schema migration must run");
+    assert_eq!(database.schema_version().expect("schema version"), 13);
     assert_eq!(
         database
             .event_count(&project_id)

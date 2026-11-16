@@ -6,7 +6,8 @@
 use std::collections::BTreeMap;
 
 use coldstart_core::{
-    ArtifactImage, ArtifactMetadata, BlueprintRevision, DocumentAnchor, InfoRequest, ProjectFact,
+    ArtifactImage, ArtifactMetadata, BlueprintRevision, CodeInvestigation, DocumentAnchor,
+    InfoRequest, ProjectFact,
 };
 use serde::{Deserialize, Serialize};
 
@@ -23,5 +24,6 @@ pub struct ProjectWorkspace {
     pub published: Option<BlueprintRevision>,
     pub inbox: Vec<InfoRequest>,
     pub facts: Vec<ProjectFact>,
+    pub code_investigations: Vec<CodeInvestigation>,
     pub plan: PlanWorkspace,
 }

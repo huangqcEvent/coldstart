@@ -48,7 +48,7 @@ fn credential(project_id: coldstart_core::ProjectId) -> CredentialMetadata {
 }
 
 #[test]
-fn migrates_v4_to_v11_and_persists_integration_state() {
+fn migrates_v4_to_current_and_persists_integration_state() {
     let fixture = PlanFixture::new(vec![support::agent_task("foundation:demo", &[])]);
     let database_path = fixture.database_path.clone();
     let project_id = fixture.project_id;
@@ -62,6 +62,9 @@ fn migrates_v4_to_v11_and_persists_integration_state() {
     connection
         .execute_batch(
             "PRAGMA foreign_keys = OFF;
+             DROP INDEX work_items_by_integration;
+             ALTER TABLE work_items DROP COLUMN integrated_at;
+             ALTER TABLE work_items DROP COLUMN integration_reference;
              DROP INDEX work_reports_one_running_verification;
              DROP INDEX work_reports_one_running_review;
              ALTER TABLE work_runs DROP COLUMN review_snapshot_json;
@@ -84,6 +87,7 @@ fn migrates_v4_to_v11_and_persists_integration_state() {
              DROP TABLE review_configurations;
              DROP TABLE pull_request_insights;
              DROP TABLE pull_requests;
+             DROP TABLE code_investigations;
              DROP TABLE repository_verification_commands;
              DROP TABLE capability_states;
              DROP TABLE repositories;
@@ -98,7 +102,7 @@ fn migrates_v4_to_v11_and_persists_integration_state() {
     let mut database = Database::open(&database_path).expect("v4 migration must run");
     assert_eq!(
         database.schema_version().expect("schema version must load"),
-        11
+        13
     );
 
     let credential = credential(project_id);

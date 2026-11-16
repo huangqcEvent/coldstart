@@ -19,6 +19,7 @@ interface InboxViewProps {
   busy: boolean;
   busyLabel: string | null;
   onResolve: (requestId: string, answer: string) => Promise<boolean>;
+  onDismiss: (requestId: string, reason: string) => Promise<boolean>;
   onCompleteHuman: (
     workItemId: string,
     note: string,
@@ -60,15 +61,20 @@ function InboxRequestCard({
   busy,
   busyLabel,
   onResolve,
+  onDismiss,
 }: {
   request: InfoRequest;
   busy: boolean;
   busyLabel: string | null;
   onResolve: (requestId: string, answer: string) => Promise<boolean>;
+  onDismiss: (requestId: string, reason: string) => Promise<boolean>;
 }) {
   const answerId = useId();
+  const dismissId = useId();
   const [answer, setAnswer] = useState('');
+  const [dismissReason, setDismissReason] = useState('');
   const submitting = busyLabel === '正在提交 Inbox 回答';
+  const dismissing = busyLabel === '正在关闭 Inbox 问题';
 
   return (
     <article className="inbox-card">
@@ -125,6 +131,33 @@ function InboxRequestCard({
       >
         {submitting ? '提交中…' : '提交回答'}
       </button>
+      <details className="inbox-dismiss">
+        <summary>问题已过时或不适用？关闭它</summary>
+        <p className="field__hint">
+          关闭后不会生成项目事实，但会保留原因和审计记录。
+        </p>
+        <label className="field" htmlFor={dismissId}>
+          <span>关闭原因</span>
+          <textarea
+            id={dismissId}
+            value={dismissReason}
+            onChange={(event) => setDismissReason(event.target.value)}
+            placeholder="说明为什么该问题已经过时、重复或不再适用"
+            aria-label={`关闭原因：${request.question}`}
+            disabled={busy}
+            rows={2}
+          />
+        </label>
+        <button
+          className="button button--compact button--ghost"
+          type="button"
+          onClick={() => void onDismiss(request.id, dismissReason.trim())}
+          disabled={busy || dismissReason.trim().length === 0}
+          aria-label={`关闭问题：${request.question}`}
+        >
+          {dismissing ? '关闭中…' : '确认关闭问题'}
+        </button>
+      </details>
     </article>
   );
 }
@@ -220,6 +253,7 @@ export function InboxView({
   busy,
   busyLabel,
   onResolve,
+  onDismiss,
   onCompleteHuman,
 }: InboxViewProps) {
   const openRequests = inbox.filter((request) => request.status === 'open');
@@ -293,6 +327,7 @@ export function InboxView({
                       busy={busy}
                       busyLabel={busyLabel}
                       onResolve={onResolve}
+                      onDismiss={onDismiss}
                       key={request.id}
                     />
                   ))}
@@ -314,7 +349,11 @@ export function InboxView({
                   <span>{request.status === 'answered' ? '已回答' : '已关闭'}</span>
                 </div>
                 <h3>{request.question}</h3>
-                <p>{request.answer ?? '未填写答案'}</p>
+                <p>
+                  {request.status === 'dismissed'
+                    ? `关闭原因：${request.answer ?? '未填写'}`
+                    : request.answer ?? '未填写答案'}
+                </p>
               </article>
             ))}
           </div>

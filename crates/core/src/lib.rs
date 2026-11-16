@@ -12,6 +12,7 @@ mod error;
 mod event;
 mod info_request;
 mod integration;
+mod investigation;
 mod manifest;
 mod plan;
 mod plan_compiler;
@@ -28,15 +29,16 @@ pub use blueprint::*;
 pub use capability_api::*;
 pub use context::*;
 pub use entity_id::{
-    ArtifactId, BlueprintEntityId, BlueprintRevisionId, CapabilityApiEndpointId, CredentialId,
-    EntityIdError, GitSyncId, InfoRequestId, LeaseId, PlanRevisionId, ProjectFactId, PullRequestId,
-    RepositoryId, ReviewStandardId, ReviewStandardRevisionId, TaskSpecId, WorkItemId, WorkReportId,
-    WorkRunId,
+    ArtifactId, BlueprintEntityId, BlueprintRevisionId, CapabilityApiEndpointId,
+    CodeInvestigationId, CredentialId, EntityIdError, GitSyncId, InfoRequestId, LeaseId,
+    PlanRevisionId, ProjectFactId, PullRequestId, RepositoryId, ReviewStandardId,
+    ReviewStandardRevisionId, TaskSpecId, WorkItemId, WorkReportId, WorkRunId,
 };
 pub use error::ProjectError;
 pub use event::{DomainEvent, DomainEventKind};
 pub use info_request::*;
 pub use integration::*;
+pub use investigation::*;
 pub use manifest::{ManifestError, PROJECT_MANIFEST_SCHEMA_VERSION, ProjectManifest};
 pub use plan::*;
 pub use plan_compiler::*;

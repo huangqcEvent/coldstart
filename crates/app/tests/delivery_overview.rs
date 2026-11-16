@@ -28,10 +28,11 @@ impl Fixture {
             .expect("project must create");
         let database_path = home.join(".coldstart").join("state.db");
         let mut database = Database::open(&database_path).expect("database must open");
+        let artifact_id = support::seed_requirement_artifact(&mut database, status.project_id);
         let revision = database
             .create_blueprint_revision(
                 &status.project_id,
-                blueprint_content(status.project_id),
+                blueprint_content(status.project_id, artifact_id),
                 BlueprintGeneration {
                     source: GenerationSource::Manual,
                     model_provider: None,
@@ -61,9 +62,9 @@ impl Fixture {
     }
 }
 
-fn blueprint_content(project_id: ProjectId) -> BlueprintContent {
+fn blueprint_content(project_id: ProjectId, artifact_id: ArtifactId) -> BlueprintContent {
     let source = SourceReference {
-        artifact_id: ArtifactId::new(),
+        artifact_id,
         anchor_id: "section_1".to_owned(),
         quote: Some("需要 Web、服务端和管理后台订单系统".to_owned()),
     };

@@ -3,7 +3,10 @@
 //! DTO 定义协议字段与默认值，并严格拒绝未知或越界输入；返回结构只包含任务所需的
 //! 最小投影，不携带本地敏感路径、租约令牌或 Secret。
 
-use coldstart_core::{AcceptanceResult, CommandRun, ReportOutcome, WorkReportInput};
+use coldstart_core::{
+    AcceptanceResult, CodeFinding, CodeInvestigationReport, CommandRun, ReportOutcome,
+    WorkReportInput,
+};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -18,6 +21,17 @@ pub(crate) struct ClaimNextWorkArgs {
     pub repository: Option<String>,
     #[schemars(description = "Caller-generated idempotency key for the claim request")]
     pub request_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ClaimNextCodeInvestigationArgs {
+    #[schemars(description = "Stable agent profile name, for example codex")]
+    pub agent_profile: String,
+    #[schemars(
+        description = "Optional logical repository key such as server, web, app, or mini_program"
+    )]
+    pub repository: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -126,6 +140,62 @@ pub(crate) struct SubmitWorkReportArgs {
     pub work_id: String,
     pub lease_token: String,
     pub report: WorkReportArgs,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SubmitCodeInvestigationArgs {
+    pub investigation_id: String,
+    pub claim_token: String,
+    pub report: CodeInvestigationReportArgs,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CodeInvestigationReportArgs {
+    pub commit_sha: String,
+    pub summary: String,
+    pub findings: Vec<CodeFindingArgs>,
+    #[serde(default)]
+    pub limitations: Vec<String>,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CodeFindingArgs {
+    pub path: String,
+    pub line_start: u32,
+    pub line_end: u32,
+    pub symbol: Option<String>,
+    pub summary: String,
+    pub risk: String,
+    #[serde(default)]
+    pub suggested_change_paths: Vec<String>,
+}
+
+impl From<CodeInvestigationReportArgs> for CodeInvestigationReport {
+    fn from(report: CodeInvestigationReportArgs) -> Self {
+        Self {
+            commit_sha: report.commit_sha,
+            summary: report.summary,
+            findings: report
+                .findings
+                .into_iter()
+                .map(|finding| CodeFinding {
+                    path: finding.path,
+                    line_start: finding.line_start,
+                    line_end: finding.line_end,
+                    symbol: finding.symbol,
+                    summary: finding.summary,
+                    risk: finding.risk,
+                    suggested_change_paths: finding.suggested_change_paths,
+                })
+                .collect(),
+            limitations: report.limitations,
+            idempotency_key: report.idempotency_key,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

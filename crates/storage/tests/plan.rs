@@ -29,6 +29,7 @@ fn migrates_v3_database_to_v11_and_preserves_the_published_blueprint() {
              DROP TABLE credentials;
              DROP TABLE pull_request_insights;
              DROP TABLE pull_requests;
+             DROP TABLE code_investigations;
              DROP TABLE work_blockers;
              DROP TABLE work_reports;
              DROP TABLE work_runs;
@@ -53,7 +54,7 @@ fn migrates_v3_database_to_v11_and_preserves_the_published_blueprint() {
         .expect("read connection must open")
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .expect("schema version must be readable");
-    assert_eq!(version, 11);
+    assert_eq!(version, 13);
 }
 
 #[test]

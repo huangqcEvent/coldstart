@@ -196,7 +196,7 @@ pub fn compile_plan(
                     "capability-integration:{}",
                     capability.id
                 ))),
-                allowed_paths: vec![".".to_owned()],
+                allowed_paths: default_allowed_paths_for_platform(platform.kind),
                 context_refs,
                 acceptance_criteria: vec![
                     criterion("implementation", "能力接入成功且错误路径可观测", true),
@@ -379,6 +379,66 @@ pub fn repository_key_for_platform(kind: PlatformKind) -> &'static str {
     }
 }
 
+/// 为各平台提供保守的默认改动范围；历史仓库可在计划草稿中逐任务覆盖。
+///
+/// 默认范围覆盖常见工程目录和清单文件，但不会直接放开整个仓库，减少 Agent
+/// 在迭代任务中误改无关模块的机会。
+pub fn default_allowed_paths_for_platform(kind: PlatformKind) -> Vec<String> {
+    let paths = match kind {
+        PlatformKind::Server => vec![
+            "src",
+            "crates",
+            "migrations",
+            "api",
+            "server",
+            "Cargo.toml",
+            "Cargo.lock",
+            "package.json",
+            "pyproject.toml",
+            "go.mod",
+            "go.sum",
+        ],
+        PlatformKind::Web | PlatformKind::Admin => vec![
+            "src",
+            "public",
+            "web",
+            "admin",
+            "index.html",
+            "package.json",
+            "pnpm-lock.yaml",
+            "package-lock.json",
+            "vite.config.ts",
+            "vite.config.js",
+            "tsconfig.json",
+        ],
+        PlatformKind::Ios | PlatformKind::Android => vec![
+            "src",
+            "app",
+            "lib",
+            "android",
+            "ios",
+            "app.json",
+            "app.config.ts",
+            "app.config.js",
+            "package.json",
+            "pubspec.yaml",
+        ],
+        PlatformKind::MiniProgram => vec![
+            "src",
+            "miniprogram",
+            "pages",
+            "components",
+            "app.js",
+            "app.ts",
+            "app.json",
+            "app.wxss",
+            "project.config.json",
+            "package.json",
+        ],
+    };
+    paths.into_iter().map(str::to_owned).collect()
+}
+
 fn platform_foundation(
     platform: &crate::PlatformDefinition,
     technologies: &[BlueprintEntityId],
@@ -401,7 +461,7 @@ fn platform_foundation(
         repository_key: Some(repository_key_for_platform(platform.kind).to_owned()),
         base_ref: Some("main".to_owned()),
         work_branch: Some(branch_for_task(&task_key)),
-        allowed_paths: vec![".".to_owned()],
+        allowed_paths: default_allowed_paths_for_platform(platform.kind),
         context_refs,
         acceptance_criteria: vec![
             criterion("implementation", "工程可构建，基础目录与运行入口完整", true),
@@ -439,7 +499,7 @@ fn contract_task(server: &crate::PlatformDefinition, blueprint: &BlueprintConten
         repository_key: Some("server".to_owned()),
         base_ref: Some("main".to_owned()),
         work_branch: Some(branch_for_task(&task_key)),
-        allowed_paths: vec![".".to_owned()],
+        allowed_paths: default_allowed_paths_for_platform(server.kind),
         context_refs,
         acceptance_criteria: vec![
             criterion(
@@ -493,7 +553,7 @@ fn module_slice(
         repository_key: Some(repository_key_for_platform(platform.kind).to_owned()),
         base_ref: Some("main".to_owned()),
         work_branch: Some(branch_for_task(&task_key)),
-        allowed_paths: vec![".".to_owned()],
+        allowed_paths: default_allowed_paths_for_platform(platform.kind),
         context_refs,
         acceptance_criteria: vec![
             criterion(

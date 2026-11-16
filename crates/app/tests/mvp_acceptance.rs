@@ -491,6 +491,13 @@ fn mvp_closes_requirement_to_release_and_survives_restart() {
         ),
         commit
     );
+    plan_service
+        .mark_work_integrated(
+            fixture.home.clone(),
+            claimed.work_item.id,
+            format!("test merge {commit}"),
+        )
+        .expect("foundation must be integrated before dependent work starts");
     let workspace_after_report = plan_service
         .load_workspace(fixture.home.clone())
         .expect("workspace must load");

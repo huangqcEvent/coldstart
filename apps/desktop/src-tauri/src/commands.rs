@@ -8,19 +8,20 @@ use std::{path::PathBuf, sync::Arc};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use coldstart_adapters::{GitHubIssueListState, ModelConfig, OpenAiCompatibleModel};
 use coldstart_app::{
-    CreatePrivateRepositoryInput, DeliveryOverviewService, DeliveryOverviewView, DeviceFlowView,
-    GitHubDevicePollView, GitHubIssueListView, GitHubIssueService, GitHubProjectOverviewView,
-    GitHubProjectService, GitHubSessionView, IntegrationService, IntegrationWorkspace, PlanService,
-    ProjectMemoryPage, ProjectMemoryService, ProjectService, ProjectStatus, ProjectWorkspace,
-    PullRequestService, RepositoryDraft, RepositoryValidationView, RequirementsService,
-    ReviewService, ReviewStandardContent, ReviewStandardImport, ReviewStandardManualInput,
-    ReviewStandardRevisionInput, ReviewStandardView, ReviewWorkspace, SaveCredentialInput,
+    CodeInvestigationService, CreatePrivateRepositoryInput, DeliveryOverviewService,
+    DeliveryOverviewView, DeviceFlowView, GitHubDevicePollView, GitHubIssueListView,
+    GitHubIssueService, GitHubProjectOverviewView, GitHubProjectService, GitHubSessionView,
+    IntegrationService, IntegrationWorkspace, PlanService, ProjectMemoryPage, ProjectMemoryService,
+    ProjectService, ProjectStatus, ProjectWorkspace, PullRequestService, RepositoryDraft,
+    RepositoryValidationView, RequirementsService, ReviewService, ReviewStandardContent,
+    ReviewStandardImport, ReviewStandardManualInput, ReviewStandardRevisionInput,
+    ReviewStandardView, ReviewWorkspace, SaveCredentialInput,
     read_requirement_image as read_requirement_image_content,
 };
 use coldstart_core::{
     ArtifactId, ArtifactImage, BlueprintContent, BlueprintEntityId, BlueprintRevisionId,
-    CapabilityApiEndpointId, CapabilityApiEndpointInput, CapabilityStatus, CredentialId,
-    InfoRequestId, PlanContent, PlanPublishPreview, PlanRevisionId, PullRequestId,
+    CapabilityApiEndpointId, CapabilityApiEndpointInput, CapabilityStatus, CodeInvestigationId,
+    CredentialId, InfoRequestId, PlanContent, PlanPublishPreview, PlanRevisionId, PullRequestId,
     PullRequestRecord, RepositoryVerificationCommand, ReviewConfiguration,
     ReviewConfigurationInput, ReviewStandardId, WorkItemId, WorkReportId, WorkReportRecord,
 };
@@ -176,9 +177,14 @@ pub async fn read_requirement_image(
 pub fn generate_blueprint_sync(
     path: String,
     config: ModelConfig,
+    artifact_ids: Vec<String>,
 ) -> Result<ProjectWorkspace, CommandError> {
+    let artifact_ids = artifact_ids
+        .iter()
+        .map(|artifact_id| parse_artifact_id(artifact_id))
+        .collect::<Result<Vec<_>, _>>()?;
     RequirementsService::new(OpenAiCompatibleModel::new())
-        .generate_blueprint(PathBuf::from(path), config)
+        .generate_blueprint(PathBuf::from(path), config, artifact_ids)
         .map_err(Into::into)
 }
 
@@ -186,10 +192,13 @@ pub fn generate_blueprint_sync(
 pub async fn generate_blueprint(
     path: String,
     config: ModelConfig,
+    artifact_ids: Vec<String>,
 ) -> Result<ProjectWorkspace, CommandError> {
-    tauri::async_runtime::spawn_blocking(move || generate_blueprint_sync(path, config))
-        .await
-        .map_err(join_error)?
+    tauri::async_runtime::spawn_blocking(move || {
+        generate_blueprint_sync(path, config, artifact_ids)
+    })
+    .await
+    .map_err(join_error)?
 }
 
 pub fn save_blueprint_draft_sync(
@@ -250,6 +259,101 @@ pub async fn resolve_info_request(
 ) -> Result<ProjectWorkspace, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         resolve_info_request_sync(path, info_request_id, answer)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn dismiss_info_request_sync(
+    path: String,
+    info_request_id: String,
+    reason: String,
+) -> Result<ProjectWorkspace, CommandError> {
+    let request_id = parse_info_request_id(&info_request_id)?;
+    RequirementsService::new(OpenAiCompatibleModel::new())
+        .dismiss_info_request(PathBuf::from(path), request_id, reason)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn dismiss_info_request(
+    path: String,
+    info_request_id: String,
+    reason: String,
+) -> Result<ProjectWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        dismiss_info_request_sync(path, info_request_id, reason)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn create_code_investigation_sync(
+    path: String,
+    repository_key: String,
+    base_ref: Option<String>,
+    question: String,
+) -> Result<ProjectWorkspace, CommandError> {
+    CodeInvestigationService::new()
+        .create(PathBuf::from(path), repository_key, base_ref, question)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn create_code_investigation(
+    path: String,
+    repository_key: String,
+    base_ref: Option<String>,
+    question: String,
+) -> Result<ProjectWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        create_code_investigation_sync(path, repository_key, base_ref, question)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn confirm_code_investigation_sync(
+    path: String,
+    investigation_id: String,
+) -> Result<ProjectWorkspace, CommandError> {
+    let investigation_id = parse_code_investigation_id(&investigation_id)?;
+    CodeInvestigationService::new()
+        .confirm(PathBuf::from(path), investigation_id)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn confirm_code_investigation(
+    path: String,
+    investigation_id: String,
+) -> Result<ProjectWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        confirm_code_investigation_sync(path, investigation_id)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn reject_code_investigation_sync(
+    path: String,
+    investigation_id: String,
+    reason: String,
+) -> Result<ProjectWorkspace, CommandError> {
+    let investigation_id = parse_code_investigation_id(&investigation_id)?;
+    CodeInvestigationService::new()
+        .reject(PathBuf::from(path), investigation_id, reason)
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+pub async fn reject_code_investigation(
+    path: String,
+    investigation_id: String,
+    reason: String,
+) -> Result<ProjectWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        reject_code_investigation_sync(path, investigation_id, reason)
     })
     .await
     .map_err(join_error)?
@@ -365,6 +469,31 @@ pub async fn complete_human_work(
 ) -> Result<ProjectWorkspace, CommandError> {
     tauri::async_runtime::spawn_blocking(move || {
         complete_human_work_sync(path, work_item_id, note, accepted)
+    })
+    .await
+    .map_err(join_error)?
+}
+
+pub fn mark_work_integrated_sync(
+    path: String,
+    work_item_id: String,
+    reference: String,
+) -> Result<ProjectWorkspace, CommandError> {
+    let work_item_id = parse_work_item_id(&work_item_id)?;
+    PlanService::new()
+        .mark_work_integrated(PathBuf::from(&path), work_item_id, reference)
+        .map_err(CommandError::from)?;
+    read_requirements_workspace_sync(path)
+}
+
+#[tauri::command]
+pub async fn mark_work_integrated(
+    path: String,
+    work_item_id: String,
+    reference: String,
+) -> Result<ProjectWorkspace, CommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        mark_work_integrated_sync(path, work_item_id, reference)
     })
     .await
     .map_err(join_error)?
@@ -1074,6 +1203,13 @@ fn parse_info_request_id(value: &str) -> Result<InfoRequestId, CommandError> {
     })
 }
 
+fn parse_code_investigation_id(value: &str) -> Result<CodeInvestigationId, CommandError> {
+    value.parse().map_err(|_| CommandError {
+        code: "invalid_id".to_owned(),
+        message: "历史代码调查 ID 无效".to_owned(),
+    })
+}
+
 fn parse_plan_revision_id(value: &str) -> Result<PlanRevisionId, CommandError> {
     value.parse().map_err(|_| CommandError {
         code: "invalid_id".to_owned(),
@@ -1300,6 +1436,7 @@ mod tests {
                 model: "test-model".to_owned(),
                 api_key: "secret".to_owned(),
             },
+            Vec::new(),
         )
         .expect_err("missing sources must fail");
 
@@ -1335,6 +1472,27 @@ mod tests {
                 .expect_err("empty answer must fail");
 
         assert_eq!(error.code, "info_request_answer_empty");
+    }
+
+    #[test]
+    fn info_request_dismissal_requires_a_valid_id_and_reason() {
+        let temp = TempDir::new().expect("temporary directory must exist");
+        let home = path_string(&temp.path().join("demo"));
+        create_project_sync("Demo Project".to_owned(), home.clone())
+            .expect("project must be created");
+
+        let id_error = dismiss_info_request_sync(
+            home.clone(),
+            "not-an-id".to_owned(),
+            "问题已过时".to_owned(),
+        )
+        .expect_err("invalid request id must fail");
+        let reason_error =
+            dismiss_info_request_sync(home, InfoRequestId::new().to_string(), "  ".to_owned())
+                .expect_err("empty dismissal reason must fail");
+
+        assert_eq!(id_error.code, "invalid_id");
+        assert_eq!(reason_error.code, "info_request_dismiss_reason_empty");
     }
 
     #[test]
@@ -1424,5 +1582,43 @@ mod tests {
 
         assert_eq!(limit_error.code, "invalid_memory_limit");
         assert_eq!(cursor_error.code, "invalid_memory_cursor");
+    }
+
+    #[test]
+    fn code_investigation_command_ids_are_validated_before_storage() {
+        let temp = TempDir::new().expect("temporary directory must exist");
+        let home = path_string(&temp.path().join("demo"));
+        create_project_sync("Investigation Project".to_owned(), home.clone())
+            .expect("project must be created");
+
+        let confirm_error = confirm_code_investigation_sync(home.clone(), "not-an-id".to_owned())
+            .expect_err("invalid investigation id must fail");
+        let reject_error =
+            reject_code_investigation_sync(home, "not-an-id".to_owned(), "证据不足".to_owned())
+                .expect_err("invalid investigation id must fail");
+
+        assert_eq!(confirm_error.code, "invalid_id");
+        assert_eq!(reject_error.code, "invalid_id");
+    }
+
+    #[test]
+    fn code_investigation_create_and_reject_validate_required_text() {
+        let temp = TempDir::new().expect("temporary directory must exist");
+        let home = path_string(&temp.path().join("demo"));
+        create_project_sync("Investigation Project".to_owned(), home.clone())
+            .expect("project must be created");
+
+        let question_error =
+            create_code_investigation_sync(home.clone(), "web".to_owned(), None, "  ".to_owned())
+                .expect_err("empty investigation question must fail");
+        let rejection_error = reject_code_investigation_sync(
+            home,
+            CodeInvestigationId::new().to_string(),
+            "  ".to_owned(),
+        )
+        .expect_err("empty rejection reason must fail");
+
+        assert_eq!(question_error.code, "invalid_code_investigation");
+        assert_eq!(rejection_error.code, "code_investigation_rejection_empty");
     }
 }

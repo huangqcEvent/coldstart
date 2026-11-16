@@ -16,9 +16,36 @@ use coldstart_adapters::{
 };
 use coldstart_app::{PlanGitGateway, PlanService};
 use coldstart_core::{
-    ProjectId, Repository, RepositoryAuthMode, RepositorySyncPolicy, RepositoryVerificationCommand,
+    ArtifactFormat, ArtifactId, ArtifactMetadata, DocumentAnchor, ProjectId, Repository,
+    RepositoryAuthMode, RepositorySyncPolicy, RepositoryVerificationCommand,
 };
 use coldstart_storage::Database;
+
+/// 写入一份最小但真实的来源制品，供蓝图来源引用通过存储层校验。
+pub fn seed_requirement_artifact(database: &mut Database, project_id: ProjectId) -> ArtifactId {
+    let artifact_id = ArtifactId::new();
+    database
+        .insert_artifact(
+            &ArtifactMetadata {
+                id: artifact_id,
+                project_id,
+                file_name: "requirements.md".to_owned(),
+                format: ArtifactFormat::Markdown,
+                content_hash: format!("{artifact_id}-content"),
+                text_hash: format!("{artifact_id}-text"),
+                byte_size: 128,
+                import_source: "requirements.md".to_owned(),
+                imported_at: chrono::Utc::now(),
+            },
+            &[DocumentAnchor {
+                id: "section_1".to_owned(),
+                label: "需求".to_owned(),
+                text: "订单系统需求".to_owned(),
+            }],
+        )
+        .expect("requirement artifact must insert");
+    artifact_id
+}
 
 #[derive(Default)]
 pub struct FakePlanGit {

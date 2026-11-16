@@ -32,8 +32,16 @@ export async function readRequirementImage(
   });
 }
 
-export async function generateBlueprint(path: string, config: ModelConfig) {
-  return invoke<ProjectWorkspace>('generate_blueprint', { path, config });
+export async function generateBlueprint(
+  path: string,
+  config: ModelConfig,
+  artifactIds: string[],
+) {
+  return invoke<ProjectWorkspace>('generate_blueprint', {
+    path,
+    config,
+    artifactIds,
+  });
 }
 
 export async function saveBlueprintDraft(
@@ -59,6 +67,18 @@ export async function resolveInfoRequest(
     path,
     infoRequestId,
     answer,
+  });
+}
+
+export async function dismissInfoRequest(
+  path: string,
+  infoRequestId: string,
+  reason: string,
+) {
+  return invoke<ProjectWorkspace>('dismiss_info_request', {
+    path,
+    infoRequestId,
+    reason,
   });
 }
 

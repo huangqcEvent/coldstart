@@ -6,19 +6,21 @@ use std::{
     thread::{self, JoinHandle},
 };
 
+use chrono::Utc;
 use coldstart_adapters::{GitAdapter, GitHubClient, GitHubToken, MemorySecretStore, SecretStore};
 use coldstart_app::{
     ClaimRequest, CreatePrivateRepositoryInput, IntegrationService, PlanService, ProjectService,
     PullRequestService, RepositoryDraft, ReviewService, SaveCredentialInput,
 };
 use coldstart_core::{
-    AcceptanceResult, ArtifactId, BlueprintContent, BlueprintEntityId, BlueprintGeneration,
-    CapabilityObligation, CapabilityStatus, ClaimResult, CredentialEnvironment, CredentialKind,
-    DomainEventKind, GenerationSource, ModuleDefinition, PlatformDefinition, PlatformKind,
-    PullRequestConflictState, PullRequestDeploymentState, PullRequestDeploymentsState,
-    PullRequestMergeability, PullRequestRecord, PullRequestState, ReleasePrerequisite,
-    ReportOutcome, RepositoryAuthMode, RepositorySyncPolicy, RepositoryVerificationCommand,
-    SourceReference, TraceableText, WorkItemStatus, WorkReportInput,
+    AcceptanceResult, ArtifactFormat, ArtifactId, ArtifactMetadata, BlueprintContent,
+    BlueprintEntityId, BlueprintGeneration, CapabilityObligation, CapabilityStatus, ClaimResult,
+    CredentialEnvironment, CredentialKind, DependencyKind, DocumentAnchor, DomainEventKind,
+    GenerationSource, ModuleDefinition, PlatformDefinition, PlatformKind, PullRequestConflictState,
+    PullRequestDeploymentState, PullRequestDeploymentsState, PullRequestMergeability,
+    PullRequestRecord, PullRequestState, ReleasePrerequisite, ReportOutcome, RepositoryAuthMode,
+    RepositorySyncPolicy, RepositoryVerificationCommand, SourceReference, TraceableText,
+    WorkItemStatus, WorkReportInput,
 };
 use coldstart_storage::Database;
 use tempfile::TempDir;
@@ -72,10 +74,31 @@ impl Fixture {
 
         let database_path = home.join(".coldstart").join("state.db");
         let mut database = Database::open(&database_path).expect("database must open");
+        let artifact_id = ArtifactId::new();
+        database
+            .insert_artifact(
+                &ArtifactMetadata {
+                    id: artifact_id,
+                    project_id: status.project_id,
+                    file_name: "requirements.md".to_owned(),
+                    format: ArtifactFormat::Markdown,
+                    content_hash: "integration-content-hash".to_owned(),
+                    text_hash: "integration-text-hash".to_owned(),
+                    byte_size: 128,
+                    import_source: "requirements.md".to_owned(),
+                    imported_at: Utc::now(),
+                },
+                &[DocumentAnchor {
+                    id: "section_1".to_owned(),
+                    label: "订单系统".to_owned(),
+                    text: "需要 Web 订单系统".to_owned(),
+                }],
+            )
+            .expect("artifact must insert");
         let revision = database
             .create_blueprint_revision(
                 &status.project_id,
-                blueprint_content(status.project_id),
+                blueprint_content(status.project_id, artifact_id),
                 BlueprintGeneration {
                     source: GenerationSource::Manual,
                     model_provider: None,
@@ -186,9 +209,12 @@ impl Fixture {
     }
 }
 
-fn blueprint_content(project_id: coldstart_core::ProjectId) -> BlueprintContent {
+fn blueprint_content(
+    project_id: coldstart_core::ProjectId,
+    artifact_id: ArtifactId,
+) -> BlueprintContent {
     let source = SourceReference {
-        artifact_id: ArtifactId::new(),
+        artifact_id,
         anchor_id: "section_1".to_owned(),
         quote: Some("需要 Web 订单系统".to_owned()),
     };
@@ -1259,6 +1285,17 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
         .expect("PR query must work")
         .expect("PR must persist");
     assert_eq!(stored.state, PullRequestState::Merged);
+    let integrated_work = database
+        .load_work_item(&claimed.work_item.id)
+        .expect("work item query must work")
+        .expect("work item must persist");
+    assert!(integrated_work.integrated_at.is_some());
+    assert!(
+        integrated_work
+            .integration_reference
+            .as_deref()
+            .is_some_and(|reference| reference.contains("17"))
+    );
     let events = database
         .list_events(&fixture.project_id, None, 100, true)
         .expect("events must load");
@@ -1270,6 +1307,36 @@ fn creates_an_idempotent_draft_pull_request_and_refreshes_its_merged_state() {
             ..
         } if state == "merged"
     )));
+    assert!(events.events.iter().any(|event| matches!(
+        &event.event.kind,
+        DomainEventKind::WorkIntegrated {
+            work_item_id,
+            task_key: integrated_task_key,
+            reference,
+        } if *work_item_id == claimed.work_item.id
+            && integrated_task_key == &task_key
+            && reference.contains("17")
+    )));
+    let work_items = database
+        .list_work_items(&fixture.project_id)
+        .expect("work items must load");
+    let unlocked_downstream = work_items.iter().any(|item| {
+        if item.status != WorkItemStatus::Ready {
+            return false;
+        }
+        database
+            .task_spec_for_work_item(&item.id)
+            .expect("task spec query must work")
+            .is_some_and(|spec| {
+                spec.dependencies.iter().any(|dependency| {
+                    dependency.task_key == task_key && dependency.kind == DependencyKind::Blocks
+                })
+            })
+    });
+    assert!(
+        unlocked_downstream,
+        "merging the foundation task must unlock a dependent ready task"
+    );
     let insights = database
         .load_pull_request_insights(&fixture.project_id, &created.id)
         .expect("insights must load")

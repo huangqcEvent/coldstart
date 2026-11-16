@@ -7,6 +7,7 @@ mod capability_api_store;
 mod database;
 mod event_store;
 mod integration_store;
+mod investigation_store;
 mod migrations;
 mod plan_store;
 mod pull_request_store;

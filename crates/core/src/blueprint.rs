@@ -17,7 +17,7 @@ use crate::{
 };
 
 pub const BLUEPRINT_SCHEMA_VERSION: u32 = 1;
-pub const BLUEPRINT_PROMPT_VERSION: &str = "blueprint-v1";
+pub const BLUEPRINT_PROMPT_VERSION: &str = "blueprint-v2";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

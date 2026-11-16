@@ -49,6 +49,7 @@ pub enum MemoryReferenceType {
     Capability,
     GitSync,
     PullRequest,
+    CodeInvestigation,
     ProjectSetting,
 }
 
@@ -292,6 +293,17 @@ fn describe_event(kind: &DomainEventKind) -> EventDescription {
             )),
             is_heartbeat: false,
         },
+        DomainEventKind::InfoRequestDismissed { request_id } => EventDescription {
+            phase: MemoryPhase::RequirementsBlueprint,
+            title: "人工信息请求已关闭",
+            summary: "问题已由人工标记为过时或不再适用，不生成项目事实".to_owned(),
+            reference: Some(reference(
+                MemoryReferenceType::InfoRequest,
+                request_id,
+                "已关闭的信息请求",
+            )),
+            is_heartbeat: false,
+        },
         DomainEventKind::PlanDraftCreated {
             revision_id,
             revision_number,
@@ -419,6 +431,21 @@ fn describe_event(kind: &DomainEventKind) -> EventDescription {
             phase: MemoryPhase::PlanExecution,
             title: "任务已完成",
             summary: format!("{task_key} 已通过完成门禁"),
+            reference: Some(reference(
+                MemoryReferenceType::WorkItem,
+                work_item_id,
+                task_key,
+            )),
+            is_heartbeat: false,
+        },
+        DomainEventKind::WorkIntegrated {
+            work_item_id,
+            task_key,
+            reference: integration_reference,
+        } => EventDescription {
+            phase: MemoryPhase::VerificationReview,
+            title: "任务已合入基线",
+            summary: format!("{task_key} · {}", excerpt(integration_reference)),
             reference: Some(reference(
                 MemoryReferenceType::WorkItem,
                 work_item_id,
@@ -763,6 +790,79 @@ fn describe_event(kind: &DomainEventKind) -> EventDescription {
             )),
             is_heartbeat: false,
         },
+        DomainEventKind::CodeInvestigationCreated {
+            investigation_id,
+            repository_key,
+            base_ref,
+        } => EventDescription {
+            phase: MemoryPhase::RequirementsBlueprint,
+            title: "历史代码调查已创建",
+            summary: format!(
+                "仓库 {repository_key} · 基线 {} · 等待 Codex 主动领取",
+                excerpt(base_ref)
+            ),
+            reference: Some(reference(
+                MemoryReferenceType::CodeInvestigation,
+                investigation_id,
+                "历史代码调查",
+            )),
+            is_heartbeat: false,
+        },
+        DomainEventKind::CodeInvestigationClaimed {
+            investigation_id,
+            agent_profile,
+        } => EventDescription {
+            phase: MemoryPhase::RequirementsBlueprint,
+            title: "历史代码调查已领取",
+            summary: format!("{} 正在执行只读调查", excerpt(agent_profile)),
+            reference: Some(reference(
+                MemoryReferenceType::CodeInvestigation,
+                investigation_id,
+                "历史代码调查",
+            )),
+            is_heartbeat: false,
+        },
+        DomainEventKind::CodeInvestigationSubmitted {
+            investigation_id,
+            commit_sha,
+            finding_count,
+        } => EventDescription {
+            phase: MemoryPhase::RequirementsBlueprint,
+            title: "历史代码调查报告已提交",
+            summary: format!(
+                "{} 条定位证据 · Commit {} · 等待人工确认",
+                finding_count,
+                short_hash(commit_sha)
+            ),
+            reference: Some(reference(
+                MemoryReferenceType::CodeInvestigation,
+                investigation_id,
+                "历史代码调查报告",
+            )),
+            is_heartbeat: false,
+        },
+        DomainEventKind::CodeInvestigationConfirmed { investigation_id } => EventDescription {
+            phase: MemoryPhase::RequirementsBlueprint,
+            title: "历史代码证据已确认",
+            summary: "人工已确认报告，下一次蓝图生成可将其作为参考".to_owned(),
+            reference: Some(reference(
+                MemoryReferenceType::CodeInvestigation,
+                investigation_id,
+                "已确认的历史代码调查报告",
+            )),
+            is_heartbeat: false,
+        },
+        DomainEventKind::CodeInvestigationRejected { investigation_id } => EventDescription {
+            phase: MemoryPhase::RequirementsBlueprint,
+            title: "历史代码调查已驳回",
+            summary: "报告未获人工确认，不会进入蓝图上下文".to_owned(),
+            reference: Some(reference(
+                MemoryReferenceType::CodeInvestigation,
+                investigation_id,
+                "已驳回的历史代码调查报告",
+            )),
+            is_heartbeat: false,
+        },
         DomainEventKind::ProjectSettingUpdated { setting_key } => EventDescription {
             phase: MemoryPhase::SystemConfiguration,
             title: "项目设置已更新",
@@ -784,7 +884,12 @@ fn phase_for_event_type(event_type: &str) -> MemoryPhase {
         | "blueprint_draft_created"
         | "blueprint_published"
         | "info_request_created"
-        | "info_request_resolved" => MemoryPhase::RequirementsBlueprint,
+        | "info_request_resolved"
+        | "code_investigation_created"
+        | "code_investigation_claimed"
+        | "code_investigation_submitted"
+        | "code_investigation_confirmed"
+        | "code_investigation_rejected" => MemoryPhase::RequirementsBlueprint,
         "plan_draft_created"
         | "plan_published"
         | "plan_superseded"
@@ -809,7 +914,8 @@ fn phase_for_event_type(event_type: &str) -> MemoryPhase {
         | "review_waived"
         | "pull_request_opened"
         | "pull_request_state_changed"
-        | "pull_request_insights_synced" => MemoryPhase::VerificationReview,
+        | "pull_request_insights_synced"
+        | "work_integrated" => MemoryPhase::VerificationReview,
         "repository_saved"
         | "repository_verification_commands_updated"
         | "credential_saved"

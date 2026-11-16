@@ -282,22 +282,29 @@ impl Database {
                 |row| row.get(0),
             )?;
             let previous = base_by_key.get(task.task_key.as_str()).copied();
-            let (status, completed_at) = match previous {
+            let (status, completed_at, integrated_at, integration_reference) = match previous {
                 Some((item, previous_task)) => {
                     let contract_changed = previous_task.contract_hash() != task.contract_hash();
                     let status = inherited_work_status(item.status, contract_changed);
                     let completed_at = (status == WorkItemStatus::Done)
                         .then(|| item.completed_at.map(|value| value.to_rfc3339()))
                         .flatten();
-                    (status, completed_at)
+                    let integrated_at = (status == WorkItemStatus::Done)
+                        .then(|| item.integrated_at.map(|value| value.to_rfc3339()))
+                        .flatten();
+                    let integration_reference = (status == WorkItemStatus::Done)
+                        .then(|| item.integration_reference.clone())
+                        .flatten();
+                    (status, completed_at, integrated_at, integration_reference)
                 }
-                None => (WorkItemStatus::Draft, None),
+                None => (WorkItemStatus::Draft, None, None, None),
             };
             transaction.execute(
                 "INSERT INTO work_items (
                     id, project_id, plan_revision_id, task_spec_id, task_key,
-                    status, contract_state, priority, created_at, updated_at, completed_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'current', ?7, ?8, ?8, ?9)",
+                    status, contract_state, priority, created_at, updated_at, completed_at,
+                    integrated_at, integration_reference
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'current', ?7, ?8, ?8, ?9, ?10, ?11)",
                 params![
                     coldstart_core::WorkItemId::new().to_string(),
                     project_id.to_string(),
@@ -308,6 +315,8 @@ impl Database {
                     task.priority,
                     now.to_rfc3339(),
                     completed_at,
+                    integrated_at,
+                    integration_reference,
                 ],
             )?;
         }
@@ -331,7 +340,8 @@ impl Database {
     pub fn list_work_items(&self, project_id: &ProjectId) -> Result<Vec<WorkItem>, StorageError> {
         let mut statement = self.connection().prepare(
             "SELECT id, project_id, plan_revision_id, task_spec_id, task_key,
-                    status, contract_state, priority, created_at, updated_at, completed_at
+                    status, contract_state, priority, created_at, updated_at, completed_at,
+                    integrated_at, integration_reference
              FROM work_items WHERE project_id = ?1
              ORDER BY priority DESC, task_key ASC",
         )?;
@@ -350,7 +360,8 @@ impl Database {
     ) -> Result<Vec<WorkItem>, StorageError> {
         let mut statement = self.connection().prepare(
             "SELECT id, project_id, plan_revision_id, task_spec_id, task_key,
-                    status, contract_state, priority, created_at, updated_at, completed_at
+                    status, contract_state, priority, created_at, updated_at, completed_at,
+                    integrated_at, integration_reference
              FROM work_items
              WHERE project_id = ?1 AND plan_revision_id = ?2
              ORDER BY priority DESC, task_key ASC",
@@ -371,7 +382,8 @@ impl Database {
             .connection()
             .query_row(
                 "SELECT id, project_id, plan_revision_id, task_spec_id, task_key,
-                        status, contract_state, priority, created_at, updated_at, completed_at
+                        status, contract_state, priority, created_at, updated_at, completed_at,
+                        integrated_at, integration_reference
                  FROM work_items WHERE id = ?1",
                 [id.to_string()],
                 read_work_item_row,
@@ -503,7 +515,16 @@ impl Database {
         let items = load_plan_items(&transaction, &plan.id, project_id)?;
         let statuses = items
             .iter()
-            .map(|(item, _)| (item.task_key.clone(), item.status))
+            .map(|(item, task)| {
+                (
+                    item.task_key.clone(),
+                    DependencyState {
+                        status: item.status,
+                        kind: task.kind,
+                        integrated: item.integrated_at.is_some(),
+                    },
+                )
+            })
             .collect::<BTreeMap<_, _>>();
         let locked_resources = active_resource_keys(&transaction, project_id)?;
         let mut candidate = None;
@@ -542,13 +563,24 @@ impl Database {
         }
 
         let Some((item, task)) = candidate else {
+            let waiting_integration = items.iter().any(|(item, task)| {
+                item.status == WorkItemStatus::Done
+                    && task.kind == TaskKind::AgentCoding
+                    && item.integrated_at.is_none()
+            });
             let failure = if items.iter().all(|(item, _)| {
                 matches!(
                     item.status,
                     WorkItemStatus::Done | WorkItemStatus::Cancelled
                 )
             }) {
-                ClaimFailure::AllDone
+                if waiting_integration {
+                    ClaimFailure::WaitingIntegration
+                } else {
+                    ClaimFailure::AllDone
+                }
+            } else if waiting_integration {
+                ClaimFailure::WaitingIntegration
             } else if has_human_work && !has_matching_agent_work {
                 ClaimFailure::WaitingHuman
             } else if !has_matching_agent_work && repository.is_some() {
@@ -1174,6 +1206,74 @@ impl Database {
             .ok_or(StorageError::WorkItemNotFound(*work_item_id))
     }
 
+    /// 确认编码任务已经进入基线分支，并刷新依赖图解锁后继任务。
+    ///
+    /// 该操作只接受已完成且至少成功推送过一次的 Agent 编码任务。GitHub PR
+    /// 合并后由刷新流程自动调用，也可以在非 GitHub 或人工合并流程中显式确认。
+    pub fn mark_work_integrated(
+        &mut self,
+        project_id: &ProjectId,
+        work_item_id: &WorkItemId,
+        reference: &str,
+        now: DateTime<Utc>,
+    ) -> Result<WorkItem, StorageError> {
+        let reference = reference.trim();
+        if reference.is_empty() {
+            return Err(StorageError::EmptyIntegrationReference);
+        }
+        let transaction = self
+            .connection_mut()
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let item = query_work_item(&transaction, work_item_id)?
+            .filter(|item| item.project_id == *project_id)
+            .ok_or(StorageError::WorkItemNotFound(*work_item_id))?;
+        ensure_active_plan_item(&transaction, &item)?;
+        let task = query_task_spec_for_work_item(&transaction, work_item_id)?
+            .ok_or(StorageError::WorkItemNotFound(*work_item_id))?;
+        if task.kind != TaskKind::AgentCoding {
+            return Err(StorageError::IntegrationRequiresAgentCoding(task.kind));
+        }
+        if item.status != WorkItemStatus::Done {
+            return Err(StorageError::WorkNotDone(*work_item_id));
+        }
+        if item.integrated_at.is_some() {
+            transaction.commit()?;
+            return Ok(item);
+        }
+        let pushed: bool = transaction.query_row(
+            "SELECT EXISTS(
+                SELECT 1 FROM git_syncs
+                WHERE work_item_id = ?1 AND status = 'pushed'
+             )",
+            [work_item_id.to_string()],
+            |row| row.get(0),
+        )?;
+        if !pushed {
+            return Err(StorageError::WorkNotPushed(*work_item_id));
+        }
+        transaction.execute(
+            "UPDATE work_items
+             SET integrated_at = ?1, integration_reference = ?2, updated_at = ?1
+             WHERE id = ?3",
+            params![now.to_rfc3339(), reference, work_item_id.to_string(),],
+        )?;
+        insert_event(
+            &transaction,
+            &DomainEvent::new(
+                *project_id,
+                DomainEventKind::WorkIntegrated {
+                    work_item_id: *work_item_id,
+                    task_key: item.task_key.clone(),
+                    reference: reference.to_owned(),
+                },
+            ),
+        )?;
+        refresh_work_items(&transaction, project_id, &item.plan_revision_id, now)?;
+        transaction.commit()?;
+        self.load_work_item(work_item_id)?
+            .ok_or(StorageError::WorkItemNotFound(*work_item_id))
+    }
+
     pub fn list_leases(&self, project_id: &ProjectId) -> Result<Vec<LeaseSummary>, StorageError> {
         let mut statement = self.connection().prepare(
             "SELECT l.id, l.work_item_id, l.agent_profile, l.status, l.issued_at,
@@ -1501,14 +1601,14 @@ fn load_plan_items(
     let mut statement = transaction.prepare(
         "SELECT w.id, w.project_id, w.plan_revision_id, w.task_spec_id, w.task_key,
                 w.status, w.contract_state, w.priority, w.created_at, w.updated_at,
-                w.completed_at, t.spec_json
+                w.completed_at, w.integrated_at, w.integration_reference, t.spec_json
          FROM work_items w JOIN task_specs t ON t.id = w.task_spec_id
          WHERE w.plan_revision_id = ?1 AND w.project_id = ?2
          ORDER BY w.priority DESC, w.task_key ASC",
     )?;
     let rows = statement.query_map(
         params![plan_revision_id.to_string(), project_id.to_string()],
-        |row| Ok((read_work_item_row(row)?, row.get::<_, String>(11)?)),
+        |row| Ok((read_work_item_row(row)?, row.get::<_, String>(13)?)),
     )?;
     let mut items = Vec::new();
     for row in rows {
@@ -1723,7 +1823,8 @@ fn query_work_item(
     let row = connection
         .query_row(
             "SELECT id, project_id, plan_revision_id, task_spec_id, task_key,
-                    status, contract_state, priority, created_at, updated_at, completed_at
+                    status, contract_state, priority, created_at, updated_at, completed_at,
+                    integrated_at, integration_reference
              FROM work_items WHERE id = ?1",
             [id.to_string()],
             read_work_item_row,
@@ -2083,7 +2184,7 @@ pub(crate) fn refresh_work_items(
 ) -> Result<(), StorageError> {
     loop {
         let mut statement = transaction.prepare(
-            "SELECT w.id, w.task_key, w.status, t.spec_json
+            "SELECT w.id, w.task_key, w.status, w.integrated_at, t.spec_json
              FROM work_items w JOIN task_specs t ON t.id = w.task_spec_id
              WHERE w.plan_revision_id = ?1",
         )?;
@@ -2092,26 +2193,37 @@ pub(crate) fn refresh_work_items(
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
             ))
         })?;
         let mut items = Vec::new();
         for row in rows {
-            let (id, task_key, status, spec_json) = row?;
+            let (id, task_key, status, integrated_at, spec_json) = row?;
             items.push((
                 id,
                 task_key,
                 parse_enum::<WorkItemStatus>(&status, "work item status")?,
+                integrated_at.is_some(),
                 serde_json::from_str::<TaskSpec>(&spec_json)?,
             ));
         }
         drop(statement);
         let statuses = items
             .iter()
-            .map(|(_, key, status, _)| (key.clone(), *status))
+            .map(|(_, key, status, integrated, task)| {
+                (
+                    key.clone(),
+                    DependencyState {
+                        status: *status,
+                        kind: task.kind,
+                        integrated: *integrated,
+                    },
+                )
+            })
             .collect::<BTreeMap<_, _>>();
         let mut milestone_completed = false;
-        for (id, task_key, status, task) in &items {
+        for (id, task_key, status, _, task) in &items {
             if task.kind == TaskKind::Milestone
                 && matches!(
                     status,
@@ -2141,7 +2253,7 @@ pub(crate) fn refresh_work_items(
             continue;
         }
 
-        for (id, _, status, task) in &items {
+        for (id, _, status, _, task) in &items {
             let next = if dependencies_done(task, &statuses) {
                 match status {
                     WorkItemStatus::Draft => Some(WorkItemStatus::Ready),
@@ -2149,7 +2261,7 @@ pub(crate) fn refresh_work_items(
                     WorkItemStatus::Reopened => Some(WorkItemStatus::Ready),
                     _ => None,
                 }
-            } else if *status == WorkItemStatus::Ready {
+            } else if status == &WorkItemStatus::Ready {
                 Some(WorkItemStatus::Draft)
             } else {
                 None
@@ -2166,11 +2278,19 @@ pub(crate) fn refresh_work_items(
     Ok(())
 }
 
-fn dependencies_done(task: &TaskSpec, statuses: &BTreeMap<String, WorkItemStatus>) -> bool {
+#[derive(Debug, Clone, Copy)]
+struct DependencyState {
+    status: WorkItemStatus,
+    kind: TaskKind,
+    integrated: bool,
+}
+
+fn dependencies_done(task: &TaskSpec, states: &BTreeMap<String, DependencyState>) -> bool {
     task.blocking_dependencies().all(|dependency| {
-        statuses
-            .get(dependency)
-            .is_some_and(|status| *status == WorkItemStatus::Done)
+        states.get(dependency).is_some_and(|state| {
+            state.status == WorkItemStatus::Done
+                && (state.kind != TaskKind::AgentCoding || state.integrated)
+        })
     })
 }
 
@@ -2236,6 +2356,8 @@ struct StoredWorkItemRow {
     created_at: String,
     updated_at: String,
     completed_at: Option<String>,
+    integrated_at: Option<String>,
+    integration_reference: Option<String>,
 }
 
 impl StoredWorkItemRow {
@@ -2252,6 +2374,8 @@ impl StoredWorkItemRow {
             created_at: parse_date(&self.created_at)?,
             updated_at: parse_date(&self.updated_at)?,
             completed_at: parse_optional_date(self.completed_at)?,
+            integrated_at: parse_optional_date(self.integrated_at)?,
+            integration_reference: self.integration_reference,
         })
     }
 }
@@ -2269,6 +2393,8 @@ fn read_work_item_row(row: &Row<'_>) -> rusqlite::Result<StoredWorkItemRow> {
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
         completed_at: row.get(10)?,
+        integrated_at: row.get(11)?,
+        integration_reference: row.get(12)?,
     })
 }
 

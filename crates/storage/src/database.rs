@@ -66,6 +66,8 @@ pub enum StorageError {
     },
     #[error("artifact {0} does not exist")]
     ArtifactNotFound(ArtifactId),
+    #[error("a blueprint revision requires at least one source artifact")]
+    BlueprintSourcesRequired,
     #[error("blueprint revision {0} does not exist")]
     BlueprintNotFound(BlueprintRevisionId),
     #[error("blueprint revision {0} is not a draft")]
@@ -76,6 +78,8 @@ pub enum StorageError {
     InfoRequestNotOpen(InfoRequestId),
     #[error("info request answer cannot be empty")]
     EmptyInfoRequestAnswer,
+    #[error("info request dismissal reason cannot be empty")]
+    EmptyInfoRequestDismissReason,
     #[error("plan revision {0} does not exist")]
     PlanNotFound(PlanRevisionId),
     #[error("plan revision {0} is not a draft")]
@@ -96,6 +100,14 @@ pub enum StorageError {
     WorkItemNotFound(WorkItemId),
     #[error("work item {0} cannot be claimed in its current state")]
     WorkNotClaimable(WorkItemId),
+    #[error("work item {0} must be completed before it can be integrated")]
+    WorkNotDone(WorkItemId),
+    #[error("work item {0} has no successful branch push to confirm integration")]
+    WorkNotPushed(WorkItemId),
+    #[error("integration confirmation requires an Agent coding task, not {0:?}")]
+    IntegrationRequiresAgentCoding(coldstart_core::TaskKind),
+    #[error("integration reference cannot be empty")]
+    EmptyIntegrationReference,
     #[error("lease token is invalid for work item {0}")]
     LeaseInvalid(WorkItemId),
     #[error("lease for work item {0} has expired")]
@@ -118,6 +130,20 @@ pub enum StorageError {
     RepositoryKeyAlreadyExists { project_id: ProjectId, key: String },
     #[error("repository {0} does not exist in the project")]
     RepositoryNotFound(String),
+    #[error("code investigation {0} does not exist in the project")]
+    CodeInvestigationNotFound(coldstart_core::CodeInvestigationId),
+    #[error("code investigation {0} cannot be claimed in its current state")]
+    CodeInvestigationNotClaimable(coldstart_core::CodeInvestigationId),
+    #[error("code investigation {0} claim token is invalid")]
+    CodeInvestigationClaimInvalid(coldstart_core::CodeInvestigationId),
+    #[error("code investigation {0} lease has expired")]
+    CodeInvestigationLeaseExpired(coldstart_core::CodeInvestigationId),
+    #[error("code investigation {0} has no submitted report to review")]
+    CodeInvestigationNotSubmitted(coldstart_core::CodeInvestigationId),
+    #[error("code investigation {0} already has a different submitted report")]
+    CodeInvestigationReportConflict(coldstart_core::CodeInvestigationId),
+    #[error("code investigation rejection reason cannot be empty")]
+    EmptyCodeInvestigationRejection,
     #[error("work item {0} has no verification snapshot")]
     VerificationNotConfigured(WorkItemId),
     #[error("work item {0} is already running verification")]
@@ -420,9 +446,6 @@ impl Database {
         generation: BlueprintGeneration,
         info_requests: Vec<InfoRequestDraft>,
     ) -> Result<BlueprintRevision, StorageError> {
-        validate_blueprint_structure(&content)?;
-        let content_json = serde_json::to_string(&content)?;
-        let content_hash = sha256_hex(content_json.as_bytes());
         let source_artifact_ids = content
             .source_references()
             .into_iter()
@@ -431,6 +454,35 @@ impl Database {
             .into_iter()
             .map(|value| parse_id(&value, "artifact"))
             .collect::<Result<Vec<ArtifactId>, _>>()?;
+        self.create_blueprint_revision_with_source_ids(
+            project_id,
+            content,
+            generation,
+            info_requests,
+            source_artifact_ids,
+        )
+    }
+
+    /// 使用显式变更集保存蓝图，确保迭代只记录本次选中的来源文档。
+    pub fn create_blueprint_revision_with_source_ids(
+        &mut self,
+        project_id: &ProjectId,
+        content: BlueprintContent,
+        generation: BlueprintGeneration,
+        info_requests: Vec<InfoRequestDraft>,
+        source_artifact_ids: Vec<ArtifactId>,
+    ) -> Result<BlueprintRevision, StorageError> {
+        validate_blueprint_structure(&content)?;
+        let content_json = serde_json::to_string(&content)?;
+        let content_hash = sha256_hex(content_json.as_bytes());
+        let source_artifact_ids = source_artifact_ids
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        if source_artifact_ids.is_empty() {
+            return Err(StorageError::BlueprintSourcesRequired);
+        }
         let source_artifact_ids_json = serde_json::to_string(&source_artifact_ids)?;
         let created_at = Utc::now();
         let transaction = self
@@ -438,6 +490,18 @@ impl Database {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         if !project_exists(&transaction, project_id)? {
             return Err(StorageError::ProjectNotFound(*project_id));
+        }
+        for artifact_id in &source_artifact_ids {
+            let exists: bool = transaction.query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM artifacts WHERE id = ?1 AND project_id = ?2
+                 )",
+                params![artifact_id.to_string(), project_id.to_string()],
+                |row| row.get(0),
+            )?;
+            if !exists {
+                return Err(StorageError::ArtifactNotFound(*artifact_id));
+            }
         }
         let revision_number: i64 = transaction.query_row(
             "SELECT COALESCE(MAX(revision_number), 0) + 1
@@ -705,6 +769,48 @@ impl Database {
             source_info_request_id: *request_id,
             created_at: resolved_at,
         })
+    }
+
+    /// 关闭已过时或不再适用的信息请求，保留人工填写的关闭原因但不生成项目事实。
+    pub fn dismiss_info_request(
+        &mut self,
+        project_id: &ProjectId,
+        request_id: &InfoRequestId,
+        reason: &str,
+    ) -> Result<InfoRequest, StorageError> {
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return Err(StorageError::EmptyInfoRequestDismissReason);
+        }
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let request = query_info_request(&transaction, request_id)?
+            .filter(|request| request.project_id == *project_id)
+            .ok_or(StorageError::InfoRequestNotFound(*request_id))?;
+        if request.status != InfoRequestStatus::Open {
+            return Err(StorageError::InfoRequestNotOpen(*request_id));
+        }
+        let resolved_at = Utc::now();
+        transaction.execute(
+            "UPDATE info_requests
+             SET status = 'dismissed', answer = ?1, resolved_at = ?2
+             WHERE id = ?3",
+            params![reason, resolved_at.to_rfc3339(), request_id.to_string()],
+        )?;
+        insert_event(
+            &transaction,
+            &DomainEvent::new(
+                *project_id,
+                DomainEventKind::InfoRequestDismissed {
+                    request_id: *request_id,
+                },
+            ),
+        )?;
+        let dismissed = query_info_request(&transaction, request_id)?
+            .ok_or(StorageError::InfoRequestNotFound(*request_id))?;
+        transaction.commit()?;
+        Ok(dismissed)
     }
 
     pub fn list_project_facts(

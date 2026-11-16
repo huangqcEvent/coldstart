@@ -2423,7 +2423,8 @@ button:disabled {
 
 .plan-task__lease,
 .plan-task__report,
-.plan-task__blockers {
+.plan-task__blockers,
+.plan-task__integration {
   padding: 12px;
   margin-top: 12px;
   background: rgba(3, 13, 22, 0.46);

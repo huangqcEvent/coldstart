@@ -396,12 +396,17 @@ fn generated_blueprint_contains_sources_and_creates_inbox_requests() {
     let calls = Arc::clone(&model.calls);
     let last_request = Arc::clone(&model.last_request);
     let service = RequirementsService::new(model);
-    service
+    let imported = service
         .import_document(fixture.home.clone(), source)
         .unwrap();
+    let artifact_ids = imported
+        .sources
+        .iter()
+        .map(|source| source.id)
+        .collect::<Vec<_>>();
 
     let workspace = service
-        .generate_blueprint(fixture.home.clone(), model_config())
+        .generate_blueprint(fixture.home.clone(), model_config(), artifact_ids.clone())
         .expect("blueprint must generate");
 
     let draft = workspace.draft.expect("draft must exist");
@@ -420,6 +425,7 @@ fn generated_blueprint_contains_sources_and_creates_inbox_requests() {
     assert_eq!(captured.project_name, "订单系统");
     assert_eq!(captured.config.api_key, "test-secret");
     assert_eq!(captured.sources[0].anchors[0].anchor_id, "section_1");
+    assert_eq!(draft.source_artifact_ids, artifact_ids);
 }
 
 #[test]
@@ -427,12 +433,17 @@ fn unknown_source_anchor_rejects_model_output_without_writing_a_revision() {
     let fixture = Fixture::new();
     let source = fixture.write("requirements.md", MARKDOWN);
     let service = RequirementsService::new(FakeModel::with_anchor("missing_anchor"));
-    service
+    let imported = service
         .import_document(fixture.home.clone(), source)
         .unwrap();
+    let artifact_ids = imported
+        .sources
+        .iter()
+        .map(|source| source.id)
+        .collect::<Vec<_>>();
 
     let error = service
-        .generate_blueprint(fixture.home.clone(), model_config())
+        .generate_blueprint(fixture.home.clone(), model_config(), artifact_ids)
         .expect_err("unknown anchor must fail");
     assert_eq!(error.code(), "invalid_source_reference");
     let workspace = service.load_workspace(fixture.home).unwrap();
@@ -452,12 +463,17 @@ fn oversized_source_context_is_rejected_before_calling_the_model() {
     let model = FakeModel::proposal();
     let calls = Arc::clone(&model.calls);
     let service = RequirementsService::new(model);
-    service
+    let imported = service
         .import_document(fixture.home.clone(), source)
         .unwrap();
+    let artifact_ids = imported
+        .sources
+        .iter()
+        .map(|source| source.id)
+        .collect::<Vec<_>>();
 
     let error = service
-        .generate_blueprint(fixture.home.clone(), model_config())
+        .generate_blueprint(fixture.home.clone(), model_config(), artifact_ids)
         .expect_err("oversized context must fail");
     assert_eq!(error.code(), "source_context_too_large");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -479,7 +495,7 @@ fn generation_without_sources_fails_before_calling_the_model() {
     let service = RequirementsService::new(model);
 
     let error = service
-        .generate_blueprint(fixture.home, model_config())
+        .generate_blueprint(fixture.home, model_config(), Vec::new())
         .expect_err("missing sources must fail");
     assert_eq!(error.code(), "no_requirement_sources");
     assert_eq!(calls.load(Ordering::SeqCst), 0);
@@ -490,11 +506,16 @@ fn saves_publishes_and_resolves_without_losing_the_workspace() {
     let fixture = Fixture::new();
     let source = fixture.write("requirements.md", MARKDOWN);
     let service = RequirementsService::new(FakeModel::proposal());
-    service
+    let imported = service
         .import_document(fixture.home.clone(), source)
         .unwrap();
+    let artifact_ids = imported
+        .sources
+        .iter()
+        .map(|source| source.id)
+        .collect::<Vec<_>>();
     let generated = service
-        .generate_blueprint(fixture.home.clone(), model_config())
+        .generate_blueprint(fixture.home.clone(), model_config(), artifact_ids)
         .unwrap();
     let first_draft = generated.draft.expect("draft must exist");
     let mut content = first_draft.content.clone();
@@ -516,19 +537,11 @@ fn saves_publishes_and_resolves_without_losing_the_workspace() {
     );
     assert_eq!(saved.inbox.len(), 1);
 
-    let published = service
+    let blocked = service
         .publish_blueprint(fixture.home.clone(), manual_draft.id)
-        .expect("draft must publish");
-    let published_revision = published
-        .published
-        .clone()
-        .expect("published blueprint must exist");
-    assert_eq!(published_revision.id, manual_draft.id);
-    assert!(published_revision.published_at.is_some());
-    assert!(published.draft.is_none());
-    assert_eq!(published.sources.len(), 1);
-
-    let request_id = published.inbox[0].id;
+        .expect_err("open blocking information must stop publication");
+    assert_eq!(blocked.code(), "unresolved_blocking_info_requests");
+    let request_id = saved.inbox[0].id;
     let resolved = service
         .resolve_info_request(fixture.home.clone(), request_id, " 华东 1 ".to_owned())
         .expect("answer must resolve");
@@ -541,8 +554,37 @@ fn saves_publishes_and_resolves_without_losing_the_workspace() {
     assert_eq!(resolved.facts[0].value, "华东 1");
     assert_eq!(resolved.facts[0].version, 1);
 
+    let regenerated = service
+        .generate_blueprint(
+            fixture.home.clone(),
+            model_config(),
+            saved.sources.iter().map(|source| source.id).collect(),
+        )
+        .expect("answered facts must feed the next blueprint");
+    let regenerated_draft = regenerated.draft.expect("new draft must exist");
+    let captured = service
+        .load_workspace(fixture.home.clone())
+        .expect("workspace must load");
+    assert_eq!(captured.facts.len(), 1);
+    assert_eq!(
+        regenerated_draft.source_artifact_ids,
+        vec![saved.sources[0].id]
+    );
+
+    let published = service
+        .publish_blueprint(fixture.home.clone(), regenerated_draft.id)
+        .expect("draft must publish");
+    let published_revision = published
+        .published
+        .clone()
+        .expect("published blueprint must exist");
+    assert_eq!(published_revision.id, regenerated_draft.id);
+    assert!(published_revision.published_at.is_some());
+    assert!(published.draft.is_none());
+    assert_eq!(published.sources.len(), 1);
+
     let already_published = service
-        .publish_blueprint(fixture.home.clone(), manual_draft.id)
+        .publish_blueprint(fixture.home.clone(), regenerated_draft.id)
         .expect_err("published revision must not publish twice");
     assert_eq!(already_published.code(), "blueprint_not_draft");
     let already_answered = service
@@ -552,16 +594,80 @@ fn saves_publishes_and_resolves_without_losing_the_workspace() {
 }
 
 #[test]
+fn dismisses_an_obsolete_blocking_question_and_allows_publication() {
+    let fixture = Fixture::new();
+    let source = fixture.write("requirements.md", MARKDOWN);
+    let service = RequirementsService::new(FakeModel::proposal());
+    let imported = service
+        .import_document(fixture.home.clone(), source)
+        .unwrap();
+    let generated = service
+        .generate_blueprint(
+            fixture.home.clone(),
+            model_config(),
+            imported.sources.iter().map(|source| source.id).collect(),
+        )
+        .unwrap();
+    let draft = generated.draft.expect("draft must exist");
+    let request_id = generated.inbox[0].id;
+
+    let blocked = service
+        .publish_blueprint(fixture.home.clone(), draft.id)
+        .expect_err("open blocking information must stop publication");
+    assert_eq!(blocked.code(), "unresolved_blocking_info_requests");
+
+    let empty_reason = service
+        .dismiss_info_request(fixture.home.clone(), request_id, "  ".to_owned())
+        .expect_err("empty dismissal reason must fail");
+    assert_eq!(empty_reason.code(), "info_request_dismiss_reason_empty");
+
+    let dismissed = service
+        .dismiss_info_request(
+            fixture.home.clone(),
+            request_id,
+            " 该问题已被新的库存方案取代 ".to_owned(),
+        )
+        .expect("obsolete question must close");
+    assert_eq!(
+        dismissed.inbox[0].status,
+        coldstart_core::InfoRequestStatus::Dismissed
+    );
+    assert_eq!(
+        dismissed.inbox[0].answer.as_deref(),
+        Some("该问题已被新的库存方案取代")
+    );
+    assert!(dismissed.facts.is_empty());
+
+    let published = service
+        .publish_blueprint(fixture.home.clone(), draft.id)
+        .expect("dismissed question must not block publication");
+    assert_eq!(
+        published.published.expect("published blueprint").id,
+        draft.id
+    );
+
+    let already_closed = service
+        .dismiss_info_request(fixture.home, request_id, "重复关闭".to_owned())
+        .expect_err("dismissed request must not close twice");
+    assert_eq!(already_closed.code(), "info_request_not_open");
+}
+
+#[test]
 fn model_failure_does_not_write_a_blueprint_revision() {
     let fixture = Fixture::new();
     let source = fixture.write("requirements.md", MARKDOWN);
     let service = RequirementsService::new(FakeModel::failing());
-    service
+    let imported = service
         .import_document(fixture.home.clone(), source)
         .unwrap();
+    let artifact_ids = imported
+        .sources
+        .iter()
+        .map(|source| source.id)
+        .collect::<Vec<_>>();
 
     let error = service
-        .generate_blueprint(fixture.home.clone(), model_config())
+        .generate_blueprint(fixture.home.clone(), model_config(), artifact_ids)
         .expect_err("model failure must stop generation");
     assert_eq!(error.code(), "model_response_invalid");
     let workspace = service.load_workspace(fixture.home).unwrap();
