@@ -56,6 +56,159 @@ const workStatusLabels: Record<WorkItemView['workItem']['status'], string> = {
   cancelled: '已取消',
 };
 
+type HumanWorkPhase = 'prep' | 'release' | 'other';
+
+interface HumanWorkGroup {
+  label: string;
+  items: WorkItemView[];
+  prepCount: number;
+  releaseCount: number;
+  otherCount: number;
+}
+
+const selfHostedProviderLabel = '自建与内部系统';
+const releaseComplianceLabel = '发布与合规';
+const otherHumanWorkLabel = '其他人工任务';
+const providerAliasSuffixes = [
+  '实人认证',
+  '电子签约',
+  '云服务',
+  '认证',
+  '服务',
+  '平台',
+  '系统',
+  '能力',
+];
+
+function humanWorkPhase(taskKey: string): HumanWorkPhase {
+  if (taskKey.startsWith('capability-prep:')) {
+    return 'prep';
+  }
+  if (taskKey.startsWith('release-prereq:')) {
+    return 'release';
+  }
+  return 'other';
+}
+
+function providerFromPreparation(item: WorkItemView): string {
+  const goalMatch = item.task.goal.match(/^确认\s*(.+?)\s*的账号/);
+  if (goalMatch?.[1]) {
+    const provider = goalMatch[1].trim();
+    return provider.startsWith('自建') ? selfHostedProviderLabel : provider;
+  }
+
+  const titleMatch = item.task.title.match(/^准备(.+?)能力$/);
+  if (titleMatch?.[1]) {
+    return titleMatch[1].trim();
+  }
+  return otherHumanWorkLabel;
+}
+
+function aliasesForProvider(provider: string): string[] {
+  if (provider === selfHostedProviderLabel) {
+    return ['自建'];
+  }
+
+  const withoutParenthetical = provider.replace(/[（(][^）)]*[）)]/g, '').trim();
+  const aliases = new Set<string>([provider, withoutParenthetical]);
+  for (const segment of withoutParenthetical.split(/[+、/]/)) {
+    const normalized = segment.trim();
+    if (normalized.length >= 2) {
+      aliases.add(normalized);
+    }
+  }
+
+  for (const alias of [...aliases]) {
+    for (const suffix of providerAliasSuffixes) {
+      if (alias.endsWith(suffix) && alias.length > suffix.length + 1) {
+        aliases.add(alias.slice(0, -suffix.length));
+      }
+    }
+  }
+  return [...aliases].filter((alias) => alias.length >= 2);
+}
+
+function groupHumanWork(humanTasks: WorkItemView[]): HumanWorkGroup[] {
+  const preparationProviders = new Set(
+    humanTasks
+      .filter((item) => humanWorkPhase(item.task.taskKey) === 'prep')
+      .map(providerFromPreparation)
+      .filter((provider) => provider !== selfHostedProviderLabel)
+      .filter((provider) => provider !== otherHumanWorkLabel),
+  );
+
+  const providerAliases = [...preparationProviders].map((provider) => ({
+    provider,
+    aliases: aliasesForProvider(provider),
+  }));
+  const groups = new Map<string, HumanWorkGroup>();
+
+  for (const item of humanTasks) {
+    const phase = humanWorkPhase(item.task.taskKey);
+    let label: string;
+    if (phase === 'prep') {
+      label = providerFromPreparation(item);
+    } else if (phase === 'release') {
+      const releaseText = [
+        item.task.title,
+        item.task.goal,
+        ...item.task.scope,
+      ].join(' ');
+      const matchedProvider = providerAliases
+        .flatMap(({ provider, aliases }) =>
+          aliases
+            .filter((alias) => releaseText.includes(alias))
+            .map((alias) => ({ provider, alias })),
+        )
+        .sort((left, right) => right.alias.length - left.alias.length)[0];
+      label = matchedProvider?.provider ?? releaseComplianceLabel;
+    } else {
+      label = otherHumanWorkLabel;
+    }
+
+    const group = groups.get(label) ?? {
+      label,
+      items: [],
+      prepCount: 0,
+      releaseCount: 0,
+      otherCount: 0,
+    };
+    group.items.push(item);
+    if (phase === 'prep') {
+      group.prepCount += 1;
+    } else if (phase === 'release') {
+      group.releaseCount += 1;
+    } else {
+      group.otherCount += 1;
+    }
+    groups.set(label, group);
+  }
+
+  const phaseOrder: Record<HumanWorkPhase, number> = {
+    prep: 0,
+    release: 1,
+    other: 2,
+  };
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      items: [...group.items].sort(
+        (left, right) =>
+          phaseOrder[humanWorkPhase(left.task.taskKey)] -
+          phaseOrder[humanWorkPhase(right.task.taskKey)],
+      ),
+    }))
+    .sort((left, right) => {
+      if (left.label === releaseComplianceLabel) {
+        return 1;
+      }
+      if (right.label === releaseComplianceLabel) {
+        return -1;
+      }
+      return 0;
+    });
+}
+
 function InboxRequestCard({
   request,
   busy,
@@ -246,6 +399,75 @@ function HumanWorkCard({
   );
 }
 
+function HumanWorkProviderGroup({
+  group,
+  busy,
+  busyLabel,
+  onCompleteHuman,
+}: {
+  group: HumanWorkGroup;
+  busy: boolean;
+  busyLabel: string | null;
+  onCompleteHuman: (
+    workItemId: string,
+    note: string,
+    accepted: boolean,
+  ) => Promise<boolean>;
+}) {
+  const [expanded, setExpanded] = useState(group.items.length <= 3);
+
+  return (
+    <section
+      className="inbox-work-provider"
+      role="region"
+      aria-label={group.label}
+    >
+      <details
+        className="inbox-work-group"
+        open={expanded}
+        onToggle={(event) => setExpanded(event.currentTarget.open)}
+      >
+        <summary className="inbox-work-group__summary">
+          <span className="inbox-work-group__marker" aria-hidden="true">
+            ▸
+          </span>
+          <span className="inbox-work-group__name">{group.label}</span>
+          <span className="inbox-work-group__counts">
+            {group.prepCount > 0 ? (
+              <span className="inbox-work-group__count inbox-work-group__count--prep">
+                研发准备 {group.prepCount}
+              </span>
+            ) : null}
+            {group.releaseCount > 0 ? (
+              <span className="inbox-work-group__count inbox-work-group__count--release">
+                发布前置 {group.releaseCount}
+              </span>
+            ) : null}
+            {group.otherCount > 0 ? (
+              <span className="inbox-work-group__count">人工任务 {group.otherCount}</span>
+            ) : null}
+          </span>
+        </summary>
+        <div className="inbox-work-group__body">
+          <div className="inbox-list">
+            {group.items.map((item) => (
+              <HumanWorkCard
+                item={item}
+                busy={busy}
+                busyLabel={busyLabel}
+                onComplete={(note, accepted) =>
+                  onCompleteHuman(item.workItem.id, note, accepted)
+                }
+                key={item.workItem.id}
+              />
+            ))}
+          </div>
+        </div>
+      </details>
+    </section>
+  );
+}
+
 export function InboxView({
   inbox,
   facts,
@@ -258,6 +480,7 @@ export function InboxView({
 }: InboxViewProps) {
   const openRequests = inbox.filter((request) => request.status === 'open');
   const resolvedRequests = inbox.filter((request) => request.status !== 'open');
+  const humanWorkGroups = groupHumanWork(humanTasks);
 
   return (
     <section className="content-view" aria-labelledby="inbox-title">
@@ -270,30 +493,38 @@ export function InboxView({
           </p>
         </div>
         <div
-          className="inbox-counter"
-          aria-label={`${openRequests.length + humanTasks.length} 条待处理`}
+          className="inbox-counters"
+          role="group"
+          aria-label={`${openRequests.length} 条待补信息，${humanTasks.length} 条待办人工任务`}
         >
-          <strong>{openRequests.length + humanTasks.length}</strong>
-          <span>待处理</span>
+          <div className="inbox-counter inbox-counter--requests">
+            <strong>{openRequests.length}</strong>
+            <span>待补信息</span>
+          </div>
+          <div className="inbox-counter inbox-counter--work">
+            <strong>{humanTasks.length}</strong>
+            <span>待办人工任务</span>
+          </div>
         </div>
       </header>
 
       {humanTasks.length > 0 ? (
         <section className="inbox-group inbox-group--work" aria-labelledby="inbox-human-work">
           <header>
-            <h2 id="inbox-human-work">计划人工任务</h2>
+            <h2 id="inbox-human-work">待办人工任务</h2>
             <span>{humanTasks.length}</span>
           </header>
-          <div className="inbox-list">
-            {humanTasks.map((item) => (
-              <HumanWorkCard
-                item={item}
+          <p className="inbox-group__note">
+            这些任务来自已发布的开发计划，按服务商与阶段聚合，不会混入需求问题。
+          </p>
+          <div className="inbox-work-groups">
+            {humanWorkGroups.map((group) => (
+              <HumanWorkProviderGroup
+                group={group}
                 busy={busy}
                 busyLabel={busyLabel}
-                onComplete={(note, accepted) =>
-                  onCompleteHuman(item.workItem.id, note, accepted)
-                }
-                key={item.workItem.id}
+                onCompleteHuman={onCompleteHuman}
+                key={group.label}
               />
             ))}
           </div>

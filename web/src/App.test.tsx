@@ -383,6 +383,7 @@ function makeAgentWorkItem(
 
 function makeHumanWorkItem(
   overrides: Partial<WorkItemView['workItem']> = {},
+  taskOverrides: Partial<TaskSpec> = {},
 ): WorkItemView {
   const task = makeTask({
     taskKey: 'human:release:store_account',
@@ -405,6 +406,7 @@ function makeHumanWorkItem(
     evidenceRequirements: [],
     criticalPath: true,
     resourceKeys: [],
+    ...taskOverrides,
   });
   return {
     task,
@@ -2153,6 +2155,91 @@ describe('ColdStart project workspace', () => {
       '账号已可用',
       true,
     );
+  });
+
+  it('separates inbox counters and groups human tasks by provider and phase', async () => {
+    const aliyunPreparation = makeHumanWorkItem(
+      { id: '77777777-7777-4777-8777-777777777771' },
+      {
+        taskKey: 'capability-prep:capability_aliyun',
+        title: '准备企业/个人实名核验能力',
+        goal: '确认 阿里云实人认证 的账号、环境与费用权限已准备，不向 ColdStart 输入任何明文密钥。',
+        scope: ['个人身份证姓名核验与企业三要素核验'],
+      },
+    );
+    const aliyunRelease = makeHumanWorkItem(
+      { id: '77777777-7777-4777-8777-777777777772' },
+      {
+        taskKey: 'release-prereq:release_aliyun',
+        title: '阿里云企业/个人实名核验服务开通与配额确认',
+        goal: '备案提交时的实名校验依赖该服务。',
+        scope: ['类别：三方服务接入'],
+      },
+    );
+    const user = await openProject(
+      makeWorkspace({
+        inbox: [infoRequest],
+        plan: makePlanWorkspace({
+          published: makePlanRevision({ status: 'published' }),
+          workItems: [aliyunRelease, aliyunPreparation],
+        }),
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: '人工 Inbox' }));
+
+    expect(
+      screen.getByLabelText('1 条待补信息，2 条待办人工任务'),
+    ).toBeInTheDocument();
+    const providerGroup = screen.getByRole('region', {
+      name: '阿里云实人认证',
+    });
+    expect(within(providerGroup).getByText('研发准备 1')).toBeInTheDocument();
+    expect(within(providerGroup).getByText('发布前置 1')).toBeInTheDocument();
+    expect(
+      within(providerGroup).getByRole('heading', {
+        name: '准备企业/个人实名核验能力',
+      }),
+    ).toBeInTheDocument();
+    expect(
+      within(providerGroup).getByRole('heading', {
+        name: '阿里云企业/个人实名核验服务开通与配额确认',
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it('collapses grouped human work when the inbox has many tasks', async () => {
+    const tasks = Array.from({ length: 7 }, (_, index) =>
+      makeHumanWorkItem(
+        {
+          id: `77777777-7777-4777-8777-${String(index).padStart(12, '0')}`,
+        },
+        {
+          taskKey: `release-prereq:release_compliance_${index}`,
+          title: `合规发布前置 ${index + 1}`,
+          goal: `完成第 ${index + 1} 项合规发布准备。`,
+          scope: ['类别：合规备案'],
+        },
+      ),
+    );
+    const user = await openProject(
+      makeWorkspace({
+        plan: makePlanWorkspace({
+          published: makePlanRevision({ status: 'published' }),
+          workItems: tasks,
+        }),
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: '人工 Inbox' }));
+
+    expect(
+      screen.getByLabelText('0 条待补信息，7 条待办人工任务'),
+    ).toBeInTheDocument();
+    const group = screen.getByText('发布与合规').closest('details');
+    expect(group).not.toHaveAttribute('open');
+    await user.click(screen.getByText('发布与合规'));
+    expect(group).toHaveAttribute('open');
   });
 
   it('saves a validated repository draft from the integration workspace', async () => {
